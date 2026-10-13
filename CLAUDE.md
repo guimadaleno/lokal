@@ -240,6 +240,19 @@ Measured on a current laptop, under WSL.
 - **To weigh:** a `/config` that opens the settings file in `$EDITOR`, as
   `/prefs` does with about-me.md. Also a `/clean` for Lokal's own files; what
   it keeps is two small files, so it may not earn its place.
+- **Approvals per project:** "Yes, and don't ask again in this project" beside
+  the session's.
+  - **The rules live in the person's own config, never inside the project.**
+    A file in the repository would let a cloned repository grant itself
+    commands that run unasked.
+  - **The project is the git root around the working directory,** or the
+    directory itself.
+  - **Exact commands only.** If patterns ever come, only program plus
+    subcommand (`cargo build *`), and never for `rm`, `sudo`, interpreters,
+    package installs, `docker run`/`exec` or downloads.
+  - **The model never edits Lokal's own files,** rules included, not even with
+    a yes: it must not change what it's allowed to do. Worth doing on its own.
+  - **Seeing and removing rules** goes through the `/config` idea above.
 - **To weigh: memory the model writes, and `/memory` to edit it.**
   about-me.md is already the person's own memory, read every conversation.
   A file the model writes to and every later conversation reads is a lasting
