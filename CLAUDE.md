@@ -250,18 +250,12 @@ Measured on a current laptop, under WSL.
   - **Still owed:** the same in the person's own console.
 - **Linux outside WSL:** only WSL has been run. Still owed: a plain Linux run,
   with the server on localhost.
-- **`/feedback`, sent:** the form and the preview are tested, the send isn't.
-  The issues Worker knows `lokal` (`apps.json` in guimadaleno/issues); the
-  GitHub App must also reach this repository, or a report answers "later".
-  Still owed: one real report, then reading its issue.
 - **The reasoning window with wide characters or a resize while it shows:**
   rows are cut by character count, so double-width characters may wrap and
   leave a row behind. Tested only with a fake server's plain text.
 - **Servers other than LM Studio:** the chat path should work with any
   OpenAI-compatible server through `server = host:port`, but none has been
   tried. The context gauge stays hidden without LM Studio's `/api/v0/models`.
-- **Updating itself, end to end:** `update.rs` is tested piece by piece. Still
-  owed: an installed 0.1.0 taking 0.1.1 from `download.guimadaleno.com`.
 - **"Couldn't find a model server":** written, but not seen, since that needs
   LM Studio stopped.
 
