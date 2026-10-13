@@ -104,10 +104,11 @@ fn main() -> ExitCode {
     // Conversations only: a one-shot request often runs in a script, and
     // shouldn't reach the network on its own.
     let mut update = None;
+    let mut first_command = None;
     if request.is_empty() {
         update = update::start(config.updates_off);
         print_header(&server);
-        ask_first_question(&mut input);
+        first_command = ask_first_question(&mut input);
         warn_if_about_me_is_long();
     }
     let mut conversation = Conversation::new(server, system::gather());
@@ -124,7 +125,7 @@ fn main() -> ExitCode {
             updates_off: config.updates_off,
             feedback_draft: None,
         };
-        talk(&mut conversation, &mut input, &mut session);
+        talk(&mut conversation, &mut input, &mut session, first_command);
         let updated_to = update.and_then(|check| check.installed());
         let goodbye = text::lasted(started.elapsed(), updated_to.as_deref());
         eprintln!("{}", style::gray(&goodbye));
@@ -151,7 +152,18 @@ struct Session {
     feedback_draft: Option<feedback::Draft>,
 }
 
-fn talk(conversation: &mut Conversation, input: &mut Input, session: &mut Session) {
+/// The conversation, from `first`, a command typed at the first question.
+fn talk(
+    conversation: &mut Conversation,
+    input: &mut Input,
+    session: &mut Session,
+    first: Option<String>,
+) {
+    if let Some(command) = first
+        && !run_command(&command, conversation, input, session)
+    {
+        return;
+    }
     while let Line::Text(line) = input.request(conversation.status()) {
         let line = line.trim();
         if line.is_empty() {
@@ -268,13 +280,16 @@ fn print_about() {
 }
 
 /// On the first launch, asks one question; skipping it is fine. Either way
-/// about-me.md then exists, so the question isn't asked again.
-fn ask_first_question(input: &mut Input) {
+/// about-me.md then exists, so the question isn't asked again. A slash
+/// command typed instead answers nothing: it's returned to run, and the
+/// question comes back at the next launch.
+fn ask_first_question(input: &mut Input) -> Option<String> {
     if config::read_about_me().is_some() {
-        return;
+        return None;
     }
     eprintln!("{}", text::FIRST_QUESTION);
     let contents = match input.answer("> ") {
+        Some(answer) if is_command(&answer) => return Some(answer),
         Some(answer) => format!("{} {answer}\n", text::PREFS_HEADING),
         None => String::new(),
     };
@@ -287,6 +302,7 @@ fn ask_first_question(input: &mut Input) {
             style::red(&text::cant_save(&path, &error.to_string()))
         ),
     }
+    None
 }
 
 /// Everything about this session, for when something seems off.
