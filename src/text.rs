@@ -271,17 +271,22 @@ pub fn number(value: u64) -> String {
     out
 }
 
-/// What the model is writing, while it writes a tool call.
+/// What the model is writing, while it writes a tool call. The size shows
+/// once some of it has arrived.
 pub fn writing_tool(name: &str, path: Option<&str>, bytes: usize) -> String {
-    let size = size(bytes);
+    let size = if bytes == 0 {
+        String::new()
+    } else {
+        format!(" · {}", size(bytes))
+    };
     match (name, path) {
-        ("write_file", Some(path)) => format!("writing {path} · {size}"),
-        ("edit_file", Some(path)) => format!("editing {path} · {size}"),
-        ("write_file" | "edit_file", None) => format!("writing a file · {size}"),
+        ("write_file", Some(path)) => format!("writing {path}{size}"),
+        ("edit_file", Some(path)) => format!("editing {path}{size}"),
+        ("write_file" | "edit_file", None) => format!("writing a file{size}"),
         ("read_file", Some(path)) => format!("about to read {path}"),
         ("run_command", _) => "writing a command".into(),
         ("remember", _) => "writing a note".into(),
-        _ => format!("preparing a step · {size}"),
+        _ => format!("preparing a step{size}"),
     }
 }
 

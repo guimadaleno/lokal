@@ -385,9 +385,13 @@ fn working_label(started: Instant, writing: Option<&ToolProgress>, used: Option<
     if elapsed < LABEL_AFTER {
         return String::new();
     }
+    // LM Studio holds a tool call's arguments back until they're complete, so
+    // while a file is written nothing arrives to count: then only the time,
+    // rather than a size and a token count that sit still.
+    let waiting_on_arguments = writing.is_some_and(|call| call.bytes == 0);
     let time = match used {
-        Some(used) => format!("{} · {used}", text::duration(elapsed)),
-        None => text::duration(elapsed),
+        Some(used) if !waiting_on_arguments => format!("{} · {used}", text::duration(elapsed)),
+        _ => text::duration(elapsed),
     };
     // On one line, or the spinner's redraw would leave the rest behind.
     let room = style::terminal_width().map_or(80, |width| width.saturating_sub(4));
