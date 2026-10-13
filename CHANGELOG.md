@@ -5,6 +5,15 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.3.0 — 2026-10-13
+
+- The model gets a scratch folder of the session's own for what it makes
+  only to get the work done: a download, output to look through, a script to
+  run once. It's private, `/info` shows where it is, and it goes when Lokal
+  quits. Writing there asks first, like anywhere else.
+- `/update` typed while the day's check is running no longer says it
+  couldn't check, and the two can never leave a half-written Lokal behind.
+
 ## 0.2.1 — 2026-10-13
 
 - `/help` lines up every description, `/reasoning`'s and `/feedback`'s too.
