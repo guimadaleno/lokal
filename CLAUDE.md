@@ -229,7 +229,7 @@ cargo clippy --all-targets
   bucket only.
 - **The page publishes with `DEPLOY_KEY`, `DEPLOY_KNOWN_HOSTS`, `DEPLOY_USER`
   and `DEPLOY_HOST`,** like the other apps' pages: a deploy key the server
-  holds to Lokal's folder only, through `rrsync -no-del`. Until they're set,
+  holds to Lokal's folder only, through `rrsync -no-del`. Without them,
   `site.yml` does nothing.
 
 ## Measured
@@ -285,11 +285,11 @@ Tracked as issues:
 
 Decided, and kept here so they aren't undone:
 
-- **Publishing the page** (`site/`): `site.yml` sends it with the four
-  `DEPLOY_*` secrets, once the server holds the deploy key to Lokal's
-  folder. It reads `latest.json` for the version and the checksum, since
-  only `latest.json` and `SHA256SUMS` have version-less names; the markup's
-  own text is the fallback.
+- **The page never waits for a release, nor a release for the page:**
+  `site.yml` publishes `site/` whenever it changes on `main`. The page reads
+  `latest.json` for the version (the install line's and the terminal
+  picture's) and the checksum, since only `latest.json` and `SHA256SUMS`
+  have version-less names; the markup's own text is the fallback.
 - **Distribution: the executable, never an install script.** The one line
   downloads the release file and lets it install itself:
   `curl -fsSLo lokal https://download.guimadaleno.com/lokal/<version>/lokal && chmod +x lokal && ./lokal --install`.
