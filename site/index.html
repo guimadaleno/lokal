@@ -122,11 +122,11 @@ footer { margin-top: 64px; padding: 24px 0 48px; border-top: 1px solid var(--rul
     </div>
     <p class="lead">A terminal assistant that runs on a model on your own machine. It runs commands, reads your files and changes them, and asks before anything changes.</p>
 
-    <div class="install"><code id="install">curl -fsSLo lokal https://download.guimadaleno.com/lokal/0.1.0/lokal &amp;&amp; chmod +x lokal &amp;&amp; ./lokal --install</code><button type="button" data-copy="install">Copy</button></div>
-    <p class="install-note">Version <span id="version">0.1.0</span>, for Linux and WSL on x86-64. One file, which installs itself in <code>~/.local/bin</code> and keeps itself up to date. <span id="checksum">Its SHA-256 is in <a href="https://download.guimadaleno.com/lokal/SHA256SUMS">SHA256SUMS</a>.</span></p>
+    <div class="install"><code id="install">curl -fsSLo lokal https://download.guimadaleno.com/lokal/0.2.0/lokal &amp;&amp; chmod +x lokal &amp;&amp; ./lokal --install</code><button type="button" data-copy="install">Copy</button></div>
+    <p class="install-note">Version <span id="version">0.2.0</span>, for Linux and WSL on x86-64. One file, which installs itself in <code>~/.local/bin</code> and keeps itself up to date. <span id="checksum">Its SHA-256 is in <a href="https://download.guimadaleno.com/lokal/SHA256SUMS">SHA256SUMS</a>.</span></p>
 
     <div class="terminal" aria-label="Lokal in a terminal">
-<pre><span class="t-bold">Lokal</span> 0.1.0  <span class="t-gray">qwen3.8-27b</span>
+<pre><span class="t-bold">Lokal</span> 0.2.0  <span class="t-gray">qwen3.8-27b</span>
 <span class="t-orange">&gt; is the web container running?</span>
 
 <span class="t-orange">$</span> docker ps -a --filter name=web --format '{{.Names}} {{.Status}}'
@@ -141,7 +141,8 @@ It's <span class="t-bold">stopped</span>: it exited 2 hours ago.
   <span class="t-gray">Starts the stopped container web.</span>
   Run it?
     <span class="t-gray">Yes</span>
-    <span class="t-gray">Yes, and don't ask again for this command</span>
+    <span class="t-gray">Yes, and don't ask again this session</span>
+    <span class="t-gray">Yes, and don't ask again in this project</span>
   <span class="t-orange">›</span> No</pre>
     </div>
   </section>
@@ -179,7 +180,6 @@ It's <span class="t-bold">stopped</span>: it exited 2 hours ago.
   <footer>
     <span>Made by Guilherme Madaleno</span>
     <a href="https://guimadaleno.com">guimadaleno.com</a>
-    <a href="https://github.com/guimadaleno/lokal">GitHub</a>
   </footer>
 </main>
 
