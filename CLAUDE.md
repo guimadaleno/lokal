@@ -45,8 +45,12 @@ dependencies.
   "Stopped." and errors stay plain.
 - **The look stays discreet:** faint and gray tones from `src/style.rs`, one
   line, and no boxes or color blocks. Orange (`style::accent`) marks the
-  person's own lines and Lokal acting. A full-width background was tried on
-  the prompt line and glitched, so don't bring it back.
+  person's own lines and Lokal acting; code in an answer is a soft
+  blue-gray. A full-width background was tried on the prompt line and
+  glitched, so don't bring it back.
+- **Markdown is styled on the screen only.** The conversation keeps what
+  the model wrote, and a piped answer stays plain Markdown. A style ends
+  with its line, so a stray marker can't paint the rest of the screen.
 
 ## Map
 
@@ -56,6 +60,7 @@ dependencies.
 | `conversation.rs` | Messages, one turn with its tools, freeing context, the saved conversation |
 | `chat.rs` | One streamed chat request on its own thread |
 | `answer.rs` | What of the stream is shown: no reasoning, no blank edges |
+| `markdown.rs` | Bold, inline code, headings, code blocks and links, styled as the answer streams |
 | `server.rs`, `http.rs` | Finding the server and its model; plain-HTTP requests |
 | `tools.rs`, `shell.rs`, `diff.rs` | The model's tools, running a command, showing a change |
 | `allowlist.rs` | Which commands run without asking |

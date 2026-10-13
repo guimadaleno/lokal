@@ -15,7 +15,8 @@ it can't ask for input, so pass flags like -y, and if it needs sudo, give the us
 if they do, don't look for a way around it, ask what they want instead.
 - Change existing files with edit_file and create new ones with write_file. The user reviews a diff first.
 - Reply in the user's language. Talk naturally and directly, like a colleague; casual is fine.
-- Keep answers short and plain: this is a terminal, so no tables and little Markdown.";
+- Keep answers short. This is a terminal: **bold**, `inline code` and code blocks show styled; \
+tables and headings don't help here, so skip them.";
 
 pub fn system_prompt(facts: &Facts, about_me: Option<&str>) -> String {
     let mut prompt = String::from(HOW_TO_WORK);

@@ -2,13 +2,14 @@
 //! on disk that `lokal -r` resumes.
 
 use std::fs;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
 use crate::chat::{self, Event, Reply};
 use crate::input::Input;
+use crate::markdown::Markdown;
 use crate::server::Server;
 use crate::spinner::Spinner;
 use crate::system::Facts;
@@ -161,10 +162,13 @@ impl Conversation {
         let request = chat::start(&self.server.address, self.request_body());
         let mut spinner = Spinner::new();
         let mut mid_line = false;
+        // Styled on a terminal only: piped, the answer stays as the model wrote it.
+        let mut markdown = std::io::stdout().is_terminal().then(Markdown::new);
         loop {
             if interrupt::happened() {
                 spinner.clear();
                 if mid_line {
+                    print_rest(&mut markdown);
                     println!();
                 }
                 return Err(Failure::Stopped);
@@ -174,13 +178,18 @@ impl Conversation {
                 None => {}
                 Some(Event::Text(text)) => {
                     spinner.clear();
-                    print!("{text}");
+                    let shown = match &mut markdown {
+                        Some(markdown) => markdown.push(&text),
+                        None => text,
+                    };
+                    print!("{shown}");
                     let _ = std::io::stdout().flush();
                     mid_line = true;
                 }
                 Some(Event::ToolCall) => {
                     if mid_line {
                         // End the text, then a blank line before the step.
+                        print_rest(&mut markdown);
                         println!("\n");
                         mid_line = false;
                     }
@@ -188,6 +197,7 @@ impl Conversation {
                 Some(Event::Done(result)) => {
                     spinner.clear();
                     if mid_line {
+                        print_rest(&mut markdown);
                         println!();
                     }
                     return result.map_err(Failure::Error);
@@ -263,6 +273,13 @@ impl Conversation {
         self.messages = messages.clone();
         self.tokens = saved["tokens"].as_u64();
         true
+    }
+}
+
+/// What the Markdown styling still holds, with every style closed.
+fn print_rest(markdown: &mut Option<Markdown>) {
+    if let Some(markdown) = markdown {
+        print!("{}", markdown.finish());
     }
 }
 

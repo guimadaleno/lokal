@@ -8,6 +8,7 @@ mod http;
 mod input;
 mod install;
 mod interrupt;
+mod markdown;
 mod menu;
 mod prompt;
 // guimadaleno/release's client/release.rs, copied unchanged: no formatting or
