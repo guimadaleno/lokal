@@ -188,6 +188,14 @@ pub const INFO_IN_USE: &str = "in use";
 pub const INFO_ABOUT_ME: &str = "about me";
 pub const INFO_SETTINGS: &str = "settings";
 pub const INFO_PROJECT: &str = "project";
+pub const INFO_SCRATCH: &str = "scratch";
+
+pub fn scratch_folder(path: Option<&str>) -> String {
+    match path {
+        Some(path) => format!("{path} · temporary files, deleted when Lokal quits"),
+        None => "none · no private temporary folder could be made".into(),
+    }
+}
 
 pub fn project_approvals(folder: &str, count: usize) -> String {
     match count {

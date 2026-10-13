@@ -16,6 +16,8 @@ pub struct Facts {
     pub cwd: String,
     /// Under WSL: where the Windows Desktop and Documents folders are, as Linux paths.
     pub windows_folders: Vec<(&'static str, String)>,
+    /// The session's folder for temporary files, when there is one (`scratch.rs`).
+    pub scratch: Option<String>,
 }
 
 pub fn gather() -> Facts {
@@ -29,6 +31,7 @@ pub fn gather() -> Facts {
             .map(|dir| dir.display().to_string())
             .unwrap_or_default(),
         windows_folders: if wsl { windows_folders() } else { Vec::new() },
+        scratch: None,
     }
 }
 

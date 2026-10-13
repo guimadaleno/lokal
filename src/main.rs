@@ -24,6 +24,7 @@ mod release;
 #[rustfmt::skip]
 #[allow(clippy::all)]
 mod report;
+mod scratch;
 mod server;
 mod shell;
 mod spinner;
@@ -111,7 +112,13 @@ fn main() -> ExitCode {
         first_command = ask_first_question(&mut input);
         warn_if_about_me_is_long();
     }
-    let mut conversation = Conversation::new(server, system::gather());
+    // Lives until Lokal quits, and takes its folder with it.
+    let scratch = scratch::Scratch::create();
+    let mut facts = system::gather();
+    facts.scratch = scratch
+        .as_ref()
+        .map(|scratch| scratch.path().display().to_string());
+    let mut conversation = Conversation::new(server, facts);
     if resume {
         if !conversation.resume() {
             eprintln!("{}", style::gray(text::NOTHING_TO_RESUME));
@@ -353,6 +360,10 @@ fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
                 &config::shown(input.project().project()),
                 input.project().count(),
             ),
+        ),
+        (
+            text::INFO_SCRATCH,
+            text::scratch_folder(conversation.scratch()),
         ),
     ];
     for (label, value) in rows {

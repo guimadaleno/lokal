@@ -59,6 +59,14 @@ dependencies.
   since it can hold files and secrets the model read.
 - **Grow on disk.** It keeps the last conversation only, and about-me.md is
   the person's own file.
+  - **The scratch folder** (`src/scratch.rs`, `/tmp/lokal-<uid>/<pid>`) is
+    where the model is told to put what it makes only to get the work done.
+    It goes when Lokal quits, and one left by a Lokal that was killed (a
+    closed terminal) goes at the next start.
+  - **It is private or it isn't there:** only a real folder of the person's
+    own, closed to others, since `/tmp` is everyone's and a folder someone
+    else made would let them read or swap what's written in it. Writing
+    there asks first, like anywhere else.
 
 ## Conventions here
 
@@ -106,6 +114,7 @@ dependencies.
 | `feedback.rs` | `/feedback`: the form, the preview, the POST through curl |
 | `approvals.rs` | Commands approved for a project |
 | `reasoning.rs` | The small window the reasoning shows in while the model thinks |
+| `scratch.rs` | The session's folder for temporary files |
 | `config.rs` | The settings file, about-me.md, the state files |
 | `spinner.rs`, `style.rs`, `interrupt.rs`, `text.rs` | Spinner, colors, Ctrl+C flag, every word on screen |
 | `site/` | The page at guimadaleno.com/lokal/, published by `.github/workflows/site.yml` |

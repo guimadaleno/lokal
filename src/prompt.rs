@@ -34,6 +34,13 @@ pub fn system_prompt(facts: &Facts, about_me: Option<&str>) -> String {
     for (label, path) in &facts.windows_folders {
         prompt.push_str(&format!("- {label}: {path}\n"));
     }
+    if let Some(scratch) = &facts.scratch {
+        prompt.push_str(&format!(
+            "- Scratch folder, deleted when Lokal quits: {scratch}. A file the user asks for goes \
+             where they say, or in the working directory; a file you make only to get the work done \
+             (a download, output to look through, a script to run once) goes in the scratch folder.\n"
+        ));
+    }
     if let Some(about_me) = about_me.map(str::trim).filter(|text| !text.is_empty()) {
         prompt.push_str("\nWhat the user wrote about themselves and how they like answers (this wins over the defaults above):\n");
         prompt.push_str(about_me);

@@ -61,6 +61,10 @@ impl Conversation {
         }
     }
 
+    pub fn scratch(&self) -> Option<&str> {
+        self.facts.scratch.as_deref()
+    }
+
     /// Picks about-me.md up again after it changed.
     pub fn refresh_system_prompt(&mut self) {
         self.system = prompt::system_prompt(&self.facts, config::read_about_me().as_deref());
