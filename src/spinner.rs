@@ -1,0 +1,64 @@
+//! The one-character pulse shown while Lokal waits on the model or a command:
+//! a dot that breathes. All its frames share one width class in Unicode, so
+//! it never jitters, whatever the terminal's setting for ambiguous widths.
+
+use std::io::Write;
+use std::time::{Duration, Instant};
+
+use crate::style;
+
+const FRAMES: [&str; 5] = ["·", "•", "●", "•", "·"];
+const FRAME_TIME: Duration = Duration::from_millis(160);
+
+/// Draws at the start of the current line, which must be empty.
+pub struct Spinner {
+    frame: usize,
+    drawn_at: Option<Instant>,
+}
+
+impl Spinner {
+    pub fn new() -> Self {
+        Spinner {
+            frame: 0,
+            drawn_at: None,
+        }
+    }
+
+    /// Draws the next frame when it's due; call it often.
+    pub fn tick(&mut self) {
+        self.tick_with("");
+    }
+
+    /// The same, with a few words after the pulse.
+    pub fn tick_with(&mut self, label: &str) {
+        if !style::enabled() || self.drawn_at.is_some_and(|at| at.elapsed() < FRAME_TIME) {
+            return;
+        }
+        let hide_cursor = if self.drawn_at.is_none() {
+            "\x1b[?25l"
+        } else {
+            ""
+        };
+        eprint!(
+            "{hide_cursor}\r{}{label}\x1b[K",
+            style::accent(FRAMES[self.frame])
+        );
+        let _ = std::io::stderr().flush();
+        self.frame = (self.frame + 1) % FRAMES.len();
+        self.drawn_at = Some(Instant::now());
+    }
+
+    /// Erases the spinner so other output can take its place.
+    pub fn clear(&mut self) {
+        if self.drawn_at.take().is_some() {
+            eprint!("\r\x1b[K\x1b[?25h");
+            let _ = std::io::stderr().flush();
+        }
+    }
+}
+
+impl Drop for Spinner {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}

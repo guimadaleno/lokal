@@ -1,0 +1,77 @@
+# Cutting a tag builds Lokal and publishes it to download.guimadaleno.com
+# with the signed manifest every installed Lokal updates from. The
+# publishing is guimadaleno/release's action, the same for every app;
+# README.md there is the authority on the format, the keys and the rules.
+#
+# Every `v*` tag is a release: it reaches every installed copy, unasked.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      # The action verifies the manifest against update.pub, from here.
+      - uses: actions/checkout@v7
+
+      # The version is Cargo.toml's and nowhere else, and a version exists
+      # with its entry in CHANGELOG.md. A tag that disagrees is not a release.
+      - name: The tag, Cargo.toml and CHANGELOG.md must agree
+        id: release
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          cargo=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)
+          echo "tag=$tag  Cargo.toml=$cargo"
+          if [ "$tag" != "$cargo" ]; then
+            echo "::error::the tag and Cargo.toml disagree about the version"
+            exit 1
+          fi
+          if ! grep -q "^## $tag " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no entry for $tag"
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+      # musl links everything in: one executable that runs on any Linux.
+      - name: The musl target
+        run: rustup target add x86_64-unknown-linux-musl
+
+      - name: Tests
+        run: cargo test
+
+      # LOKAL_RELEASE_BUILD is what makes this build update itself; one made
+      # anywhere else never replaces itself.
+      - name: Build
+        run: LOKAL_RELEASE_BUILD=1 cargo build --release --target x86_64-unknown-linux-musl
+
+      # files/ is what an installed Lokal puts in place of its own; the same
+      # executable is what the page offers, since it installs itself
+      # (`lokal --install`). The notes are the version's entry in CHANGELOG.md.
+      - name: Lay out the release
+        run: |
+          version=${{ steps.release.outputs.version }}
+          mkdir -p out/files out/downloads out/notes
+          cp target/x86_64-unknown-linux-musl/release/lokal out/files/
+          cp target/x86_64-unknown-linux-musl/release/lokal "out/downloads/lokal-$version-x86_64-linux"
+          awk -v head="## $version " 'index($0, head) == 1 { on = 1; next } on && /^## / { exit } on' \
+            CHANGELOG.md | sed '/./,$!d' > out/notes/en.txt
+
+      - name: Publish to download.guimadaleno.com
+        uses: guimadaleno/release/publish@v1.2.0
+        with:
+          app: lokal
+          version: ${{ steps.release.outputs.version }}
+          dir: out
+          update-key: ${{ secrets.UPDATE_KEY }}
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
