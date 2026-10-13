@@ -12,7 +12,8 @@ copy and the page show as its notes.
   by itself, from WSL too.
 - It runs commands, reads files and edits them. Read-only commands run right
   away; anything else, and every file change, waits for your yes, with the
-  diff in front of you.
+  diff in front of you. A long diff shows its start, and "Show the rest"
+  the remainder.
 - Approvals are a menu that starts on No. "Don't ask again" covers that exact
   command, for the session or for the project, and never a pattern.
 - While the model works, the spinner says what it's doing, for how long, and

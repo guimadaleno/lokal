@@ -13,8 +13,12 @@ dependencies.
   Lokal's code, never the model's judgement: a model can be talked into
   anything by a file it reads.
 - **Write a file without showing the diff and getting a yes.** The person
-  sees exactly what changes before it does, every time: file changes have no
+  sees what changes before it does, every time: file changes have no
   "don't ask again".
+  - **A long diff shows its first lines and how many are left out**
+    (`src/diff.rs`), so a new file doesn't flood the conversation. "Show the
+    rest", between Yes and No, prints them and asks again. Saying yes without
+    them is the person's choice, made with the count in front of them.
 - **Approve on a guess.** The approval menu starts on No, so Enter alone or
   Esc never approves. Saying no ends the turn, so the person says what to do
   instead.

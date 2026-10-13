@@ -123,7 +123,7 @@ fn run_command(args: &Value, input: &mut Input) -> Result<Outcome, String> {
             {
                 eprintln!("  {}", style::gray(explanation));
             }
-            let approval = input.approve(text::RUN_QUESTION, Some(command));
+            let approval = input.approve(command);
             input.keep_approval(&approval, command);
             if let Some(outcome) = refused(approval) {
                 return Ok(outcome);
@@ -277,9 +277,8 @@ fn propose(
         ));
     }
     eprintln!("{} {}", style::accent(step), config::shown(path));
-    diff::show(old, new);
-    // Every change to a file is asked about: there's no "don't ask again" here.
-    if let Some(outcome) = refused(input.approve(text::WRITE_QUESTION, None)) {
+    let rest = diff::show(old, new);
+    if let Some(outcome) = refused(input.approve_write(rest)) {
         return Ok(outcome);
     }
     config::write(path, new).map_err(|error| format!("can't write {}: {error}", path.display()))?;

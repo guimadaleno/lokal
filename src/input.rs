@@ -20,7 +20,7 @@ use rustyline::{
 };
 
 use crate::approvals::ProjectApprovals;
-use crate::{config, menu, style, text};
+use crate::{config, diff, menu, style, text};
 
 const PROMPT: &str = "> ";
 
@@ -134,30 +134,68 @@ impl Input {
         }
     }
 
-    /// Asks before something changes. The choice starts on No, so Enter
-    /// alone never approves. A `command` gets the choices of not asking again
-    /// about it; a file change never does.
-    pub fn approve(&mut self, question: &str, command: Option<&str>) -> Approval {
+    /// Asks before a command runs. The choice starts on No, so Enter alone
+    /// never approves, and offers not to ask again about this exact command.
+    pub fn approve(&mut self, command: &str) -> Approval {
         if self.editor.is_none() {
             return Approval::Unavailable;
         }
         discard_typed_ahead();
-        let mut options = vec![(text::CHOICE_YES, 'y', Approval::Yes)];
-        if let Some(command) = command {
-            options.push((text::CHOICE_YES_SESSION, 'a', Approval::YesForSession));
-            if self.project.can_keep(command) {
-                options.push((text::CHOICE_YES_PROJECT, 'p', Approval::YesForProject));
-            }
+        let mut options = vec![
+            (text::CHOICE_YES, 'y', Approval::Yes),
+            (text::CHOICE_YES_SESSION, 'a', Approval::YesForSession),
+        ];
+        if self.project.can_keep(command) {
+            options.push((text::CHOICE_YES_PROJECT, 'p', Approval::YesForProject));
         }
         options.push((text::CHOICE_NO, 'n', Approval::No));
         let items: Vec<menu::Item> = options
             .iter()
             .map(|(label, key, _)| menu::Item { label, key: *key })
             .collect();
-        match menu::choose(question, &items, items.len() - 1) {
+        match menu::choose(text::RUN_QUESTION, &items, items.len() - 1) {
             Some(menu::Choice::Picked(index)) => options.swap_remove(index).2,
             Some(menu::Choice::Interrupted) => Approval::Stop,
             None => Approval::Unavailable,
+        }
+    }
+
+    /// Asks before a file changes, starting on No; a file change never gets
+    /// "don't ask again". When the diff showed only its start, `rest` holds
+    /// the lines left out, and a choice between Yes and No prints them and
+    /// asks again.
+    pub fn approve_write(&mut self, mut rest: Vec<String>) -> Approval {
+        if self.editor.is_none() {
+            return Approval::Unavailable;
+        }
+        loop {
+            // Again after the rest: keys pressed while it printed came
+            // before the question.
+            discard_typed_ahead();
+            let mut items = vec![menu::Item {
+                label: text::CHOICE_YES,
+                key: 'y',
+            }];
+            if !rest.is_empty() {
+                items.push(menu::Item {
+                    label: text::CHOICE_SHOW_REST,
+                    key: 's',
+                });
+            }
+            items.push(menu::Item {
+                label: text::CHOICE_NO,
+                key: 'n',
+            });
+            let no = items.len() - 1;
+            match menu::choose(text::WRITE_QUESTION, &items, no) {
+                Some(menu::Choice::Picked(0)) => return Approval::Yes,
+                Some(menu::Choice::Picked(index)) if index < no => {
+                    diff::print(&std::mem::take(&mut rest));
+                }
+                Some(menu::Choice::Picked(_)) => return Approval::No,
+                Some(menu::Choice::Interrupted) => return Approval::Stop,
+                None => return Approval::Unavailable,
+            }
         }
     }
 

@@ -65,6 +65,7 @@ pub const WRITE_QUESTION: &str = "Write it?";
 pub const CHOICE_YES: &str = "Yes";
 pub const CHOICE_YES_SESSION: &str = "Yes, and don't ask again this session";
 pub const CHOICE_YES_PROJECT: &str = "Yes, and don't ask again in this project";
+pub const CHOICE_SHOW_REST: &str = "Show the rest";
 pub const CHOICE_NO: &str = "No";
 pub const APPROVED_FOR_SESSION: &str = "approved earlier in this session";
 pub const APPROVED_FOR_PROJECT: &str = "approved for this project";
