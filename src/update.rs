@@ -4,10 +4,12 @@
 //! silent and leaves everything as it was. guimadaleno/release's README is
 //! the authority on the format and the rules; release.rs is its client.
 
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -187,16 +189,27 @@ fn is_expected(bytes: &[u8], file: &release::File) -> bool {
 fn put_in_place(executable: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let staged = staged_path(executable);
     let permissions = fs::metadata(executable)?.permissions();
-    fs::write(&staged, bytes)?;
-    fs::set_permissions(&staged, permissions)?;
-    fs::rename(&staged, executable).inspect_err(|_| {
-        let _ = fs::remove_file(&staged);
-    })
+    // Only a file made here: one already there is another check's.
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&staged)?;
+    file.write_all(bytes)
+        .and_then(|()| fs::set_permissions(&staged, permissions))
+        .and_then(|()| fs::rename(&staged, executable))
+        .inspect_err(|_| {
+            let _ = fs::remove_file(&staged);
+        })
 }
 
+/// Beside the executable, and this call's own. Two checks at once, in one
+/// Lokal (the day's and `/update`) or in two, would otherwise write into the
+/// same file, and one could rename it in while the other was still writing.
 fn staged_path(executable: &Path) -> PathBuf {
+    static CALLS: AtomicU32 = AtomicU32::new(0);
+    let call = CALLS.fetch_add(1, Ordering::Relaxed);
     let mut name = executable.file_name().unwrap_or_default().to_os_string();
-    name.push(".new");
+    name.push(format!(".new-{}-{call}", std::process::id()));
     executable.with_file_name(name)
 }
 
@@ -313,8 +326,33 @@ mod tests {
             fs::metadata(&executable).unwrap().permissions().mode() & 0o777,
             0o755
         );
-        assert!(!staged_path(&executable).exists());
+        // Nothing staged is left beside it.
+        assert_eq!(fs::read_dir(&folder).unwrap().count(), 1);
         assert!(can_replace(&executable));
+        fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn two_checks_at_once_each_put_a_whole_file_in_place() {
+        let folder = std::env::temp_dir().join(format!("lokal-update-race-{}", std::process::id()));
+        fs::create_dir_all(&folder).unwrap();
+        let executable = folder.join("lokal");
+        fs::write(&executable, b"old").unwrap();
+        // Big enough that the two writes overlap.
+        let new: Vec<u8> = (0..8 * 1024 * 1024).map(|n| (n % 251) as u8).collect();
+
+        let checks: Vec<_> = (0..2)
+            .map(|_| {
+                let (executable, new) = (executable.clone(), new.clone());
+                thread::spawn(move || put_in_place(&executable, &new))
+            })
+            .collect();
+        for check in checks {
+            assert!(check.join().unwrap().is_ok());
+        }
+
+        assert!(fs::read(&executable).unwrap() == new);
+        assert_eq!(fs::read_dir(&folder).unwrap().count(), 1);
         fs::remove_dir_all(&folder).unwrap();
     }
 }
