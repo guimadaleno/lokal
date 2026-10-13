@@ -250,8 +250,15 @@ fn run_command(
         }
         "/help" => {
             eprintln!();
+            // The longest name and two spaces, so every description lines up.
+            let width = text::COMMANDS
+                .iter()
+                .map(|(name, _)| name.len())
+                .max()
+                .unwrap_or(0)
+                + 2;
             for (name, about) in text::COMMANDS {
-                eprintln!("  {name:<9}{}", style::gray(about));
+                eprintln!("  {name:<width$}{}", style::gray(about));
             }
             eprintln!("{}", style::gray(text::HELP_KEYS));
             eprintln!();
