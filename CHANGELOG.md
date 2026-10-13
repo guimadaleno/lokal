@@ -5,6 +5,11 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.2.1 — 2026-10-13
+
+- `/help` lines up every description, `/reasoning`'s and `/feedback`'s too.
+- `/about` shows the author and the website, without a link that led nowhere.
+
 ## 0.2.0 — 2026-10-13
 
 - While it works, the model says in one line what each step is for, and
