@@ -5,6 +5,12 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.1.1 — 2026-10-13
+
+- A slash command typed at the first-launch question ("how do you like your
+  answers?") runs as a command, instead of being saved as your answer. The
+  question comes back the next time Lokal starts.
+
 ## 0.1.0 — 2026-10-13
 
 - Lokal is a terminal assistant that runs on a model on your own machine:
