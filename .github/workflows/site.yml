@@ -1,0 +1,57 @@
+# Lokal's page, published on its own whenever site/ changes: a paragraph
+# should not wait for a release. Releases are not here: they are at
+# download.guimadaleno.com/lokal/, which the page reads for its version and
+# its checksum, so nothing here touches them.
+#
+# Where it goes is the repository's secrets: DEPLOY_KEY (the private half of
+# a deploy key), DEPLOY_KNOWN_HOSTS (the server's host key), DEPLOY_USER and
+# DEPLOY_HOST. The folder is the key's, not this file's: the server holds
+# the key to Lokal's folder with rrsync -no-del, so it can write there and
+# nowhere else, never delete, and runs no shell. Without the secrets the job
+# does nothing.
+#
+# The host key is a secret rather than StrictHostKeyChecking=no, so nothing
+# else answering at that address gets a signed-in copy.
+name: Site
+
+on:
+  push:
+    branches: [main]
+    paths: ['site/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+    steps:
+      - uses: actions/checkout@v7
+        if: env.DEPLOY_HOST != ''
+
+      - name: Publish
+        if: env.DEPLOY_HOST != ''
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          rsync -rlptz --chmod=D755,F644 \
+            -e "ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes" \
+            site/ "$DEPLOY_USER@$DEPLOY_HOST:"
+
+      - name: Forget the key
+        if: always()
+        run: rm -f ~/.ssh/id_deploy

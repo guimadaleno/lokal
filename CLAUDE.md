@@ -76,6 +76,8 @@ dependencies.
 | `release.rs` | guimadaleno/release's client, **copied unchanged** |
 | `config.rs` | The settings file, about-me.md, the state files |
 | `spinner.rs`, `style.rs`, `interrupt.rs`, `text.rs` | Spinner, colors, Ctrl+C flag, every word on screen |
+| `site/` | The page at guimadaleno.com/lokal/, published by `.github/workflows/site.yml` |
+| `tools/icon.py` | Draws the mark and writes `site/`'s icons from one definition |
 
 ## Invariants
 
@@ -118,6 +120,10 @@ on the machine it runs on (`targetHistories` → `lmstudio` →
 `lastRecordedAppVersion`). From WSL, that's under `/mnt/c/Users/<user>/`.
 Its About screen shows the same thing.
 
+**The page's "Set up LM Studio" steps name its screens and options** (the
+Developer tab, "Serve on Local Network", the mark on models that use tools).
+When LM Studio changes, check those words in `site/index.html` too.
+
 ## Build and validation
 
 ```
@@ -135,6 +141,13 @@ cargo clippy --all-targets
 - **The release build is static (musl).** Before touching dependencies:
   `rustup target add x86_64-unknown-linux-musl`, then
   `LOKAL_RELEASE_BUILD=1 cargo build --release --target x86_64-unknown-linux-musl`.
+- **The icons come from `python3 tools/icon.py`,** never from editing the
+  files: the SVG, the PNG and every size of the `.ico` share its numbers, and
+  16 px has a drawing of its own.
+- **Look at the page in a headless browser,** dark and light:
+  `index.html#dark-still` and `#light-still` pick the theme and hold the
+  animation for the screenshot. Check phone width (390 px) inside an
+  `<iframe>`, because desktop Chrome won't make a window that narrow.
 
 ## Versioning and releases
 
@@ -159,6 +172,10 @@ cargo clippy --all-targets
 - **`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` are the repository's
   secrets** for the `guimadaleno-update-lokal` bucket, and are scoped to that
   bucket only.
+- **The page publishes with `DEPLOY_KEY`, `DEPLOY_KNOWN_HOSTS`, `DEPLOY_USER`
+  and `DEPLOY_HOST`,** like the other apps' pages: a deploy key the server
+  holds to Lokal's folder only, through `rrsync -no-del`. Until they're set,
+  `site.yml` does nothing.
 
 ## Measured
 
@@ -193,9 +210,11 @@ Measured on a current laptop, under WSL.
 - **A test against a real server,** run when a variable points at one
   (`LOKAL_TEST_SERVER=host:port cargo test`), turning the LM Studio table
   above into one command.
-- **A page** at `guimadaleno.com/lokal/`, with an orange logo and a one-line
-  install. The page reads `latest.json` for the version, as every app's page
-  does, since only `latest.json` and `SHA256SUMS` have version-less names.
+- **Publishing the page** (`site/`): it needs the deploy secrets and Lokal's
+  folder on the server, and it should go out with the first release. It
+  reads `latest.json` for the version and the checksum, since only
+  `latest.json` and `SHA256SUMS` have version-less names; until then, the
+  markup's own text is still true.
 - **Distribution: the executable, never an install script.** The one line
   downloads the release file and lets it install itself:
   `curl -fsSLo lokal https://download.guimadaleno.com/lokal/<version>/lokal && chmod +x lokal && ./lokal --install`.

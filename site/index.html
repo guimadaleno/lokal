@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lokal — a terminal assistant that runs on your own model</title>
+<meta name="description" content="A terminal assistant for Linux and WSL that runs on a model on your own machine. It runs commands, reads and changes files, and asks before anything changes.">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="lokal-logo.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="lokal-icon.png">
+<meta property="og:title" content="Lokal">
+<meta property="og:description" content="A terminal assistant that runs on a model on your own machine, and asks before anything changes.">
+<meta property="og:image" content="https://guimadaleno.com/lokal/lokal-icon.png">
+<meta property="og:type" content="website">
+<style>
+/* ------------------------------------------------------------------ tokens
+   Light is the complete palette; dark only reassigns. The orange and the
+   blue-gray are the terminal's own (xterm 173 and 110), so the page looks
+   like the program. Contrast is against each theme's ground. */
+:root {
+  --ground:   #f6f4f1;
+  --raised:   #ffffff;
+  --ink:      #1c1a18;   /* 15.8:1 */
+  --muted:    #6b655f;   /* 5.2:1 */
+  --rule:     #e2ddd7;   /* a line, never text */
+  --orange:   #a2532c;   /* text and links: 5.0:1 */
+  --code:     #3f6a96;   /* 5.2:1 */
+  --btn:      #a2532c;   /* white on it: 5.5:1 */
+  --chevron:  #1c1a18;   /* the mark's chevron, beside the name */
+  --dot:      #c06a40;   /* the mark's dot, a graphic: 3.6:1 */
+  /* The terminal stays a terminal in both themes. */
+  --term:        #131211;
+  --term-ink:    #ece8e3;   /* 15.3:1 */
+  --term-gray:   #9a948d;   /* 6.2:1 */
+  --term-faint:  #4a4744;   /* the line between turns, never text */
+  --term-orange: #d7875f;   /* 6.7:1 */
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #131211; --raised: #1c1a18; --ink: #ece8e3; --muted: #9a948d;
+    --rule: #2c2926; --orange: #d7875f; --code: #87afd7; --chevron: #ece8e3;
+    --dot: #d7875f; --term: #0d0c0b;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #131211; --raised: #1c1a18; --ink: #ece8e3; --muted: #9a948d;
+  --rule: #2c2926; --orange: #d7875f; --code: #87afd7; --chevron: #ece8e3;
+  --dot: #d7875f; --term: #0d0c0b;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+:root[data-still] * { animation: none !important; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  /* No web font: a page that says nothing is sent shouldn't open by fetching one. */
+  font: 400 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, "Noto Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+code, pre { font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; }
+a { color: var(--orange); }
+.wrap { max-width: 960px; margin: 0 auto; padding: 0 16px; }
+
+/* ------------------------------------------------------------------ hero */
+.hero { padding: 72px 0 32px; text-align: center; }
+.logo { display: inline-flex; align-items: center; gap: 12px; }
+.name { font: 600 44px/1 ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace; letter-spacing: -.02em; }
+.lead { font-size: 20px; color: var(--muted); max-width: 560px; margin: 18px auto 32px; }
+
+.install { display: flex; align-items: stretch; max-width: 760px; margin: 0 auto; background: var(--term); border-radius: 10px; overflow: hidden; text-align: left; }
+/* min-width: 0 lets the line scroll inside the box instead of widening the page. */
+.install code { flex: 1; min-width: 0; color: var(--term-ink); padding: 14px 16px; font-size: 14px; overflow-x: auto; white-space: nowrap; }
+.install code::before { content: "$ "; color: var(--term-orange); }
+.install button { border: 0; background: var(--btn); color: #fff; font: 600 14px/1 system-ui, sans-serif; padding: 0 18px; cursor: pointer; }
+.install-note { font-size: 13px; color: var(--muted); max-width: 760px; margin: 10px auto 0; }
+.install-note code { font-size: 12px; }
+.install-note .sha { word-break: break-all; }
+
+@keyframes breathe { 0%, 100% { transform: scale(.6); opacity: .6; } 50% { transform: scale(1); opacity: 1; } }
+.breathe { transform-origin: center; transform-box: fill-box; animation: breathe 1.6s ease-in-out infinite; }
+
+/* ------------------------------------------------------------------ the terminal */
+.terminal { max-width: 760px; margin: 48px auto 0; background: var(--term); color: var(--term-ink); border-radius: 12px; padding: 18px 20px 20px; font-size: 13.5px; line-height: 1.55; text-align: left; box-shadow: 0 20px 50px rgba(0, 0, 0, .18); overflow-x: auto; }
+.terminal pre { margin: 0; white-space: pre; }
+.t-gray { color: var(--term-gray); }
+.t-orange { color: var(--term-orange); }
+.t-bold { font-weight: 700; }
+.t-rule { display: block; color: var(--term-faint); overflow: hidden; white-space: nowrap; }
+
+/* ------------------------------------------------------------------ sections */
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px; padding: 56px 0 8px; }
+.cols h2 { margin: 0 0 6px; font-size: 17px; }
+.cols p { margin: 0; color: var(--muted); }
+
+.steps, .refuses { padding: 48px 0 8px; }
+.steps h2, .refuses h2 { font-size: 24px; margin: 0 0 6px; }
+.steps > p, .refuses > p { color: var(--muted); margin: 0 0 20px; }
+.steps ol { margin: 0; padding: 0; list-style: none; counter-reset: step; display: grid; gap: 12px; }
+.steps li { counter-increment: step; display: grid; grid-template-columns: 32px 1fr; gap: 12px; background: var(--raised); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; }
+.steps li::before { content: counter(step); font: 600 14px/28px ui-monospace, Menlo, Consolas, monospace; color: var(--orange); text-align: center; border: 1px solid var(--rule); border-radius: 50%; width: 28px; height: 28px; }
+.steps li b { display: block; }
+.steps li span { color: var(--muted); font-size: 15px; }
+.steps code, .refuses code, .cols code { color: var(--code); font-size: .92em; }
+
+.refuses ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.refuses li { padding-left: 22px; position: relative; }
+.refuses li::before { content: "·"; position: absolute; left: 6px; color: var(--orange); font-weight: 700; }
+
+footer { margin-top: 64px; padding: 24px 0 48px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px 16px; justify-content: center; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <section class="hero">
+    <div class="logo">
+      <!-- The mark: tools/icon.py's LARGE drawing, without the tile. -->
+      <svg width="52" height="52" viewBox="10 10 46 44" aria-hidden="true"><path d="M14 19L28 32L14 45" fill="none" stroke="var(--chevron)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><circle class="breathe" cx="44" cy="32" r="9.5" fill="var(--dot)"/></svg>
+      <h1 class="name">lokal</h1>
+    </div>
+    <p class="lead">A terminal assistant that runs on a model on your own machine. It runs commands, reads your files and changes them, and asks before anything changes.</p>
+
+    <div class="install"><code id="install">curl -fsSLo lokal https://download.guimadaleno.com/lokal/0.1.0/lokal &amp;&amp; chmod +x lokal &amp;&amp; ./lokal --install</code><button type="button" data-copy="install">Copy</button></div>
+    <p class="install-note">Version <span id="version">0.1.0</span>, for Linux and WSL on x86-64. One file, which installs itself in <code>~/.local/bin</code> and keeps itself up to date. <span id="checksum">Its SHA-256 is in <a href="https://download.guimadaleno.com/lokal/SHA256SUMS">SHA256SUMS</a>.</span></p>
+
+    <div class="terminal" aria-label="Lokal in a terminal">
+<pre><span class="t-bold">Lokal</span> 0.1.0  <span class="t-gray">qwen3.8-27b</span>
+<span class="t-orange">&gt; is the web container running?</span>
+
+<span class="t-orange">$</span> docker ps -a --filter name=web --format '{{.Names}} {{.Status}}'
+
+  <span class="t-gray">web Exited (0) 2 hours ago</span>
+
+It's <span class="t-bold">stopped</span>: it exited 2 hours ago.
+<span class="t-rule">────────────────────────────────────────────────────────────────────────────────────────────────</span><span class="t-orange">&gt; start it</span>
+
+<span class="t-orange">$</span> docker start web
+
+  <span class="t-gray">Starts the stopped container web.</span>
+  Run it?
+    <span class="t-gray">Yes</span>
+    <span class="t-gray">Yes, and don't ask again for this command</span>
+  <span class="t-orange">›</span> No</pre>
+    </div>
+  </section>
+
+  <section class="cols">
+    <div><h2>Your model, your machine</h2><p>LM Studio, or any server that speaks the OpenAI API. Lokal finds it on its own, from WSL too.</p></div>
+    <div><h2>Asks before it acts</h2><p>Read-only commands run at once. Anything else waits for your yes, and every file change shows its diff first.</p></div>
+    <div><h2>Quiet</h2><p>No reasoning on screen, just the answer. A breathing dot while it works, and how long it took.</p></div>
+  </section>
+
+  <section class="steps" id="lm-studio">
+    <h2>Set up LM Studio</h2>
+    <p>About five minutes, once.</p>
+    <ol>
+      <li><div><b>Install LM Studio</b><span>From <a href="https://lmstudio.ai">lmstudio.ai</a>, on the machine that will run the model.</span></div></li>
+      <li><div><b>Download a model that can use tools</b><span>LM Studio marks the models that support tool use; Lokal needs one to run commands and edit files.</span></div></li>
+      <li><div><b>Load it with room to work</b><span>A context length of 32k tokens or more: command output and files fill it up.</span></div></li>
+      <li><div><b>Start the server</b><span>In the Developer tab, switch the server on. Lokal looks for it on port 1234.</span></div></li>
+      <li><div><b>Using WSL? Let it reach Windows</b><span>Turn on "Serve on Local Network" in the server's settings. LM Studio runs on Windows, and WSL reaches it over the network; Lokal finds the address by itself.</span></div></li>
+      <li><div><b>Run <code>lokal</code></b><span>That's it. To pin a server or a model, write them in <code>~/.config/lokal/config</code>.</span></div></li>
+    </ol>
+  </section>
+
+  <section class="refuses">
+    <h2>What it won't do</h2>
+    <p>Lokal is defined as much by what it refuses.</p>
+    <ul>
+      <li>Run anything that can change your machine without your yes. Which commands count as read-only is Lokal's own list, never the model's call.</li>
+      <li>Change a file without showing you the diff first, every time.</li>
+      <li>Take a key you pressed before the question as its answer.</li>
+      <li>Send anything anywhere, except one update check a day, which <code>updates = off</code> turns off.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <span>Made by Guilherme Madaleno</span>
+    <a href="https://guimadaleno.com">guimadaleno.com</a>
+    <a href="https://github.com/guimadaleno/lokal">GitHub</a>
+  </footer>
+</main>
+
+<script>
+// The newest release, from the signed manifest every installed Lokal reads.
+// If it can't be read, the markup above already says something true.
+fetch('https://download.guimadaleno.com/lokal/latest.json', { cache: 'no-cache' })
+  .then(function (response) { return response.ok ? response.json() : Promise.reject(); })
+  .then(function (manifest) {
+    var release = JSON.parse(manifest.release);
+    var file = (release.files || []).filter(function (f) { return f.name === 'lokal'; })[0];
+    if (!release.version || !file) return;
+    document.getElementById('install').textContent =
+      'curl -fsSLo lokal ' + file.url + ' && chmod +x lokal && ./lokal --install';
+    document.getElementById('version').textContent = release.version;
+    var checksum = document.getElementById('checksum');
+    checksum.textContent = 'SHA-256: ';
+    var sha = document.createElement('code');
+    sha.className = 'sha';
+    sha.textContent = file.sha256;
+    checksum.appendChild(sha);
+  })
+  .catch(function () {});
+
+document.addEventListener('click', function (event) {
+  var copy = event.target.closest('[data-copy]');
+  if (!copy) return;
+  var text = document.getElementById(copy.dataset.copy).textContent;
+  navigator.clipboard.writeText(text).then(function () {
+    copy.textContent = 'Copied';
+    setTimeout(function () { copy.textContent = 'Copy'; }, 1500);
+  });
+});
+
+// #dark or #light, and -still to hold the animation: how screenshots are taken.
+(function () {
+  var asked = location.hash.slice(1).split('-');
+  if (asked[0] === 'dark' || asked[0] === 'light') document.documentElement.dataset.theme = asked[0];
+  if (asked[1] === 'still') document.documentElement.dataset.still = '';
+})();
+</script>
+</body>
+</html>
