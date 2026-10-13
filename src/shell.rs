@@ -115,6 +115,9 @@ struct Screen {
     lines: usize,
     spinner: Spinner,
     started: Instant,
+    /// The blank line before the output, owed until there is some: a silent
+    /// command leaves no gap.
+    gap: bool,
 }
 
 impl Screen {
@@ -124,6 +127,7 @@ impl Screen {
             lines: 0,
             spinner: Spinner::new(),
             started: Instant::now(),
+            gap: true,
         }
     }
 
@@ -132,6 +136,9 @@ impl Screen {
         self.lines += 1;
         if self.lines <= SHOWN_LINES {
             self.spinner.clear();
+            if std::mem::take(&mut self.gap) {
+                eprintln!();
+            }
             let line: String = line.trim_end().chars().take(SHOWN_WIDTH).collect();
             eprintln!("  {}", style::gray(&line));
         } else {

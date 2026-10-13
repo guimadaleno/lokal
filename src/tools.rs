@@ -101,6 +101,7 @@ fn run_command(args: &Value, input: &mut Input) -> Result<Outcome, String> {
     let command = text_arg(args, "command")?;
     eprintln!("{} {}", style::accent("$"), command.replace('\n', "\n  "));
     if !allowlist::is_read_only(command) {
+        eprintln!();
         if input.is_approved_for_session(command) {
             eprintln!("  {}", style::faint(text::APPROVED_FOR_SESSION));
         } else {
@@ -121,6 +122,7 @@ fn run_command(args: &Value, input: &mut Input) -> Result<Outcome, String> {
             }
         }
     }
+    // The output is a block of its own, after the command and any question.
     match shell::run(command).map_err(|error| format!("couldn't start bash: {error}"))? {
         Run::Finished { output, code } => Ok(Outcome::Done(command_result(&output, code))),
         Run::Stopped => Ok(Outcome::Stopped),
