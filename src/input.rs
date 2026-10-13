@@ -77,7 +77,6 @@ impl Input {
         let editor = Editor::with_config(config).ok().map(|mut editor| {
             editor.set_helper(Some(Helper {
                 status: None,
-                width: 0,
                 quit_armed: quit_armed.clone(),
                 accented: false,
             }));
@@ -91,21 +90,19 @@ impl Input {
     }
 
     /// The terminal's width right now, if there's a terminal.
-    pub fn width(&mut self) -> Option<usize> {
-        let (columns, _) = self.editor.as_mut()?.dimensions()?;
-        Some(columns as usize)
+    pub fn width(&self) -> Option<usize> {
+        self.editor.as_ref()?;
+        terminal_width()
     }
 
     /// Reads a request at the `>` prompt. `status` (the model's time and
     /// the share of the context in use) shows at the far right of the line.
     pub fn request(&mut self, status: Option<String>) -> Line {
-        let width = self.width().unwrap_or(0);
         let Some(editor) = &mut self.editor else {
             return Line::Quit;
         };
         if let Some(helper) = editor.helper_mut() {
             helper.status = status;
-            helper.width = width;
             helper.accented = true;
         }
         // Only here: at an approval, one Ctrl+C stops the turn.
@@ -180,6 +177,15 @@ impl Input {
     }
 }
 
+/// Columns in the terminal, asked of it each time: the window may have changed.
+fn terminal_width() -> Option<usize> {
+    let terminal = OpenOptions::new().read(true).open("/dev/tty").ok()?;
+    // SAFETY: winsize is plain data, filled in by the ioctl.
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    let found = unsafe { libc::ioctl(terminal.as_raw_fd(), libc::TIOCGWINSZ, &mut size) } == 0;
+    (found && size.ws_col > 0).then_some(size.ws_col as usize)
+}
+
 /// Keys pressed while Lokal was working were pressed before the question was
 /// on screen, so they can't be its answer: a "y" typed early would approve a
 /// command nobody has seen.
@@ -222,7 +228,6 @@ impl ConditionalEventHandler for QuitOnSecondCtrlC {
 
 struct Helper {
     status: Option<String>,
-    width: usize,
     quit_armed: Arc<AtomicBool>,
     /// The `>` line is in the accent color, so the person's messages stand
     /// out in the conversation. Questions aren't.
@@ -243,12 +248,10 @@ impl Helper {
                 + line.chars().count()
                 + display.chars().count()
                 + status.chars().count();
-            // Stay off the last column, or the terminal wraps the line.
-            if let Some(padding) = self
-                .width
-                .checked_sub(used + 1)
-                .filter(|padding| *padding >= 2)
-            {
+            // Read on every redraw, so the status follows the window as it's
+            // resized. Off the last column, or the terminal wraps the line.
+            let width = terminal_width().unwrap_or(0);
+            if let Some(padding) = width.checked_sub(used + 1).filter(|padding| *padding >= 2) {
                 display.push_str(&" ".repeat(padding));
                 display.push_str(status);
             }
