@@ -16,20 +16,43 @@ dependencies.
   sees exactly what changes before it does, every time: file changes have no
   "don't ask again".
 - **Approve on a guess.** The approval menu starts on No, so Enter alone or
-  Esc never approves. "Don't ask again" covers that exact command text,
-  for that session, and is never saved. A pattern like `docker *` would let
-  in commands nobody saw (`docker run -v /:/host …`), and a file the model
-  reads could steer it to use one. Saying no ends the turn, so the person
-  says what to do instead.
+  Esc never approves. Saying no ends the turn, so the person says what to do
+  instead.
+- **Approve more than the person saw.** "Don't ask again" covers that exact
+  command text, for the session or for the project.
+  - **A pattern like `docker *` would let in commands nobody saw**
+    (`docker run -v /:/host …`), and a file the model reads could steer it to
+    use one.
+  - **The project's approvals live in the person's own settings**
+    (`~/.config/lokal/approved`), never inside the project, or a cloned
+    repository could grant itself commands that run unasked.
+  - **The project is the git root around the working directory,** or the
+    directory itself. The file keeps its newest 500 lines.
+- **Let the model change Lokal's own files,** not even with a yes. That means
+  the settings, about-me.md, the approvals and the saved conversation, checked
+  on the path the kernel would reach (`config::is_lokal_own`). Otherwise one
+  approved diff could send every later conversation to another server,
+  approve commands, or plant instructions in what every conversation starts
+  with. The one way in is `remember`, which adds a line to about-me.md when
+  the person asks, shown as a diff.
 - **Take an answer from anything but a terminal as approval.** Piped stdin
   never says yes; without a terminal, nothing beyond reading runs. Keys
   pressed before an approval question was on screen are discarded, because
   a "y" typed early would approve a command nobody has seen.
-- **Show the model's reasoning.** It arrives separately or inside
-  `<think>`, and neither reaches the screen (`src/answer.rs`).
+- **Keep the model's reasoning.** While it thinks, its last few lines show
+  faint in a small window that clears itself when the answer or a step
+  begins (`src/reasoning.rs`; `/reasoning` hides it for the session). The
+  conversation and the scrollback keep none of it. Reasoning sent inside
+  `<think>` never shows (`src/answer.rs`).
 - **Send anything on its own beyond the update check.** The model server is
-  the only other address it talks to. The check is one GET a day, carries
-  nothing that identifies the machine, and `updates = off` switches it off.
+  the only other address it talks to on its own. The check is one GET a day,
+  carries nothing that identifies the machine, and `updates = off` switches it
+  off.
+- **Send a report the person hasn't seen whole.** `/feedback` goes to
+  guimadaleno/issues only when the person writes it, sees all of it, and
+  picks Send. The menu starts on Don't send. It sends kinds, never names:
+  no server address, no model. **The conversation is never part of it,**
+  since it can hold files and secrets the model read.
 - **Grow on disk.** It keeps the last conversation only, and about-me.md is
   the person's own file.
 
@@ -69,11 +92,16 @@ dependencies.
 | `server.rs`, `http.rs` | Finding the server and its model; plain-HTTP requests |
 | `tools.rs`, `shell.rs`, `diff.rs` | The model's tools, running a command, showing a change |
 | `allowlist.rs` | Which commands run without asking |
+| `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it |
 | `input.rs` | The `>` prompt (hints, completion, Ctrl+C twice) and approvals |
 | `menu.rs` | The arrow-key choice the approvals use |
 | `prompt.rs`, `system.rs` | The system prompt and the machine facts in it |
 | `update.rs`, `install.rs` | Updating itself; `lokal --install` |
 | `release.rs` | guimadaleno/release's client, **copied unchanged** |
+| `report.rs` | guimadaleno/issues' client, **copied unchanged** |
+| `feedback.rs` | `/feedback`: the form, the preview, the POST through curl |
+| `approvals.rs` | Commands approved for a project |
+| `reasoning.rs` | The small window the reasoning shows in while the model thinks |
 | `config.rs` | The settings file, about-me.md, the state files |
 | `spinner.rs`, `style.rs`, `interrupt.rs`, `text.rs` | Spinner, colors, Ctrl+C flag, every word on screen |
 | `site/` | The page at guimadaleno.com/lokal/, published by `.github/workflows/site.yml` |
@@ -81,10 +109,12 @@ dependencies.
 
 ## Invariants
 
-- **`src/release.rs` and `tests/release/` are copies, changed only at their
-  source** (`guimadaleno/release`'s `client/release.rs` and `testdata/`).
-  That's why `release.rs` is declared with `#[rustfmt::skip]` and
-  `#[allow(clippy::all)]`: an edit here makes the copies disagree.
+- **`src/release.rs` and `tests/release/`, `src/report.rs` and
+  `tests/report/` are copies, changed only at their source:**
+  `guimadaleno/release` (`client/release.rs`, `testdata/`) and
+  `guimadaleno/issues` (`client/report.rs`, `testdata/`). That's why both
+  modules are declared with `#[rustfmt::skip]` and `#[allow(clippy::all)]`:
+  an edit here makes the copies disagree.
 - **Only the release workflow's build updates itself.** `update.rs` is
   compiled in only with `LOKAL_RELEASE_BUILD` set. Without that, a
   development build would replace itself and undo the rebuild.
@@ -94,6 +124,17 @@ dependencies.
 - **Commands run in a session of their own** (`setsid` in `shell.rs`). Then
   nothing can wait on the terminal (sudo fails at once instead of hanging),
   and Ctrl+C reaches a command only through Lokal.
+- **While Lokal works, it reads the keyboard itself** (`keys.rs`): Ctrl+C or
+  a lone Esc stops the turn, and other keys are dropped rather than echoed
+  over the output. The reader ends before anything asks the person
+  something, so no key reaches a question it wasn't typed for.
+- **One reply gets at most half the context** (`max_tokens`). A model
+  reasoning in circles then stops there instead of filling all of it.
+- **A reply that ends with nothing is never silent.** When it ran out of
+  room (`finish_reason: "length"`), Lokal asks once more, with a note to
+  reason briefly; the reasoning isn't kept, so the second try has room. If
+  that fails too, it says the context ran out. While the model works, the
+  spinner says how much of the context the reply has reached.
 
 ## LM Studio moves under Lokal
 
@@ -113,6 +154,7 @@ Last checked against **LM Studio 0.4.18**, on 2026-10-13.
 | Reasoning comes in `delta.reasoning_content` (with "separate reasoning content" on) or inside `<think>` in the content | `answer.rs`, `chat.rs` | the same request, with a reasoning model |
 | A tool call streams its `index`, `id` and `function.name` first, then `arguments` in pieces, ending with `finish_reason: "tool_calls"`; blank content may come first | `chat.rs` | a request with one tool that the prompt asks it to use |
 | A `model` that doesn't exist falls back to the loaded model instead of failing | `server.rs` checks the name first | a request with `"model": "nope"` |
+| `max_tokens` caps a reply, and one cut short ends with `finish_reason: "length"` | `conversation.rs` | a request with `"max_tokens": 50` and a long question |
 | Under WSL's NAT networking, the server is reached at the Windows host (the default gateway) only with "Serve on Local Network" on | `server.rs`, `system.rs` | `curl <gateway>:1234/v1/models` from WSL |
 
 LM Studio writes its version to `~/.lmstudio/.internal/historical-version-info.json`
@@ -181,7 +223,7 @@ cargo clippy --all-targets
 
 | What | Measured |
 |---|---|
-| Release binary (static, stripped) | 1.8 MB |
+| Release binary (static, stripped) | 1.9 MB |
 | Start to the prompt, server found | ~40 ms |
 | Memory at the prompt | ~3 MB |
 
@@ -189,8 +231,28 @@ Measured on a current laptop, under WSL.
 
 ## Unverified paths
 
+- **Ctrl+C or Esc while Lokal works, in a Windows console:** there, Ctrl+C
+  never became SIGINT while the model thought or a command ran. At the `>`
+  and in approvals, it worked.
+  - **The difference:** at the prompt, Ctrl+C is read as a key. While
+    working, it had to become SIGINT, and that path is what fails there. The
+    Linux side was all correct: `isig` on, `intr = ^C`, Lokal in the
+    foreground group, the handler installed.
+  - **So now Lokal reads keys while it works** (`keys.rs`). The terminal is
+    without ISIG, ICANON and ECHO, and a thread reads the tty, ended before
+    any prompt or approval reads it. Tested in a pseudo-terminal: Ctrl+C and
+    a lone Esc stop the model and a running command; an arrow key doesn't;
+    typed keys don't echo.
+  - **Still owed:** the same in the person's own console.
 - **Linux outside WSL:** only WSL has been run. Still owed: a plain Linux run,
   with the server on localhost.
+- **`/feedback`, sent:** the form and the preview are tested, the send isn't.
+  The issues Worker must know `lokal` (deployed from guimadaleno/issues), and
+  the GitHub App must reach this repository. Still owed: one real report,
+  then reading its issue.
+- **The reasoning window with wide characters or a resize while it shows:**
+  rows are cut by character count, so double-width characters may wrap and
+  leave a row behind. Tested only with a fake server's plain text.
 - **Servers other than LM Studio:** the chat path should work with any
   OpenAI-compatible server through `server = host:port`, but none has been
   tried. The context gauge stays hidden without LM Studio's `/api/v0/models`.
@@ -201,20 +263,17 @@ Measured on a current laptop, under WSL.
 
 ## Later, not decided
 
-- **Other local servers.** Ollama (port 11434) and llama.cpp's `llama-server`
-  (8080) are the most used after LM Studio; vLLM (8000) and Jan (1337) too.
-  All speak the OpenAI chat API. What differs is finding them (more ports to
-  try; 8000 and 8080 are also where web servers run, so check `/v1/models`
-  before trusting one) and the context length (Ollama: `/api/show`;
-  llama.cpp: `/props`). Ollama is the one worth doing first.
-- **A test against a real server,** run when a variable points at one
-  (`LOKAL_TEST_SERVER=host:port cargo test`), turning the LM Studio table
-  above into one command.
+Tracked as issues: **other local servers** (#1, Ollama first), **an auto mode
+inside a sandbox** (#2), **queued messages while Lokal works** (#3) and
+**`/compact`** (#4).
+
 - **Publishing the page** (`site/`): it needs the deploy secrets and Lokal's
   folder on the server, and it should go out with the first release. It
   reads `latest.json` for the version and the checksum, since only
   `latest.json` and `SHA256SUMS` have version-less names; until then, the
   markup's own text is still true.
+- **The page's terminal, animated:** typing that shows what Lokal does,
+  instead of a still picture.
 - **Distribution: the executable, never an install script.** The one line
   downloads the release file and lets it install itself:
   `curl -fsSLo lokal https://download.guimadaleno.com/lokal/<version>/lokal && chmod +x lokal && ./lokal --install`.
@@ -226,43 +285,21 @@ Measured on a current laptop, under WSL.
   Windows): a second target in `release.yml`, and its file on `update.rs`'s
   list of what a release may put in place.
 - **`lokal --uninstall`:** removes the executable, and asks before removing
-  the person's data (config, about-me.md, the last conversation), as the
-  Windows apps do.
+  the person's data (config, about-me.md, the approvals, the last
+  conversation), as the Windows apps do.
 - **Package managers** (Homebrew, AUR, `.deb`) only when people ask. Each is
   one more channel to keep, and each updates on its own. `update.rs`
   already stays out of their way: it never replaces a copy it can't write.
-- **`/info`:** model and context size, server address and how it was found,
-  context in use, session time, and the files Lokal reads.
-- **Small things at the prompt:** `/new` clears the screen; a blank line above
-  and below what `/about` and `/help` print.
-- **`/feedback`,** through guimadaleno/issues like the other apps. Read its
-  README first: the person sees everything before it's sent.
-- **To weigh:** a `/config` that opens the settings file in `$EDITOR`, as
-  `/prefs` does with about-me.md. Also a `/clean` for Lokal's own files; what
-  it keeps is two small files, so it may not earn its place.
-- **Approvals per project:** "Yes, and don't ask again in this project" beside
-  the session's.
-  - **The rules live in the person's own config, never inside the project.**
-    A file in the repository would let a cloned repository grant itself
-    commands that run unasked.
-  - **The project is the git root around the working directory,** or the
-    directory itself.
-  - **Exact commands only.** If patterns ever come, only program plus
-    subcommand (`cargo build *`), and never for `rm`, `sudo`, interpreters,
-    package installs, `docker run`/`exec` or downloads.
-  - **The model never edits Lokal's own files,** rules included, not even with
-    a yes: it must not change what it's allowed to do. Worth doing on its own.
-  - **Seeing and removing rules** goes through the `/config` idea above.
-- **To weigh: memory the model writes, and `/memory` to edit it.**
-  about-me.md is already the person's own memory, read every conversation.
-  A file the model writes to and every later conversation reads is a lasting
-  way in for an instruction planted in something it read. So each addition
-  would go through a diff and a yes, like any file change, and the file would
-  have a size limit. Still open: where it lives (next to about-me.md, or one
-  per project folder).
-- **To weigh: `/update`,** checking now instead of once a day, then
-  restarting into the new version with the conversation resumed (`-r`). Only
-  an installed release build can do it; any other copy says why not.
+- **A test against a real server,** run when a variable points at one
+  (`LOKAL_TEST_SERVER=host:port cargo test`), turning the LM Studio table
+  above into one command.
+- **To weigh:** `about-me.md` renamed `user.md`, moving an existing one.
+- **To weigh:** a stronger warning in the approval menu when a command
+  deletes something outside the working folder. Only a highlight, never a
+  gate.
+- **Settings stay `name = value`,** not JSON: they take comments, and a
+  person edits them by hand. `/config` writes the file with every setting
+  commented out the first time.
 
 ## Names that must appear
 

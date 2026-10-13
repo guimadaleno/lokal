@@ -16,6 +16,8 @@ use crate::{allowlist, config, diff, style, text};
 const OUTPUT_LIMIT: usize = 12_000;
 /// The same for files.
 const FILE_LIMIT: usize = 30_000;
+/// The longest line `remember` adds to about-me.md.
+const NOTE_LIMIT: usize = 200;
 
 pub enum Outcome {
     /// The result for the model.
@@ -66,6 +68,13 @@ pub fn definitions() -> Value {
             json!({"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}),
             &["path", "old_text", "new_text"],
         ),
+        tool(
+            "remember",
+            "Add one short line to the notes every conversation starts with (about-me.md). \
+             Only when the user asks you to remember something; they approve the line first.",
+            json!({"note": {"type": "string", "description": "The fact or preference, in one short line."}}),
+            &["note"],
+        ),
     ])
 }
 
@@ -87,6 +96,7 @@ pub fn run(call: &ToolCall, input: &mut Input) -> Outcome {
             "read_file" => read_file(&args),
             "write_file" => write_file(&args, input),
             "edit_file" => edit_file(&args, input),
+            "remember" => remember(&args, input),
             other => Err(format!("there's no tool called {other}.")),
         },
         Err(_) => Err(format!(
@@ -102,8 +112,8 @@ fn run_command(args: &Value, input: &mut Input) -> Result<Outcome, String> {
     eprintln!("{} {}", style::accent("$"), command.replace('\n', "\n  "));
     if !allowlist::is_read_only(command) {
         eprintln!();
-        if input.is_approved_for_session(command) {
-            eprintln!("  {}", style::faint(text::APPROVED_FOR_SESSION));
+        if let Some(note) = input.approved_before(command) {
+            eprintln!("  {}", style::faint(note));
         } else {
             // What the model says the command does, where the person decides on it.
             if let Some(explanation) = args["explanation"]
@@ -113,10 +123,8 @@ fn run_command(args: &Value, input: &mut Input) -> Result<Outcome, String> {
             {
                 eprintln!("  {}", style::gray(explanation));
             }
-            let approval = input.approve(text::RUN_QUESTION, true);
-            if matches!(approval, Approval::YesForSession) {
-                input.approve_for_session(command);
-            }
+            let approval = input.approve(text::RUN_QUESTION, Some(command));
+            input.keep_approval(&approval, command);
             if let Some(outcome) = refused(approval) {
                 return Ok(outcome);
             }
@@ -184,7 +192,7 @@ fn read_file(args: &Value) -> Result<Outcome, String> {
 }
 
 fn write_file(args: &Value, input: &mut Input) -> Result<Outcome, String> {
-    let path = path_arg(args)?;
+    let path = writable_path(args)?;
     let content = text_arg(args, "content")?;
     let old = match fs::read_to_string(&path) {
         Ok(old) => Some(old),
@@ -200,7 +208,7 @@ fn write_file(args: &Value, input: &mut Input) -> Result<Outcome, String> {
 }
 
 fn edit_file(args: &Value, input: &mut Input) -> Result<Outcome, String> {
-    let path = path_arg(args)?;
+    let path = writable_path(args)?;
     let old_text = text_arg(args, "old_text")?;
     let new_text = text_arg(args, "new_text")?;
     if old_text.is_empty() {
@@ -227,6 +235,34 @@ fn edit_file(args: &Value, input: &mut Input) -> Result<Outcome, String> {
     propose(&path, text::STEP_EDIT, &old, &new, input)
 }
 
+/// The one way the model adds to about-me.md: a line the person asked it to
+/// remember, shown as a diff and written only with a yes.
+fn remember(args: &Value, input: &mut Input) -> Result<Outcome, String> {
+    let note = text_arg(args, "note")?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if note.is_empty() {
+        return Err("the note is empty.".into());
+    }
+    if note.chars().count() > NOTE_LIMIT {
+        return Err(format!("keep the note under {NOTE_LIMIT} characters."));
+    }
+    let old = config::read_about_me().unwrap_or_default();
+    let mut new = old.clone();
+    if !new.is_empty() && !new.ends_with('\n') {
+        new.push('\n');
+    }
+    new.push_str(&format!("- {note}\n"));
+    propose(
+        &config::about_me_path(),
+        text::STEP_REMEMBER,
+        &old,
+        &new,
+        input,
+    )
+}
+
 /// Shows the change as a diff and writes it if the person agrees.
 fn propose(
     path: &Path,
@@ -243,7 +279,7 @@ fn propose(
     eprintln!("{} {}", style::accent(step), config::shown(path));
     diff::show(old, new);
     // Every change to a file is asked about: there's no "don't ask again" here.
-    if let Some(outcome) = refused(input.approve(text::WRITE_QUESTION, false)) {
+    if let Some(outcome) = refused(input.approve(text::WRITE_QUESTION, None)) {
         return Ok(outcome);
     }
     config::write(path, new).map_err(|error| format!("can't write {}: {error}", path.display()))?;
@@ -253,7 +289,7 @@ fn propose(
 /// None if the person approved; otherwise what to tell the model.
 fn refused(approval: Approval) -> Option<Outcome> {
     match approval {
-        Approval::Yes | Approval::YesForSession => None,
+        Approval::Yes | Approval::YesForSession | Approval::YesForProject => None,
         Approval::Stop => Some(Outcome::Stopped),
         Approval::No => Some(Outcome::Declined(
             "The user declined, and will say what to do instead.".into(),
@@ -274,6 +310,20 @@ fn text_arg<'a>(args: &'a Value, name: &str) -> Result<&'a str, String> {
     args[name]
         .as_str()
         .ok_or_else(|| format!("the \"{name}\" argument is missing."))
+}
+
+/// The path argument, when it's somewhere the model may write.
+fn writable_path(args: &Value) -> Result<PathBuf, String> {
+    let path = path_arg(args)?;
+    if config::is_lokal_own(&path) {
+        return Err(format!(
+            "{} is one of Lokal's own files (its settings, about-me.md, its saved state), \
+             which you can't change. To keep something the user asked you to remember, use \
+             remember; the user edits these files with /prefs and /config.",
+            path.display()
+        ));
+    }
+    Ok(path)
 }
 
 /// The path argument, with ~ expanded. Relative paths start at the working directory.

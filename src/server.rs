@@ -17,6 +17,8 @@ pub struct Server {
     pub model: String,
     /// The model's context length in tokens, when the server reports it.
     pub context: Option<u64>,
+    /// Set in the settings, rather than found.
+    pub pinned: bool,
 }
 
 pub fn find(config: &Config) -> Result<Server, String> {
@@ -36,6 +38,7 @@ pub fn find(config: &Config) -> Result<Server, String> {
         address,
         model,
         context,
+        pinned: config.server.is_some(),
     })
 }
 

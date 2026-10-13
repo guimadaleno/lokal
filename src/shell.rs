@@ -9,7 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::spinner::Spinner;
-use crate::{interrupt, style, text};
+use crate::{interrupt, keys, style, text};
 
 /// How many lines of output show on screen; the model gets more.
 const SHOWN_LINES: usize = 12;
@@ -47,6 +47,8 @@ pub fn run(command: &str) -> io::Result<Run> {
     drop(shell);
     let lines = read_lines(reader);
 
+    // Ctrl+C as a key too, and nothing typed echoed over the output.
+    let _keys = keys::KeyWatch::start();
     let mut screen = Screen::new();
     let mut stopping_since: Option<Instant> = None;
     let status = loop {

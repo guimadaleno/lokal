@@ -17,6 +17,11 @@ pub fn install() {
     }
 }
 
+/// The same as Ctrl+C arriving as a signal, for when it arrives as a key.
+pub fn raise() {
+    INTERRUPTED.store(true, Ordering::SeqCst);
+}
+
 pub fn happened() -> bool {
     INTERRUPTED.load(Ordering::SeqCst)
 }

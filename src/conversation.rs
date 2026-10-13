@@ -3,6 +3,7 @@
 
 use std::fs;
 use std::io::{IsTerminal, Write};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -14,12 +15,17 @@ use crate::server::Server;
 use crate::spinner::Spinner;
 use crate::system::Facts;
 use crate::tools::{self, Outcome};
-use crate::{config, interrupt, prompt, style, text};
+use crate::{config, interrupt, keys, prompt, reasoning, style, text};
 
+/// When the spinner starts saying what the model is doing.
+const LABEL_AFTER: Duration = Duration::from_secs(2);
 /// Stands in for a tool's output once it's dropped to free up context.
 const DROPPED_OUTPUT: &str = "[Output dropped to free up context.]";
 const STOPPED_RESULT: &str = "Stopped by the user.";
 const SKIPPED_AFTER_NO: &str = "Not run: the user declined an earlier step.";
+const NO_ANSWER_RESULT: &str = "(No answer: the reply stopped before it began.)";
+const ASK_AGAIN_NOTE: &str = "(From Lokal, not the user: your last reply ran out of room while \
+    still reasoning, before any answer or step. Reason briefly this time, then answer or take the next step.)";
 
 pub struct Conversation {
     pub server: Server,
@@ -32,6 +38,8 @@ pub struct Conversation {
     /// How long the model worked on the last turn, not counting commands
     /// running or the person deciding on an approval.
     model_time: Option<Duration>,
+    /// `/reasoning`: the model's reasoning on screen, faint, for this session.
+    show_reasoning: bool,
 }
 
 enum Failure {
@@ -49,12 +57,24 @@ impl Conversation {
             messages: Vec::new(),
             tokens: None,
             model_time: None,
+            show_reasoning: true,
         }
     }
 
     /// Picks about-me.md up again after it changed.
     pub fn refresh_system_prompt(&mut self) {
         self.system = prompt::system_prompt(&self.facts, config::read_about_me().as_deref());
+    }
+
+    /// Turns the reasoning on screen on or off; true when it's on now.
+    pub fn toggle_reasoning(&mut self) -> bool {
+        self.show_reasoning = !self.show_reasoning;
+        self.show_reasoning
+    }
+
+    /// Tokens in use after the last reply, once the server has said.
+    pub fn tokens(&self) -> Option<u64> {
+        self.tokens
     }
 
     pub fn clear(&mut self) {
@@ -83,6 +103,7 @@ impl Conversation {
         interrupt::clear();
         let turn_start = self.messages.len();
         let mut model_time = Duration::ZERO;
+        let mut asked_again = false;
         self.messages
             .push(json!({"role": "user", "content": request}));
         loop {
@@ -109,6 +130,29 @@ impl Conversation {
                 }
             };
             self.tokens = reply.tokens.or(self.tokens);
+            if reply.content.is_empty() && reply.tool_calls.is_empty() {
+                let ran_out = reply.finish.as_deref() == Some("length");
+                // Out of room before a word: once, ask again for less reasoning.
+                // The reasoning isn't kept, so the second try starts with room.
+                if ran_out && !asked_again {
+                    asked_again = true;
+                    eprintln!("{}", style::gray(text::ASKING_AGAIN));
+                    self.messages
+                        .push(json!({"role": "user", "content": ASK_AGAIN_NOTE}));
+                    continue;
+                }
+                // Nothing came back: say why, rather than handing back the prompt in silence.
+                let message = match (ran_out, self.server.context) {
+                    (true, Some(context)) => text::ran_out_of_room(context),
+                    (true, None) => text::RAN_OUT.to_string(),
+                    _ => text::NO_ANSWER.to_string(),
+                };
+                eprintln!("{}", style::red(&message));
+                // So the model doesn't take the unanswered request up again unasked.
+                self.messages
+                    .push(json!({"role": "assistant", "content": NO_ANSWER_RESULT}));
+                break;
+            }
             self.messages.push(assistant_message(&reply));
             if reply.tool_calls.is_empty() || !self.run_tools(&reply, input) {
                 break;
@@ -153,20 +197,40 @@ impl Conversation {
         if stopped {
             eprintln!("{}", style::gray(text::STOPPED));
         }
+        // A note `remember` added counts from the next request on.
+        if reply.tool_calls.iter().any(|call| call.name == "remember") {
+            self.refresh_system_prompt();
+        }
         !stopped && !declined
     }
 
     /// Streams the model's reply to the screen: the spinner while it thinks
     /// or prepares a tool call, the answer as it's written.
     fn ask_model(&self) -> Result<Reply, Failure> {
+        // Ctrl+C as a key too, and nothing typed echoed over the output.
+        let _keys = keys::KeyWatch::start();
         let request = chat::start(&self.server.address, self.request_body());
         let mut spinner = Spinner::new();
         let mut mid_line = false;
+        let started = Instant::now();
+        // How much of the context the reply takes as it grows: a piece is
+        // about a token. Reasoning in circles shows here before it fills it.
+        let prompt_tokens = self.estimated_tokens();
+        let mut generated: u64 = 0;
+        let used = |generated: u64| {
+            self.server
+                .context
+                .map(|context| text::tokens_of(prompt_tokens + generated, context))
+        };
+        let mut writing: Option<ToolProgress> = None;
+        // The reasoning, when shown, sits in a small window that goes away.
+        let mut reasoning = reasoning::Window::default();
         // Styled on a terminal only: piped, the answer stays as the model wrote it.
         let mut markdown = std::io::stdout().is_terminal().then(Markdown::new);
         loop {
             if interrupt::happened() {
                 spinner.clear();
+                reasoning.clear();
                 if mid_line {
                     print_rest(&mut markdown);
                     println!();
@@ -174,10 +238,27 @@ impl Conversation {
                 return Err(Failure::Stopped);
             }
             match request.next(Duration::from_millis(40)) {
-                None if !mid_line => spinner.tick(),
+                None if !mid_line => spinner.tick_with(&working_label(
+                    started,
+                    writing.as_ref(),
+                    used(generated).as_deref(),
+                )),
                 None => {}
+                Some(Event::Reasoning(text)) => {
+                    generated += 1;
+                    if self.show_reasoning && !mid_line {
+                        reasoning.push(&text);
+                        reasoning.draw();
+                        // The window redrew over the spinner's row: put the spinner back.
+                        let label =
+                            working_label(started, writing.as_ref(), used(generated).as_deref());
+                        spinner.redraw(&label);
+                    }
+                }
                 Some(Event::Text(text)) => {
+                    generated += 1;
                     spinner.clear();
+                    reasoning.clear();
                     let shown = match &mut markdown {
                         Some(markdown) => markdown.push(&text),
                         None => text,
@@ -186,16 +267,23 @@ impl Conversation {
                     let _ = std::io::stdout().flush();
                     mid_line = true;
                 }
-                Some(Event::ToolCall) => {
+                Some(Event::ToolCall { name, path, bytes }) => {
+                    generated += 1;
+                    if !reasoning.is_empty() {
+                        spinner.clear();
+                        reasoning.clear();
+                    }
                     if mid_line {
                         // End the text, then a blank line before the step.
                         print_rest(&mut markdown);
                         println!("\n");
                         mid_line = false;
                     }
+                    writing = Some(ToolProgress { name, path, bytes });
                 }
                 Some(Event::Done(result)) => {
                     spinner.clear();
+                    reasoning.clear();
                     if mid_line {
                         print_rest(&mut markdown);
                         println!();
@@ -209,13 +297,20 @@ impl Conversation {
     fn request_body(&self) -> Value {
         let mut messages = vec![json!({"role": "system", "content": self.system})];
         messages.extend(self.messages.iter().cloned());
-        json!({
+        let mut body = json!({
             "model": self.server.model,
             "messages": messages,
             "tools": tools::definitions(),
             "stream": true,
             "stream_options": {"include_usage": true}
-        })
+        });
+        // At most half the context for one reply, so a model reasoning in
+        // circles stops there rather than filling all of it. Half is still
+        // room for a large file.
+        if let Some(context) = self.server.context {
+            body["max_tokens"] = json!(context / 2);
+        }
+        body
     }
 
     /// Near the end of the context, the oldest tool outputs go first: they
@@ -274,6 +369,55 @@ impl Conversation {
         self.tokens = saved["tokens"].as_u64();
         true
     }
+}
+
+/// A tool call as the model writes it.
+struct ToolProgress {
+    name: String,
+    path: Option<String>,
+    bytes: usize,
+}
+
+/// What the spinner says while the model works, once it has taken a moment:
+/// a long silence looks like a hang otherwise.
+fn working_label(started: Instant, writing: Option<&ToolProgress>, used: Option<&str>) -> String {
+    let elapsed = started.elapsed();
+    if elapsed < LABEL_AFTER {
+        return String::new();
+    }
+    let time = match used {
+        Some(used) => format!("{} · {used}", text::duration(elapsed)),
+        None => text::duration(elapsed),
+    };
+    // On one line, or the spinner's redraw would leave the rest behind.
+    let room = style::terminal_width().map_or(80, |width| width.saturating_sub(4));
+    let label = match writing {
+        None => format!("{} · {time}", text::THINKING),
+        Some(call) => {
+            let label_with = |path: Option<&str>| {
+                let what = text::writing_tool(&call.name, path, call.bytes);
+                format!("{what} · {time}")
+            };
+            // A long path loses its start: the file's name, its size and the time stay.
+            let spare = room.saturating_sub(label_with(Some("")).chars().count());
+            let path = call
+                .path
+                .as_deref()
+                .map(|path| tail(&config::shown(Path::new(path)), spare));
+            label_with(path.as_deref())
+        }
+    };
+    format!(" {}", style::faint(&label))
+}
+
+/// The end of a text that fits in `room` characters, marked with … when cut.
+fn tail(text: &str, room: usize) -> String {
+    let length = text.chars().count();
+    if length <= room {
+        return text.to_string();
+    }
+    let kept: String = text.chars().skip(length + 1 - room.max(1)).collect();
+    format!("…{kept}")
 }
 
 /// What the Markdown styling still holds, with every style closed.

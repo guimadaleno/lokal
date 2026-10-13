@@ -48,6 +48,15 @@ impl Spinner {
         self.drawn_at = Some(Instant::now());
     }
 
+    /// Draws the current frame again at once, after something wrote over it.
+    pub fn redraw(&mut self, label: &str) {
+        if self.drawn_at.is_some() {
+            self.drawn_at = None;
+            self.frame = (self.frame + FRAMES.len() - 1) % FRAMES.len();
+        }
+        self.tick_with(label);
+    }
+
     /// Erases the spinner so other output can take its place.
     pub fn clear(&mut self) {
         if self.drawn_at.take().is_some() {

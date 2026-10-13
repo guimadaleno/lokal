@@ -1,0 +1,146 @@
+[
+  {
+    "name": "not an object",
+    "report": "a report",
+    "verdict": "report"
+  },
+  {
+    "name": "a list",
+    "report": [
+      {
+        "kind": "bug",
+        "title": "The window opens behind the others",
+        "description": "Since the last update, Settings opens behind every other window.\nAlt+Tab finds it.",
+        "version": "0.6.0"
+      }
+    ],
+    "verdict": "report"
+  },
+  {
+    "name": "nothing",
+    "report": null,
+    "verdict": "report"
+  },
+  {
+    "name": "a field no report has",
+    "report": {
+      "kind": "bug",
+      "title": "The window opens behind the others",
+      "description": "Since the last update, Settings opens behind every other window.\nAlt+Tab finds it.",
+      "version": "0.6.0",
+      "screenshot": "\u2026"
+    },
+    "verdict": "report"
+  },
+  {
+    "name": "a kind no report has",
+    "report": {
+      "kind": "question",
+      "title": "The window opens behind the others",
+      "description": "Since the last update, Settings opens behind every other window.\nAlt+Tab finds it.",
+      "version": "0.6.0"
+    },
+    "verdict": "kind"
+  },
+  {
+    "name": "no kind",
+    "report": {
+      "title": "The window opens behind the others",
+      "description": "Since the last update, Settings opens behind every other window.\nAlt+Tab finds it.",
+      "version": "0.6.0"
+    },
+    "verdict": "kind"
+  },
+  {
+    "name": "a title that is a number",
+    "report": {
+      "kind": "bug",
+      "title": 5,
+      "description": "Since the last update, Settings opens behind every other window.\nAlt+Tab finds it.",
+      "version": "0.6.0"
+    },
+    "verdict": "title"
+  },
+  {
+    "name": "no description",
+    "report": {
+      "kind": "bug",
+      "title": "The window opens behind the others",
+      "version": "0.6.0"
+    },
+    "verdict": "description"
+  },
+  {
+    "name": "a version that is a number",
+    "report": {
+      "kind": "bug",
+      "title": "The window opens behind the others",
+      "description": "Since the last update, Settings opens behind every other window.\nAlt+Tab finds it.",
+      "version": 1.2
+    },
+    "verdict": "version"
+  },
+  {
+    "name": "a system that is null",
+    "report": {
+      "kind": "bug",
+      "title": "The window opens behind the others",
+      "description": "Since the last update, Settings opens behind every other window.\nAlt+Tab finds it.",
+      "version": "0.6.0",
+      "system": null
+    },
+    "verdict": "system"
+  },
+  {
+    "name": "a contact that is a list",
+    "report": {
+      "kind": "bug",
+      "title": "The window opens behind the others",
+      "description": "Since the last update, Settings opens behind every other window.\nAlt+Tab finds it.",
+      "version": "0.6.0",
+      "contact": [
+        "someone@example.com"
+      ]
+    },
+    "verdict": "contact"
+  },
+  {
+    "name": "details that are a list",
+    "report": {
+      "kind": "bug",
+      "title": "The window opens behind the others",
+      "description": "Since the last update, Settings opens behind every other window.\nAlt+Tab finds it.",
+      "version": "0.6.0",
+      "details": [
+        "gpu"
+      ]
+    },
+    "verdict": "details"
+  },
+  {
+    "name": "a detail that is a number",
+    "report": {
+      "kind": "bug",
+      "title": "The window opens behind the others",
+      "description": "Since the last update, Settings opens behind every other window.\nAlt+Tab finds it.",
+      "version": "0.6.0",
+      "details": {
+        "cores": 8
+      }
+    },
+    "verdict": "details"
+  },
+  {
+    "name": "a log that is an object",
+    "report": {
+      "kind": "bug",
+      "title": "The window opens behind the others",
+      "description": "Since the last update, Settings opens behind every other window.\nAlt+Tab finds it.",
+      "version": "0.6.0",
+      "log": {
+        "lines": []
+      }
+    },
+    "verdict": "log"
+  }
+]

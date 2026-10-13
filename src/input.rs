@@ -10,7 +10,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use rustyline::completion::Completer;
-use rustyline::error::ReadlineError;
 use rustyline::highlight::{CmdKind, Highlighter};
 use rustyline::hint::Hinter;
 use rustyline::history::DefaultHistory;
@@ -20,7 +19,8 @@ use rustyline::{
     EventContext, EventHandler, KeyEvent, Movement, RepeatCount,
 };
 
-use crate::{menu, style, text};
+use crate::approvals::ProjectApprovals;
+use crate::{config, menu, style, text};
 
 const PROMPT: &str = "> ";
 
@@ -34,6 +34,8 @@ pub enum Approval {
     Yes,
     /// Yes, and the same command runs without asking for the rest of the session.
     YesForSession,
+    /// Yes, and the same command runs without asking in this project, from now on.
+    YesForProject,
     /// The turn ends here, so the person can say what to do instead.
     No,
     /// Ctrl+C: stop the whole turn.
@@ -50,10 +52,12 @@ pub struct Input {
     /// Commands the person said not to ask about again. Exact text, this
     /// session only, never saved: a pattern would let in commands nobody saw.
     approved: HashSet<String>,
+    /// The same, kept for the project.
+    project: ProjectApprovals,
 }
 
 impl Input {
-    pub fn new() -> Self {
+    pub fn new(project: ProjectApprovals) -> Self {
         let quit_armed = Arc::new(AtomicBool::new(false));
         // Answers piped into stdin don't count as approvals.
         let has_terminal = OpenOptions::new()
@@ -66,6 +70,7 @@ impl Input {
                 editor: None,
                 quit_armed,
                 approved: HashSet::new(),
+                project,
             };
         }
         let config = Config::builder()
@@ -86,13 +91,14 @@ impl Input {
             editor,
             quit_armed,
             approved: HashSet::new(),
+            project,
         }
     }
 
     /// The terminal's width right now, if there's a terminal.
     pub fn width(&self) -> Option<usize> {
         self.editor.as_ref()?;
-        terminal_width()
+        style::terminal_width()
     }
 
     /// Reads a request at the `>` prompt. `status` (the model's time and
@@ -128,17 +134,20 @@ impl Input {
         }
     }
 
-    /// Asks a yes/no question; Enter alone means no.
     /// Asks before something changes. The choice starts on No, so Enter
-    /// alone never approves. `for_session` offers not asking again.
-    pub fn approve(&mut self, question: &str, for_session: bool) -> Approval {
+    /// alone never approves. A `command` gets the choices of not asking again
+    /// about it; a file change never does.
+    pub fn approve(&mut self, question: &str, command: Option<&str>) -> Approval {
         if self.editor.is_none() {
             return Approval::Unavailable;
         }
         discard_typed_ahead();
         let mut options = vec![(text::CHOICE_YES, 'y', Approval::Yes)];
-        if for_session {
+        if let Some(command) = command {
             options.push((text::CHOICE_YES_SESSION, 'a', Approval::YesForSession));
+            if self.project.can_keep(command) {
+                options.push((text::CHOICE_YES_PROJECT, 'p', Approval::YesForProject));
+            }
         }
         options.push((text::CHOICE_NO, 'n', Approval::No));
         let items: Vec<menu::Item> = options
@@ -152,38 +161,56 @@ impl Input {
         }
     }
 
-    pub fn is_approved_for_session(&self, command: &str) -> bool {
-        self.approved.contains(command)
+    /// Why a command may run without asking again, if it may.
+    pub fn approved_before(&self, command: &str) -> Option<&'static str> {
+        if self.approved.contains(command) {
+            Some(text::APPROVED_FOR_SESSION)
+        } else if self.project.contains(command) {
+            Some(text::APPROVED_FOR_PROJECT)
+        } else {
+            None
+        }
     }
 
-    pub fn approve_for_session(&mut self, command: &str) {
-        self.approved.insert(command.to_string());
+    /// Keeps a "don't ask again" for as long as the person chose.
+    pub fn keep_approval(&mut self, approval: &Approval, command: &str) {
+        match approval {
+            Approval::YesForSession => {
+                self.approved.insert(command.to_string());
+            }
+            Approval::YesForProject => {
+                if let Err(error) = self.project.add(command) {
+                    let path = config::shown(&config::approvals_path());
+                    eprintln!(
+                        "  {}",
+                        style::red(&text::cant_save(&path, &error.to_string()))
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn project(&self) -> &ProjectApprovals {
+        &self.project
     }
 
     /// Asks a free question; None if it was skipped.
     pub fn answer(&mut self, prompt: &str) -> Option<String> {
-        let answer = self.ask(prompt)?.ok()?;
-        let answer = answer.trim();
-        (!answer.is_empty()).then(|| answer.to_string())
+        self.answer_with(prompt, "")
     }
 
-    fn ask(&mut self, prompt: &str) -> Option<Result<String, ReadlineError>> {
+    /// The same, with the line already holding `typed`, to change or keep.
+    pub fn answer_with(&mut self, prompt: &str, typed: &str) -> Option<String> {
         let editor = self.editor.as_mut()?;
         if let Some(helper) = editor.helper_mut() {
             helper.status = None;
             helper.accented = false;
         }
-        Some(editor.readline(prompt))
+        let answer = editor.readline_with_initial(prompt, (typed, "")).ok()?;
+        let answer = answer.trim();
+        (!answer.is_empty()).then(|| answer.to_string())
     }
-}
-
-/// Columns in the terminal, asked of it each time: the window may have changed.
-fn terminal_width() -> Option<usize> {
-    let terminal = OpenOptions::new().read(true).open("/dev/tty").ok()?;
-    // SAFETY: winsize is plain data, filled in by the ioctl.
-    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
-    let found = unsafe { libc::ioctl(terminal.as_raw_fd(), libc::TIOCGWINSZ, &mut size) } == 0;
-    (found && size.ws_col > 0).then_some(size.ws_col as usize)
 }
 
 /// Keys pressed while Lokal was working were pressed before the question was
@@ -250,7 +277,7 @@ impl Helper {
                 + status.chars().count();
             // Read on every redraw, so the status follows the window as it's
             // resized. Off the last column, or the terminal wraps the line.
-            let width = terminal_width().unwrap_or(0);
+            let width = style::terminal_width().unwrap_or(0);
             if let Some(padding) = width.checked_sub(used + 1).filter(|padding| *padding >= 2) {
                 display.push_str(&" ".repeat(padding));
                 display.push_str(status);
@@ -400,7 +427,10 @@ mod tests {
     #[test]
     fn slash_alone_lists_every_command() {
         let hint = command_hint("/", 1).unwrap();
-        assert_eq!(hint.display, "   /new  /prefs  /help  /about  /exit");
+        assert_eq!(
+            hint.display,
+            "   /new  /prefs  /config  /info  /update  /reasoning  /feedback  /help  /about  /exit"
+        );
         assert_eq!(hint.completion, None);
     }
 

@@ -42,24 +42,78 @@ impl Check {
     }
 }
 
+/// Whether this copy keeps itself up to date, and if not, why not.
+pub enum Standing {
+    /// It checks once a day.
+    Daily,
+    /// `updates = off` in the settings.
+    SwitchedOff,
+    /// A build made outside the release workflow.
+    NotARelease,
+    /// It runs from somewhere it can't write, like a package manager's folder.
+    CantReplace,
+}
+
+/// The copy that's running and whether it may update itself.
+fn standing(switched_off: bool) -> (Standing, Option<PathBuf>) {
+    if !RELEASE_BUILD {
+        return (Standing::NotARelease, None);
+    }
+    if switched_off {
+        return (Standing::SwitchedOff, None);
+    }
+    match std::env::current_exe() {
+        Ok(executable) if can_replace(&executable) => (Standing::Daily, Some(executable)),
+        _ => (Standing::CantReplace, None),
+    }
+}
+
+pub fn standing_of(switched_off: bool) -> Standing {
+    standing(switched_off).0
+}
+
 /// Starts the day's check, when this copy may update itself and one is due.
 pub fn start(switched_off: bool) -> Option<Check> {
-    if !RELEASE_BUILD || switched_off || !is_due(read_last_check(), now()) {
+    let (_, Some(executable)) = standing(switched_off) else {
+        return None;
+    };
+    if !is_due(read_last_check(), now()) {
         return None;
     }
-    let executable = std::env::current_exe().ok()?;
-    if !can_replace(&executable) {
-        return None;
-    }
-    // Recorded before checking: a check that fails waits a day like one that succeeds.
-    let _ = config::write(&config::last_update_check_path(), &now().to_string());
     let (sender, result) = mpsc::channel();
     thread::spawn(move || {
-        if let Ok(Some(version)) = check(&executable) {
+        if let Ok(Some(version)) = checked(&executable) {
             let _ = sender.send(version);
         }
     });
     Some(Check { result })
+}
+
+pub enum Asked {
+    /// A newer version is on disk and runs from the next start.
+    Installed(String),
+    Newest,
+    Failed,
+    Unavailable(Standing),
+}
+
+/// `/update`: the check, now, whenever the last one was.
+pub fn check_now(switched_off: bool) -> Asked {
+    let (standing, executable) = standing(switched_off);
+    let Some(executable) = executable else {
+        return Asked::Unavailable(standing);
+    };
+    match checked(&executable) {
+        Ok(Some(version)) => Asked::Installed(version),
+        Ok(None) => Asked::Newest,
+        Err(()) => Asked::Failed,
+    }
+}
+
+/// A check, recorded first: one that fails waits a day like one that succeeds.
+fn checked(executable: &Path) -> Result<Option<String>, ()> {
+    let _ = config::write(&config::last_update_check_path(), &now().to_string());
+    check(executable)
 }
 
 /// `Ok(Some(version))`: a newer Lokal is on disk and runs from the next start.

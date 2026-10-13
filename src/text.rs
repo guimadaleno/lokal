@@ -23,14 +23,34 @@ Settings live in ~/.config/lokal/config (server = 192.0.2.10:1234, model = name,
 pub const COMMANDS: &[(&str, &str)] = &[
     ("/new", "start fresh"),
     ("/prefs", "edit what Lokal knows about you"),
+    ("/config", "edit Lokal's settings"),
+    ("/info", "show the model, the server and what's in use"),
+    ("/update", "check for a newer Lokal now"),
+    ("/reasoning", "show or hide the model's reasoning"),
+    ("/feedback", "report a problem or an idea"),
     ("/help", "show commands and keys"),
     ("/about", "who made Lokal"),
     ("/exit", "quit"),
 ];
 
 pub const HELP_KEYS: &str = "\
-Tab completes a command. Ctrl+C stops whatever's running, or clears what you typed;
-twice on an empty line, it quits. lokal -r picks up the last conversation.";
+Tab completes a command. Ctrl+C or Esc stops whatever's running; at the >,
+Ctrl+C clears what you typed, and twice on an empty line it quits.
+lokal -r picks up the last conversation.";
+
+pub const SETTINGS_TEMPLATE: &str = "\
+# Lokal's settings. Each one is optional: remove the # to use it.
+
+# The model server, when Lokal shouldn't look for it on its own:
+# server = 192.0.2.10:1234
+
+# The model, when it shouldn't take the one LM Studio has loaded:
+# model = name-of-a-model
+
+# The daily update check:
+# updates = off
+";
+pub const SETTINGS_NEXT_START: &str = "Saved. Settings apply the next time Lokal starts.";
 
 pub const FIRST_QUESTION: &str = "Before we start: how do you like your answers? (Enter to skip)";
 pub const PREFS_HEADING: &str = "How I like answers:";
@@ -43,14 +63,21 @@ pub const QUIT_AGAIN: &str = "Press Ctrl+C again to quit";
 pub const RUN_QUESTION: &str = "Run it?";
 pub const WRITE_QUESTION: &str = "Write it?";
 pub const CHOICE_YES: &str = "Yes";
-pub const CHOICE_YES_SESSION: &str = "Yes, and don't ask again for this command";
+pub const CHOICE_YES_SESSION: &str = "Yes, and don't ask again this session";
+pub const CHOICE_YES_PROJECT: &str = "Yes, and don't ask again in this project";
 pub const CHOICE_NO: &str = "No";
 pub const APPROVED_FOR_SESSION: &str = "approved earlier in this session";
+pub const APPROVED_FOR_PROJECT: &str = "approved for this project";
+pub const APPROVALS_HEADER: &str = "\
+# Commands Lokal runs without asking, by project: the project's folder, a tab,
+# then the exact command. Delete a line to be asked again.
+";
 pub const NO_TERMINAL: &str = "Skipped: there's no terminal to ask you on.";
 
 pub const STEP_READ: &str = "read";
 pub const STEP_CREATE: &str = "create";
 pub const STEP_EDIT: &str = "edit";
+pub const STEP_REMEMBER: &str = "remember";
 
 pub const NO_HTTPS: &str =
     "Lokal only speaks plain HTTP to the server, so `server` can't be an https:// address.";
@@ -94,6 +121,191 @@ pub fn already_installed(path: &str) -> String {
 
 pub fn cant_install(error: &str) -> String {
     format!("Couldn't install: {error}")
+}
+
+pub const THINKING: &str = "thinking";
+pub const ASKING_AGAIN: &str =
+    "The model ran out of room while reasoning. Asking it again, to keep it short.";
+pub const NO_ANSWER: &str =
+    "The model stopped without an answer. Ask again, or /new to start fresh.";
+pub const RAN_OUT: &str = "The model ran out of room before answering, most likely reasoning in circles. /new starts fresh.";
+
+pub fn ran_out_of_room(context: u64) -> String {
+    format!(
+        "The model used up its whole context ({} tokens) before answering, most likely reasoning in circles. /new starts fresh; more context in LM Studio gives it more room.",
+        number(context)
+    )
+}
+pub const REASONING_SHOWN: &str =
+    "The model's reasoning shows again, in a small window that clears itself.";
+pub const REASONING_HIDDEN: &str = "The model's reasoning is hidden for the rest of this session.";
+
+pub const FEEDBACK_KIND: &str = "What would you like to tell the developer?";
+pub const FEEDBACK_BUG: &str = "Something doesn't work";
+pub const FEEDBACK_IDEA: &str = "Something could be better";
+pub const NEVER_MIND: &str = "Never mind";
+pub const FEEDBACK_TITLE: &str = "  Title: ";
+pub const FEEDBACK_WHAT_HAPPENED: &str = "  What happened? ";
+pub const FEEDBACK_THE_IDEA: &str = "  The idea: ";
+pub const FEEDBACK_CONTACT: &str =
+    "  Where can you be answered? (optional, only if you'd like a reply) ";
+pub const FEEDBACK_PREVIEW: &str = "This is everything that will be sent:";
+pub const FEEDBACK_SEND_QUESTION: &str = "Send it?";
+pub const FEEDBACK_SEND: &str = "Send";
+pub const FEEDBACK_SEND_LESS: &str = "Send without the system and the details";
+pub const FEEDBACK_DONT_SEND: &str = "Don't send";
+pub const FEEDBACK_KEPT: &str = "Not sent. /feedback keeps what you typed.";
+pub const FEEDBACK_REFUSED: &str =
+    "It couldn't be sent. That's Lokal's fault or the service's, not yours.";
+pub const FEEDBACK_UNREACHABLE: &str =
+    "Couldn't reach issues.guimadaleno.com, so nothing was sent. /feedback keeps what you typed.";
+
+pub fn feedback_sent(reference: &str) -> String {
+    format!("Sent, thank you! Its reference is {reference}.")
+}
+
+pub fn feedback_field(field: &str) -> String {
+    format!(
+        "The service won't take the {field} as it is. /feedback keeps what you typed, to fix it."
+    )
+}
+
+pub fn feedback_later(seconds: u32) -> String {
+    let when = match seconds {
+        0..=89 => "a minute".to_string(),
+        90..=5399 => format!("{} minutes", (seconds + 30) / 60),
+        _ => format!("{} hours", (seconds + 1800) / 3600),
+    };
+    format!(
+        "Not sent: too many reports right now. Try again in about {when}; /feedback keeps what you typed."
+    )
+}
+
+pub const INFO_VERSION: &str = "version";
+pub const INFO_MODEL: &str = "model";
+pub const INFO_SERVER: &str = "server";
+pub const INFO_IN_USE: &str = "in use";
+pub const INFO_ABOUT_ME: &str = "about me";
+pub const INFO_SETTINGS: &str = "settings";
+pub const INFO_PROJECT: &str = "project";
+
+pub fn project_approvals(folder: &str, count: usize) -> String {
+    match count {
+        0 => format!("{folder} · no commands approved here"),
+        1 => format!("{folder} · 1 command approved here"),
+        count => format!("{folder} · {count} commands approved here"),
+    }
+}
+pub const FOUND_ON_ITS_OWN: &str = "found on its own";
+pub const FROM_SETTINGS: &str = "from your settings";
+pub const NOTHING_YET: &str = "nothing yet";
+pub const THIS_SESSION: &str = "this session";
+pub const UPDATE_FAILED: &str = "Couldn't check for updates right now.";
+
+pub fn update_standing(standing: &crate::update::Standing) -> &'static str {
+    use crate::update::Standing;
+    match standing {
+        Standing::Daily => "checks for updates once a day",
+        Standing::SwitchedOff => "updates off in your settings",
+        Standing::NotARelease => "a build that doesn't update itself",
+        Standing::CantReplace => "can't update itself from where it runs",
+    }
+}
+
+pub fn cant_update(standing: &crate::update::Standing) -> String {
+    use crate::update::Standing;
+    match standing {
+        Standing::SwitchedOff => "Updates are off in your settings (updates = off).".into(),
+        Standing::NotARelease => {
+            "This build doesn't update itself: only one installed from a release does.".into()
+        }
+        _ => "This copy runs from somewhere Lokal can't write, so it can't update itself.".into(),
+    }
+}
+
+pub fn ready_next_time(version: &str) -> String {
+    format!("{version} is ready for next time.")
+}
+
+pub fn newest() -> String {
+    format!("You have the newest version, {VERSION}.")
+}
+
+pub fn context_size(tokens: u64) -> String {
+    format!("{} tokens of context", number(tokens))
+}
+
+pub fn tokens_in_use(tokens: u64, context: u64) -> String {
+    format!(
+        "{} tokens ({}%)",
+        number(tokens),
+        (tokens * 100 / context.max(1)).min(100)
+    )
+}
+
+pub fn file_lines(path: &str, lines: usize) -> String {
+    match lines {
+        1 => format!("{path} · 1 line"),
+        lines => format!("{path} · {lines} lines"),
+    }
+}
+
+pub fn settings_file(path: &str, exists: bool) -> String {
+    if exists {
+        path.to_string()
+    } else {
+        format!("{path} · none yet (/config writes one)")
+    }
+}
+
+/// 65,536
+pub fn number(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// What the model is writing, while it writes a tool call.
+pub fn writing_tool(name: &str, path: Option<&str>, bytes: usize) -> String {
+    let size = size(bytes);
+    match (name, path) {
+        ("write_file", Some(path)) => format!("writing {path} · {size}"),
+        ("edit_file", Some(path)) => format!("editing {path} · {size}"),
+        ("write_file" | "edit_file", None) => format!("writing a file · {size}"),
+        ("read_file", Some(path)) => format!("about to read {path}"),
+        ("run_command", _) => "writing a command".into(),
+        ("remember", _) => "writing a note".into(),
+        _ => format!("preparing a step · {size}"),
+    }
+}
+
+/// "~41k of 65k tokens": how much of the context the reply has reached.
+pub fn tokens_of(used: u64, context: u64) -> String {
+    let short = |n: u64| {
+        if n < 1000 {
+            n.to_string()
+        } else {
+            format!("{}k", (n + 500) / 1000)
+        }
+    };
+    format!("~{} of {} tokens", short(used), short(context))
+}
+
+/// 812 B, 14 KB, 2.3 MB
+pub fn size(bytes: usize) -> String {
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1024 * 1024 {
+        format!("{} KB", (bytes + 512) / 1024)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
 }
 
 pub fn more_lines(count: usize) -> String {
@@ -177,5 +389,20 @@ mod tests {
         assert_eq!(duration(Duration::from_secs(42)), "42s");
         assert_eq!(duration(Duration::from_secs(65)), "1m 05s");
         assert_eq!(duration(Duration::from_secs(2 * 3600 + 65)), "2h 01m 05s");
+    }
+
+    #[test]
+    fn numbers_get_thousands_separators() {
+        assert_eq!(number(7), "7");
+        assert_eq!(number(1743), "1,743");
+        assert_eq!(number(65536), "65,536");
+        assert_eq!(number(1_000_000), "1,000,000");
+    }
+
+    #[test]
+    fn sizes_read_like_a_person_says_them() {
+        assert_eq!(size(812), "812 B");
+        assert_eq!(size(14 * 1024 + 100), "14 KB");
+        assert_eq!(size(2_411_724), "2.3 MB");
     }
 }

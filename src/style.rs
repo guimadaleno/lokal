@@ -1,7 +1,9 @@
 //! Terminal colors. Lokal's own output goes to stderr, so colors are on when
 //! stderr is a terminal.
 
+use std::fs::OpenOptions;
 use std::io::IsTerminal;
+use std::os::fd::AsRawFd;
 use std::sync::OnceLock;
 
 pub fn enabled() -> bool {
@@ -41,4 +43,13 @@ pub fn red(text: &str) -> String {
 
 pub fn green(text: &str) -> String {
     paint("32", text)
+}
+
+/// Columns in the terminal, asked of it each time: the window may have changed.
+pub fn terminal_width() -> Option<usize> {
+    let terminal = OpenOptions::new().read(true).open("/dev/tty").ok()?;
+    // SAFETY: winsize is plain data, filled in by the ioctl.
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    let found = unsafe { libc::ioctl(terminal.as_raw_fd(), libc::TIOCGWINSZ, &mut size) } == 0;
+    (found && size.ws_col > 0).then_some(size.ws_col as usize)
 }

@@ -1,0 +1,238 @@
+[
+  {
+    "status": 201,
+    "body": "{\"reference\":\"42\"}\n",
+    "outcome": {
+      "outcome": "sent",
+      "reference": "42"
+    }
+  },
+  {
+    "status": 200,
+    "body": "{\"reference\":\"42\"}",
+    "outcome": {
+      "outcome": "sent",
+      "reference": "42"
+    }
+  },
+  {
+    "status": 201,
+    "body": "{\"reference\":\"R-7K2M\"}",
+    "outcome": {
+      "outcome": "sent",
+      "reference": "R-7K2M"
+    }
+  },
+  {
+    "status": 201,
+    "body": "{\"reference\":42}",
+    "outcome": {
+      "outcome": "refused"
+    }
+  },
+  {
+    "status": 201,
+    "body": "{\"reference\":\"<b>42</b>\"}",
+    "outcome": {
+      "outcome": "refused"
+    }
+  },
+  {
+    "status": 201,
+    "body": "{\"reference\":\"\"}",
+    "outcome": {
+      "outcome": "refused"
+    }
+  },
+  {
+    "status": 201,
+    "body": "",
+    "outcome": {
+      "outcome": "refused"
+    }
+  },
+  {
+    "status": 201,
+    "body": "[\"reference\",\"42\"]",
+    "outcome": {
+      "outcome": "refused"
+    }
+  },
+  {
+    "status": 400,
+    "body": "{\"error\":\"invalid\",\"field\":\"title\"}",
+    "outcome": {
+      "outcome": "invalid",
+      "field": "title"
+    }
+  },
+  {
+    "status": 400,
+    "body": "{\"error\":\"invalid\",\"field\":\"details\"}",
+    "outcome": {
+      "outcome": "invalid",
+      "field": "details"
+    }
+  },
+  {
+    "status": 400,
+    "body": "{\"error\":\"invalid\",\"field\":\"report\"}",
+    "outcome": {
+      "outcome": "invalid",
+      "field": "report"
+    }
+  },
+  {
+    "status": 400,
+    "body": "{\"error\":\"invalid\",\"field\":\"elsewhere\"}",
+    "outcome": {
+      "outcome": "invalid",
+      "field": "report"
+    }
+  },
+  {
+    "status": 400,
+    "body": "{\"error\":\"invalid\"}",
+    "outcome": {
+      "outcome": "invalid",
+      "field": "report"
+    }
+  },
+  {
+    "status": 400,
+    "body": "{\"error\":\"malformed\"}",
+    "outcome": {
+      "outcome": "refused"
+    }
+  },
+  {
+    "status": 429,
+    "body": "{\"error\":\"limit\",\"retry\":60}",
+    "outcome": {
+      "outcome": "later",
+      "seconds": 60
+    }
+  },
+  {
+    "status": 429,
+    "body": "{\"error\":\"limit\",\"retry\":86400}",
+    "outcome": {
+      "outcome": "later",
+      "seconds": 86400
+    }
+  },
+  {
+    "status": 429,
+    "body": "{\"error\":\"limit\",\"retry\":86401}",
+    "outcome": {
+      "outcome": "later",
+      "seconds": 60
+    }
+  },
+  {
+    "status": 429,
+    "body": "{\"error\":\"limit\",\"retry\":0}",
+    "outcome": {
+      "outcome": "later",
+      "seconds": 60
+    }
+  },
+  {
+    "status": 429,
+    "body": "{\"error\":\"limit\",\"retry\":-5}",
+    "outcome": {
+      "outcome": "later",
+      "seconds": 60
+    }
+  },
+  {
+    "status": 429,
+    "body": "{\"error\":\"limit\",\"retry\":1.5}",
+    "outcome": {
+      "outcome": "later",
+      "seconds": 60
+    }
+  },
+  {
+    "status": 429,
+    "body": "{\"error\":\"limit\",\"retry\":120.0}",
+    "outcome": {
+      "outcome": "later",
+      "seconds": 120
+    }
+  },
+  {
+    "status": 429,
+    "body": "{\"error\":\"limit\",\"retry\":\"soon\"}",
+    "outcome": {
+      "outcome": "later",
+      "seconds": 60
+    }
+  },
+  {
+    "status": 429,
+    "body": "<html>Too many requests</html>",
+    "outcome": {
+      "outcome": "later",
+      "seconds": 60
+    }
+  },
+  {
+    "status": 503,
+    "body": "{\"error\":\"unavailable\",\"retry\":300}",
+    "outcome": {
+      "outcome": "later",
+      "seconds": 300
+    }
+  },
+  {
+    "status": 503,
+    "body": "",
+    "outcome": {
+      "outcome": "later",
+      "seconds": 60
+    }
+  },
+  {
+    "status": 403,
+    "body": "{\"error\":\"origin\"}",
+    "outcome": {
+      "outcome": "refused"
+    }
+  },
+  {
+    "status": 403,
+    "body": "{\"error\":\"challenge\"}",
+    "outcome": {
+      "outcome": "refused"
+    }
+  },
+  {
+    "status": 404,
+    "body": "{\"error\":\"unknown\"}",
+    "outcome": {
+      "outcome": "refused"
+    }
+  },
+  {
+    "status": 413,
+    "body": "{\"error\":\"large\"}",
+    "outcome": {
+      "outcome": "refused"
+    }
+  },
+  {
+    "status": 500,
+    "body": "{\"reference\":\"42\"}",
+    "outcome": {
+      "outcome": "refused"
+    }
+  },
+  {
+    "status": 302,
+    "body": "",
+    "outcome": {
+      "outcome": "refused"
+    }
+  }
+]

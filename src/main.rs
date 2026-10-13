@@ -1,21 +1,29 @@
 mod allowlist;
 mod answer;
+mod approvals;
 mod chat;
 mod config;
 mod conversation;
 mod diff;
+mod feedback;
 mod http;
 mod input;
 mod install;
 mod interrupt;
+mod keys;
 mod markdown;
 mod menu;
 mod prompt;
+mod reasoning;
 // guimadaleno/release's client/release.rs, copied unchanged: no formatting or
 // lint fixes may touch its bytes.
 #[rustfmt::skip]
 #[allow(clippy::all)]
 mod release;
+// guimadaleno/issues' client/report.rs, copied unchanged, like release.rs.
+#[rustfmt::skip]
+#[allow(clippy::all)]
+mod report;
 mod server;
 mod shell;
 mod spinner;
@@ -90,7 +98,9 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mut input = Input::new();
+    let folder = env::current_dir().unwrap_or_default();
+    let project = approvals::ProjectApprovals::load(approvals::project_root(&folder));
+    let mut input = Input::new(project);
     // Conversations only: a one-shot request often runs in a script, and
     // shouldn't reach the network on its own.
     let mut update = None;
@@ -109,7 +119,12 @@ fn main() -> ExitCode {
         }
     }
     if request.is_empty() {
-        talk(&mut conversation, &mut input);
+        let mut session = Session {
+            started,
+            updates_off: config.updates_off,
+            feedback_draft: None,
+        };
+        talk(&mut conversation, &mut input, &mut session);
         let updated_to = update.and_then(|check| check.installed());
         let goodbye = text::lasted(started.elapsed(), updated_to.as_deref());
         eprintln!("{}", style::gray(&goodbye));
@@ -128,14 +143,22 @@ fn print_header(server: &server::Server) {
     );
 }
 
-fn talk(conversation: &mut Conversation, input: &mut Input) {
+/// What the slash commands need to know about the running session.
+struct Session {
+    started: Instant,
+    updates_off: bool,
+    /// What /feedback was given and couldn't send yet.
+    feedback_draft: Option<feedback::Draft>,
+}
+
+fn talk(conversation: &mut Conversation, input: &mut Input, session: &mut Session) {
     while let Line::Text(line) = input.request(conversation.status()) {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
         if is_command(line) {
-            if !run_command(line, conversation) {
+            if !run_command(line, conversation, input, session) {
                 break;
             }
             continue;
@@ -164,24 +187,68 @@ fn is_command(line: &str) -> bool {
 }
 
 /// Runs a slash command. False when it's time to quit.
-fn run_command(command: &str, conversation: &mut Conversation) -> bool {
+fn run_command(
+    command: &str,
+    conversation: &mut Conversation,
+    input: &mut Input,
+    session: &mut Session,
+) -> bool {
     match command {
         "/new" => {
             conversation.clear();
+            // A fresh start looks like one: the screen cleared, the header again.
+            // What was on screen stays in the scrollback.
+            if style::enabled() {
+                eprint!("\x1b[2J\x1b[H");
+            }
+            print_header(&conversation.server);
             eprintln!("{}", style::gray(text::NEW_CONVERSATION));
         }
         "/prefs" => {
-            edit_about_me();
+            let path = config::about_me_path();
+            if !path.exists() {
+                let _ = config::write_about_me("");
+            }
+            open_in_editor(&[&path]);
             warn_if_about_me_is_long();
             conversation.refresh_system_prompt();
         }
+        "/config" => edit_settings(),
+        "/info" => {
+            eprintln!();
+            print_info(conversation, input, session);
+            eprintln!();
+        }
+        "/update" => check_for_update(session),
+        "/reasoning" => {
+            let shown = conversation.toggle_reasoning();
+            let message = if shown {
+                text::REASONING_SHOWN
+            } else {
+                text::REASONING_HIDDEN
+            };
+            eprintln!("{}", style::gray(message));
+        }
+        "/feedback" => {
+            eprintln!();
+            let draft = session.feedback_draft.take();
+            session.feedback_draft =
+                feedback::run(input, &conversation.server, session.updates_off, draft);
+            eprintln!();
+        }
         "/help" => {
+            eprintln!();
             for (name, about) in text::COMMANDS {
-                eprintln!("  {name:<8}{}", style::gray(about));
+                eprintln!("  {name:<9}{}", style::gray(about));
             }
             eprintln!("{}", style::gray(text::HELP_KEYS));
+            eprintln!();
         }
-        "/about" => print_about(),
+        "/about" => {
+            eprintln!();
+            print_about();
+            eprintln!();
+        }
         "/exit" | "/quit" => return false,
         other => eprintln!("{}", text::unknown_command(other)),
     }
@@ -222,20 +289,110 @@ fn ask_first_question(input: &mut Input) {
     }
 }
 
-fn edit_about_me() {
-    let path = config::about_me_path();
-    if !path.exists() {
-        let _ = config::write_about_me("");
+/// Everything about this session, for when something seems off.
+fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
+    let server = &conversation.server;
+    let updates = text::update_standing(&update::standing_of(session.updates_off));
+    let context = server.context.map_or_else(String::new, |tokens| {
+        format!(" · {}", text::context_size(tokens))
+    });
+    let found = if server.pinned {
+        text::FROM_SETTINGS
+    } else {
+        text::FOUND_ON_ITS_OWN
+    };
+    let in_use = match (conversation.tokens(), server.context) {
+        (Some(tokens), Some(context)) => text::tokens_in_use(tokens, context),
+        _ => text::NOTHING_YET.to_string(),
+    };
+    let session_time = text::duration(session.started.elapsed());
+    let about_me = config::about_me_path();
+    let about_me_lines = config::read_about_me().map_or(0, |text| text.lines().count());
+    let settings = config::settings_path();
+    let rows = [
+        (text::INFO_VERSION, format!("{} · {updates}", text::VERSION)),
+        (text::INFO_MODEL, format!("{}{context}", server.model)),
+        (text::INFO_SERVER, format!("{} · {found}", server.address)),
+        (
+            text::INFO_IN_USE,
+            format!("{in_use} · {} {session_time}", text::THIS_SESSION),
+        ),
+        (
+            text::INFO_ABOUT_ME,
+            text::file_lines(&config::shown(&about_me), about_me_lines),
+        ),
+        (
+            text::INFO_SETTINGS,
+            text::settings_file(&config::shown(&settings), settings.exists()),
+        ),
+        (
+            text::INFO_PROJECT,
+            text::project_approvals(
+                &config::shown(input.project().project()),
+                input.project().count(),
+            ),
+        ),
+    ];
+    for (label, value) in rows {
+        eprintln!("  {}{value}", style::gray(&format!("{label:<10}")));
     }
+}
+
+/// `/update`: asks for the newest version now, with the spinner meanwhile.
+fn check_for_update(session: &Session) {
+    let updates_off = session.updates_off;
+    let check = std::thread::spawn(move || update::check_now(updates_off));
+    let mut spinner = spinner::Spinner::new();
+    while !check.is_finished() {
+        spinner.tick();
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+    spinner.clear();
+    let message = match check.join() {
+        Ok(update::Asked::Installed(version)) => text::ready_next_time(&version),
+        Ok(update::Asked::Newest) => text::newest(),
+        Ok(update::Asked::Unavailable(standing)) => text::cant_update(&standing),
+        Ok(update::Asked::Failed) | Err(_) => text::UPDATE_FAILED.to_string(),
+    };
+    eprintln!("{}", style::gray(&message));
+}
+
+/// Opens the settings in the person's editor, written out with every setting
+/// commented when there are none yet, and says whether what was saved reads.
+fn edit_settings() {
+    let path = config::settings_path();
+    if !path.exists()
+        && let Err(error) = config::write(&path, text::SETTINGS_TEMPLATE)
+    {
+        eprintln!(
+            "{}",
+            style::red(&text::cant_save(&config::shown(&path), &error.to_string()))
+        );
+        return;
+    }
+    // The approvals per project are settings too, opened beside them once there are any.
+    let approvals = config::approvals_path();
+    if approvals.exists() {
+        open_in_editor(&[&path, &approvals]);
+    } else {
+        open_in_editor(&[&path]);
+    }
+    match config::load() {
+        Ok(_) => eprintln!("{}", style::gray(text::SETTINGS_NEXT_START)),
+        Err(message) => eprintln!("{}", style::red(&message)),
+    }
+}
+
+fn open_in_editor(paths: &[&std::path::Path]) {
     let editor = env::var("VISUAL")
         .or_else(|_| env::var("EDITOR"))
         .unwrap_or_else(|_| "nano".into());
     // Through sh, so an editor set with arguments ("code --wait") works.
     let status = Command::new("sh")
         .arg("-c")
-        .arg(format!("{editor} \"$1\""))
+        .arg(format!("{editor} \"$@\""))
         .arg("sh")
-        .arg(&path)
+        .args(paths)
         .status();
     if !status.is_ok_and(|status| status.success()) {
         eprintln!("{}", style::red(&text::no_editor(&editor)));

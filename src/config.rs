@@ -3,7 +3,7 @@
 use std::env;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::text;
 
@@ -18,7 +18,7 @@ pub struct Config {
 }
 
 pub fn load() -> Result<Config, String> {
-    let path = config_dir().join("config");
+    let path = settings_path();
     match fs::read_to_string(&path) {
         Ok(contents) => parse(&contents, &shown(&path)),
         Err(_) => Ok(Config::default()),
@@ -48,6 +48,14 @@ fn parse(contents: &str, path: &str) -> Result<Config, String> {
         }
     }
     Ok(config)
+}
+
+pub fn approvals_path() -> PathBuf {
+    config_dir().join("approved")
+}
+
+pub fn settings_path() -> PathBuf {
+    config_dir().join("config")
 }
 
 pub fn about_me_path() -> PathBuf {
@@ -88,6 +96,44 @@ pub fn shown(path: &Path) -> String {
         Ok(rest) if !home().as_os_str().is_empty() => format!("~/{}", rest.display()),
         _ => path.display().to_string(),
     }
+}
+
+/// One of Lokal's own files: its settings, about-me.md, its approvals, its
+/// saved conversation. The model never writes to them, even with a yes: it
+/// must not change what it may do, where its words are sent, or what every
+/// conversation starts with.
+pub fn is_lokal_own(path: &Path) -> bool {
+    let path = resolved(path);
+    [config_dir(), state_dir()]
+        .iter()
+        .any(|dir| path.starts_with(resolved(dir)))
+}
+
+/// The path the kernel would reach, so no spelling of it (`..`, a link, a
+/// relative path) slips past. Each part that exists is resolved before the
+/// next is applied; parts that don't exist yet can't be links.
+fn resolved(path: &Path) -> PathBuf {
+    let mut out = if path.is_absolute() {
+        PathBuf::from("/")
+    } else {
+        env::current_dir().unwrap_or_default()
+    };
+    for part in path.components() {
+        match part {
+            Component::RootDir | Component::Prefix(_) => out = PathBuf::from("/"),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::Normal(name) => {
+                out.push(name);
+                if let Ok(real) = fs::canonicalize(&out) {
+                    out = real;
+                }
+            }
+        }
+    }
+    out
 }
 
 fn config_dir() -> PathBuf {
@@ -131,5 +177,29 @@ mod tests {
                 .unwrap_err()
                 .contains("name = value")
         );
+    }
+
+    #[test]
+    fn lokal_own_files_are_found_however_they_are_written() {
+        let home = std::env::temp_dir().join(format!("lokal-own-{}", std::process::id()));
+        let config = home.join(".config/lokal");
+        fs::create_dir_all(&config).unwrap();
+        fs::create_dir_all(home.join("work")).unwrap();
+        std::os::unix::fs::symlink(&config, home.join("work/link")).unwrap();
+        // SAFETY of the test: the variables only point this process at a scratch folder.
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", home.join(".config"));
+        }
+        assert!(is_lokal_own(&config.join("config")));
+        assert!(is_lokal_own(&config.join("about-me.md")));
+        assert!(is_lokal_own(&home.join("work/../.config/lokal/config")));
+        assert!(is_lokal_own(&home.join("work/link/config")));
+        assert!(is_lokal_own(&home.join("work/link/../lokal/about-me.md")));
+        assert!(is_lokal_own(
+            &home.join("missing/../.config/lokal/new-file")
+        ));
+        assert!(!is_lokal_own(&home.join("work/notes.md")));
+        assert!(!is_lokal_own(&home.join(".config/lokal-other/config")));
+        fs::remove_dir_all(&home).unwrap();
     }
 }

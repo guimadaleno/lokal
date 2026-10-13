@@ -28,13 +28,23 @@ pub struct Reply {
     pub tool_calls: Vec<ToolCall>,
     /// Tokens the conversation takes, as the server counted them.
     pub tokens: Option<u64>,
+    /// Why the model stopped, as the server says it: "stop", "tool_calls",
+    /// or "length" when it ran out of room.
+    pub finish: Option<String>,
 }
 
 pub enum Event {
     /// More of the visible answer.
     Text(String),
-    /// The model began calling a tool.
-    ToolCall,
+    /// More of the model's reasoning, which shows only when the person asked.
+    Reasoning(String),
+    /// The model is writing a tool call: which tool, how much of its
+    /// arguments so far, and the path among them once it has arrived.
+    ToolCall {
+        name: String,
+        path: Option<String>,
+        bytes: usize,
+    },
     Done(Result<Reply, String>),
 }
 
@@ -116,7 +126,16 @@ fn add_piece(piece: &Value, reply: &mut Reply, filter: &mut AnswerFilter, sender
     if let Some(tokens) = piece["usage"]["total_tokens"].as_u64() {
         reply.tokens = Some(tokens);
     }
+    if let Some(finish) = piece["choices"][0]["finish_reason"].as_str() {
+        reply.finish = Some(finish.to_string());
+    }
     let delta = &piece["choices"][0]["delta"];
+    if let Some(reasoning) = delta["reasoning_content"]
+        .as_str()
+        .filter(|text| !text.is_empty())
+    {
+        let _ = sender.send(Event::Reasoning(reasoning.to_string()));
+    }
     if let Some(content) = delta["content"].as_str() {
         let shown = filter.push(content);
         if !shown.is_empty() {
@@ -132,7 +151,6 @@ fn add_piece(piece: &Value, reply: &mut Reply, filter: &mut AnswerFilter, sender
                 id: format!("call_{}", reply.tool_calls.len()),
                 ..ToolCall::default()
             });
-            let _ = sender.send(Event::ToolCall);
         }
         let target = &mut reply.tool_calls[index];
         if let Some(id) = call["id"].as_str().filter(|id| !id.is_empty()) {
@@ -147,7 +165,33 @@ fn add_piece(piece: &Value, reply: &mut Reply, filter: &mut AnswerFilter, sender
         if let Some(arguments) = call["function"]["arguments"].as_str() {
             target.arguments.push_str(arguments);
         }
+        let _ = sender.send(Event::ToolCall {
+            name: target.name.clone(),
+            path: path_in(&target.arguments),
+            bytes: target.arguments.len(),
+        });
     }
+}
+
+/// The `"path"` in a tool call's arguments, read from the JSON while it is
+/// still arriving: None until its closing quote is there.
+fn path_in(arguments: &str) -> Option<String> {
+    let after_key = &arguments[arguments.find("\"path\"")? + "\"path\"".len()..];
+    let value = after_key
+        .trim_start()
+        .strip_prefix(':')?
+        .trim_start()
+        .strip_prefix('"')?;
+    let mut path = String::new();
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return Some(path),
+            '\\' => path.push(chars.next()?),
+            c => path.push(c),
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -177,7 +221,26 @@ mod tests {
         assert_eq!(reply.tool_calls[0].name, "run_command");
         assert_eq!(reply.tool_calls[0].arguments, "{\"command\":\"ls\"}");
         assert_eq!(reply.tokens, Some(386));
-        assert!(matches!(events.try_recv(), Ok(Event::ToolCall)));
-        assert!(events.try_recv().is_err());
+        let mut last = None;
+        while let Ok(event) = events.try_recv() {
+            last = Some(event);
+        }
+        assert!(
+            matches!(last, Some(Event::ToolCall { ref name, bytes: 16, .. }) if name == "run_command")
+        );
+    }
+
+    #[test]
+    fn finds_the_path_while_the_arguments_arrive() {
+        assert_eq!(
+            path_in(r#"{"path": "/tmp/a.html", "content": "<h"#),
+            Some("/tmp/a.html".into())
+        );
+        assert_eq!(
+            path_in(r#"{"content":"x","path":"~/n\"q.md"}"#),
+            Some("~/n\"q.md".into())
+        );
+        assert_eq!(path_in(r#"{"path": "/tmp/unfini"#), None);
+        assert_eq!(path_in(r#"{"command": "ls"}"#), None);
     }
 }
