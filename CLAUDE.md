@@ -270,17 +270,26 @@ Measured on a current laptop, under WSL.
 
 ## Later, not decided
 
-Tracked as issues: **other local servers** (#1, Ollama first), **an auto mode
-inside a sandbox** (#2), **queued messages while Lokal works** (#3) and
-**`/compact`** (#4).
+Tracked as issues:
+- **other local servers** (#1, Ollama first);
+- **an auto mode inside a sandbox** (#2);
+- **queued messages while Lokal works** (#3);
+- **`/compact`** (#4);
+- **an `ask` tool** (#7);
+- **the page's terminal, animated** (#8);
+- **`about-me.md` renamed `user.md`**, to weigh (#9);
+- **a highlight for deletes outside the working folder**, to weigh (#10);
+- **an aarch64 build** (#11);
+- **`lokal --uninstall`** (#12);
+- **a test against a real server** (#13).
 
-- **Publishing the page** (`site/`): it needs the deploy secrets and Lokal's
-  folder on the server, and it should go out with the first release. It
-  reads `latest.json` for the version and the checksum, since only
-  `latest.json` and `SHA256SUMS` have version-less names; until then, the
-  markup's own text is still true.
-- **The page's terminal, animated:** typing that shows what Lokal does,
-  instead of a still picture.
+Decided, and kept here so they aren't undone:
+
+- **Publishing the page** (`site/`): `site.yml` sends it with the four
+  `DEPLOY_*` secrets, once the server holds the deploy key to Lokal's
+  folder. It reads `latest.json` for the version and the checksum, since
+  only `latest.json` and `SHA256SUMS` have version-less names; the markup's
+  own text is the fallback.
 - **Distribution: the executable, never an install script.** The one line
   downloads the release file and lets it install itself:
   `curl -fsSLo lokal https://download.guimadaleno.com/lokal/<version>/lokal && chmod +x lokal && ./lokal --install`.
@@ -288,22 +297,9 @@ inside a sandbox** (#2), **queued messages while Lokal works** (#3) and
   release: swapped on the server, it runs anything, and no signature
   notices. It would also be the installer program guimadaleno/release
   refuses. The page shows the file's SHA-256, from `SHA256SUMS`.
-- **An aarch64 build** for ARM machines (a Raspberry Pi, WSL on Snapdragon
-  Windows): a second target in `release.yml`, and its file on `update.rs`'s
-  list of what a release may put in place.
-- **`lokal --uninstall`:** removes the executable, and asks before removing
-  the person's data (config, about-me.md, the approvals, the last
-  conversation), as the Windows apps do.
 - **Package managers** (Homebrew, AUR, `.deb`) only when people ask. Each is
   one more channel to keep, and each updates on its own. `update.rs`
   already stays out of their way: it never replaces a copy it can't write.
-- **A test against a real server,** run when a variable points at one
-  (`LOKAL_TEST_SERVER=host:port cargo test`), turning the LM Studio table
-  above into one command.
-- **To weigh:** `about-me.md` renamed `user.md`, moving an existing one.
-- **To weigh:** a stronger warning in the approval menu when a command
-  deletes something outside the working folder. Only a highlight, never a
-  gate.
 - **Settings stay `name = value`,** not JSON: they take comments, and a
   person edits them by hand. `/config` writes the file with every setting
   commented out the first time.
