@@ -78,6 +78,7 @@ a { color: var(--orange); }
 .install-note { font-size: 13px; color: var(--muted); max-width: 760px; margin: 10px auto 0; }
 .install-note code { font-size: 12px; }
 .install-note .sha { word-break: break-all; }
+.install-note .checksum { display: block; margin-top: 4px; }
 
 @keyframes breathe { 0%, 100% { transform: scale(.6); opacity: .6; } 50% { transform: scale(1); opacity: 1; } }
 .breathe { transform-origin: center; transform-box: fill-box; animation: breathe 1.6s ease-in-out infinite; }
@@ -122,11 +123,11 @@ footer { margin-top: 64px; padding: 24px 0 48px; border-top: 1px solid var(--rul
     </div>
     <p class="lead">A terminal assistant that runs on a model on your own machine. It runs commands, reads your files and changes them, and asks before anything changes.</p>
 
-    <div class="install"><code id="install">curl -fsSLo lokal https://download.guimadaleno.com/lokal/0.2.0/lokal &amp;&amp; chmod +x lokal &amp;&amp; ./lokal --install</code><button type="button" data-copy="install">Copy</button></div>
-    <p class="install-note">Version <span id="version">0.2.0</span>, for Linux and WSL on x86-64. One file, which installs itself in <code>~/.local/bin</code> and keeps itself up to date. <span id="checksum">Its SHA-256 is in <a href="https://download.guimadaleno.com/lokal/SHA256SUMS">SHA256SUMS</a>.</span></p>
+    <div class="install"><code id="install">curl -fsSLo lokal https://download.guimadaleno.com/lokal/0.3.0/lokal &amp;&amp; chmod +x lokal &amp;&amp; ./lokal --install</code><button type="button" data-copy="install">Copy</button></div>
+    <p class="install-note">Version <span id="version">0.3.0</span>, for Linux and WSL on x86-64. One file, which installs itself in <code>~/.local/bin</code> and keeps itself up to date. <span id="checksum" class="checksum">Its SHA-256 is in <a href="https://download.guimadaleno.com/lokal/SHA256SUMS">SHA256SUMS</a>.</span></p>
 
     <div class="terminal" aria-label="Lokal in a terminal">
-<pre><span class="t-bold">Lokal</span> 0.2.0  <span class="t-gray">qwen3.8-27b</span>
+<pre><span class="t-bold">Lokal</span> <span id="term-version">0.3.0</span>  <span class="t-gray">qwen3.8-27b</span>
 <span class="t-orange">&gt; is the web container running?</span>
 
 <span class="t-orange">$</span> docker ps -a --filter name=web --format '{{.Names}} {{.Status}}'
@@ -195,6 +196,7 @@ fetch('https://download.guimadaleno.com/lokal/latest.json', { cache: 'no-cache' 
     document.getElementById('install').textContent =
       'curl -fsSLo lokal ' + file.url + ' && chmod +x lokal && ./lokal --install';
     document.getElementById('version').textContent = release.version;
+    document.getElementById('term-version').textContent = release.version;
     var checksum = document.getElementById('checksum');
     checksum.textContent = 'SHA-256: ';
     var sha = document.createElement('code');
