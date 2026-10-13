@@ -251,9 +251,9 @@ Measured on a current laptop, under WSL.
 - **Linux outside WSL:** only WSL has been run. Still owed: a plain Linux run,
   with the server on localhost.
 - **`/feedback`, sent:** the form and the preview are tested, the send isn't.
-  The issues Worker must know `lokal` (deployed from guimadaleno/issues), and
-  the GitHub App must reach this repository. Still owed: one real report,
-  then reading its issue.
+  The issues Worker knows `lokal` (`apps.json` in guimadaleno/issues); the
+  GitHub App must also reach this repository, or a report answers "later".
+  Still owed: one real report, then reading its issue.
 - **The reasoning window with wide characters or a resize while it shows:**
   rows are cut by character count, so double-width characters may wrap and
   leave a row behind. Tested only with a fake server's plain text.
