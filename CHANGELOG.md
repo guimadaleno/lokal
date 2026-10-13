@@ -5,6 +5,11 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.2.0 — 2026-10-13
+
+- While it works, the model says in one line what each step is for, and
+  when a result changes its plan, so you can follow along.
+
 ## 0.1.1 — 2026-10-13
 
 - A slash command typed at the first-launch question ("how do you like your
