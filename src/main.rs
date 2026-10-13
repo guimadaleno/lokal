@@ -283,7 +283,6 @@ fn print_about() {
     );
     eprintln!("  {} {}", style::gray(text::MADE_BY), text::AUTHOR);
     eprintln!("  {}", text::WEBSITE);
-    eprintln!("  {}", text::REPOSITORY);
 }
 
 /// On the first launch, asks one question; skipping it is fine. Either way

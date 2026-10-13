@@ -301,5 +301,8 @@ inside a sandbox** (#2), **queued messages while Lokal works** (#3) and
 
 ## Names that must appear
 
-Credits the product carries (`/about`, `Cargo.toml`): the author, Guilherme
-Madaleno; https://guimadaleno.com; https://github.com/guimadaleno/lokal.
+Credits the product carries (`/about`, the page, `Cargo.toml`): the author,
+Guilherme Madaleno, and https://guimadaleno.com. **The repository's address,
+https://github.com/guimadaleno/lokal, stays in `Cargo.toml` only:** the
+repository is private, so a link to it on screen or on the page would lead
+nowhere.

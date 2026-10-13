@@ -6,7 +6,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
 pub const AUTHOR: &str = env!("CARGO_PKG_AUTHORS");
 pub const WEBSITE: &str = env!("CARGO_PKG_HOMEPAGE");
-pub const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 pub const MADE_BY: &str = "Made by";
 
 pub const USAGE: &str = "\
