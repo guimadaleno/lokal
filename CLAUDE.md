@@ -194,8 +194,24 @@ Measured on a current laptop, under WSL.
   (`LOKAL_TEST_SERVER=host:port cargo test`), turning the LM Studio table
   above into one command.
 - **A page** at `guimadaleno.com/lokal/`, with an orange logo and a one-line
-  install that downloads the executable and runs `lokal --install`. The page
-  reads `latest.json` for the version, as every app's page does.
+  install. The page reads `latest.json` for the version, as every app's page
+  does, since only `latest.json` and `SHA256SUMS` have version-less names.
+- **Distribution: the executable, never an install script.** The one line
+  downloads the release file and lets it install itself:
+  `curl -fsSLo lokal https://download.guimadaleno.com/lokal/<version>/lokal && chmod +x lokal && ./lokal --install`.
+  A `curl … | sh` script would be a second artifact outside the signed
+  release: swapped on the server, it runs anything, and no signature
+  notices. It would also be the installer program guimadaleno/release
+  refuses. The page shows the file's SHA-256, from `SHA256SUMS`.
+- **An aarch64 build** for ARM machines (a Raspberry Pi, WSL on Snapdragon
+  Windows): a second target in `release.yml`, and its file on `update.rs`'s
+  list of what a release may put in place.
+- **`lokal --uninstall`:** removes the executable, and asks before removing
+  the person's data (config, about-me.md, the last conversation), as the
+  Windows apps do.
+- **Package managers** (Homebrew, AUR, `.deb`) only when people ask. Each is
+  one more channel to keep, and each updates on its own. `update.rs`
+  already stays out of their way: it never replaces a copy it can't write.
 - **`/info`:** model and context size, server address and how it was found,
   context in use, session time, and the files Lokal reads.
 
