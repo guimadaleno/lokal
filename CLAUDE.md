@@ -233,6 +233,23 @@ Measured on a current laptop, under WSL.
   already stays out of their way: it never replaces a copy it can't write.
 - **`/info`:** model and context size, server address and how it was found,
   context in use, session time, and the files Lokal reads.
+- **Small things at the prompt:** `/new` clears the screen; a blank line above
+  and below what `/about` and `/help` print.
+- **`/feedback`,** through guimadaleno/issues like the other apps. Read its
+  README first: the person sees everything before it's sent.
+- **To weigh:** a `/config` that opens the settings file in `$EDITOR`, as
+  `/prefs` does with about-me.md. Also a `/clean` for Lokal's own files; what
+  it keeps is two small files, so it may not earn its place.
+- **To weigh: memory the model writes, and `/memory` to edit it.**
+  about-me.md is already the person's own memory, read every conversation.
+  A file the model writes to and every later conversation reads is a lasting
+  way in for an instruction planted in something it read. So each addition
+  would go through a diff and a yes, like any file change, and the file would
+  have a size limit. Still open: where it lives (next to about-me.md, or one
+  per project folder).
+- **To weigh: `/update`,** checking now instead of once a day, then
+  restarting into the new version with the conversation resumed (`-r`). Only
+  an installed release build can do it; any other copy says why not.
 
 ## Names that must appear
 
