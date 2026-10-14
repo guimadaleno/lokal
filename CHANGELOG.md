@@ -5,6 +5,21 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.4.0 — 2026-10-13
+
+- A long file no longer sends the model in circles when the context is
+  small. Each read is cut to the room left and says where to read on, the
+  model always sees what it asked for, and when the context is full it
+  says so instead of asking again. A file bigger than the room left is read
+  in parts, and a small model may lose track of the first ones, so for
+  those, more context is what helps.
+- At the start, Lokal tells you when the model is loaded with little
+  context (under 16K) and could take more, and where to raise it in LM
+  Studio. The model is told its context size too.
+- Asking for lines past the end of a file says how many lines it has.
+- While the model works, its label pulses gently, and in an approval the
+  marker on the option you're on pulses a little quicker.
+
 ## 0.3.0 — 2026-10-13
 
 - The model gets a scratch folder of the session's own for what it makes
