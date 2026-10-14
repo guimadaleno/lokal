@@ -21,6 +21,8 @@ use crate::{config, interrupt, keys, prompt, reasoning, style, text};
 const LABEL_AFTER: Duration = Duration::from_secs(2);
 /// Stands in for a tool's output once it's dropped to free up context.
 const DROPPED_OUTPUT: &str = "[Output dropped to free up context, after you saw it.]";
+/// Stands in for the text a file change carried once it's dropped.
+const DROPPED_WRITE: &str = "[Dropped to free up context; read the file for what it holds now.]";
 /// About three characters a token: rough, and on the high side.
 const CHARS_PER_TOKEN: usize = 3;
 const STOPPED_RESULT: &str = "Stopped by the user.";
@@ -329,46 +331,44 @@ impl Conversation {
         body
     }
 
-    /// Near the end of the context, the oldest tool outputs go first: they
-    /// take the most room and matter least later on. The outputs the model
-    /// hasn't seen yet stay, cut to fit instead (`room_for_output`): dropped
-    /// unseen, it would only ask for them again, and again.
+    /// Near the end of the context, the oldest of what the model has seen
+    /// and replied after goes first: tool outputs, and the text of the files
+    /// it wrote, which the files hold now. They take the most room and matter
+    /// least later on. The outputs the model hasn't seen yet stay, cut to fit
+    /// instead (`room_for_output`): dropped unseen, it would only ask for them
+    /// again, and again.
     fn free_context(&mut self) {
         let Some(context) = self.server.context else {
             return;
         };
-        for index in 0..self.unseen_from() {
+        for index in 0..self.last_reply() {
             if self.estimated_tokens() <= budget(context) {
                 return;
             }
-            let message = &mut self.messages[index];
-            if message["role"] == "tool" {
-                message["content"] = DROPPED_OUTPUT.into();
-            }
+            make_way(&mut self.messages[index]);
         }
     }
 
     /// How many characters the next tool output may take, when the context's
-    /// size is known: the room left once every output the model has seen
-    /// makes way, since those go first.
+    /// size is known: the room left once everything that can make way has,
+    /// since that goes first.
     fn room_for_output(&self) -> Option<usize> {
         let context = self.server.context?;
         let mut messages = self.messages.clone();
-        for message in &mut messages[..self.unseen_from()] {
-            if message["role"] == "tool" {
-                message["content"] = DROPPED_OUTPUT.into();
-            }
+        for message in &mut messages[..self.last_reply()] {
+            make_way(message);
         }
         let room = budget(context).saturating_sub(self.estimate(&messages));
         Some(room as usize * CHARS_PER_TOKEN)
     }
 
-    /// Where the messages the model hasn't replied to yet begin.
-    fn unseen_from(&self) -> usize {
+    /// Where the model's last reply is: everything before it, the model has
+    /// seen and replied after.
+    fn last_reply(&self) -> usize {
         self.messages
             .iter()
             .rposition(|message| message["role"] == "assistant")
-            .map_or(0, |index| index + 1)
+            .unwrap_or(0)
     }
 
     fn estimated_tokens(&self) -> u64 {
@@ -420,6 +420,50 @@ impl Conversation {
 /// model's reasoning and reply.
 fn budget(context: u64) -> u64 {
     context * 3 / 4
+}
+
+/// Drops what a message the model has replied after holds: a tool's output,
+/// or the text of the file changes it asked for.
+fn make_way(message: &mut Value) {
+    if message["role"] == "tool" {
+        message["content"] = DROPPED_OUTPUT.into();
+    }
+    // get_mut, since indexing to change would add the keys a message lacks.
+    let calls = message.get_mut("tool_calls").and_then(Value::as_array_mut);
+    for call in calls.into_iter().flatten() {
+        if let Some(function) = call.get_mut("function") {
+            drop_written(function);
+        }
+    }
+}
+
+/// A write_file or edit_file call keeps its path and loses its text. The
+/// arguments stay valid JSON: the server reads them back into the prompt.
+fn drop_written(function: &mut Value) {
+    let fields: &[&str] = match function["name"].as_str() {
+        Some("write_file") => &["content"],
+        Some("edit_file") => &["old_text", "new_text"],
+        _ => return,
+    };
+    let Some(Ok(mut arguments)) = function["arguments"]
+        .as_str()
+        .map(serde_json::from_str::<Value>)
+    else {
+        return;
+    };
+    let mut dropped = false;
+    for &field in fields {
+        if arguments[field]
+            .as_str()
+            .is_some_and(|text| text.len() > DROPPED_WRITE.len())
+        {
+            arguments[field] = DROPPED_WRITE.into();
+            dropped = true;
+        }
+    }
+    if dropped {
+        function["arguments"] = arguments.to_string().into();
+    }
 }
 
 /// A tool call as the model writes it.
@@ -547,6 +591,24 @@ mod tests {
             .push(json!({"role": "tool", "tool_call_id": "1", "content": "x".repeat(characters)}));
     }
 
+    /// The model writes a file with this much text, and it's written.
+    fn write(conversation: &mut Conversation, characters: usize) {
+        let arguments = json!({"path": "a.txt", "content": "x".repeat(characters)}).to_string();
+        let call = json!({"id": "2", "type": "function",
+            "function": {"name": "write_file", "arguments": arguments}});
+        conversation
+            .messages
+            .push(json!({"role": "assistant", "content": "", "tool_calls": [call]}));
+        conversation
+            .messages
+            .push(json!({"role": "tool", "tool_call_id": "2", "content": "Wrote a.txt."}));
+    }
+
+    fn arguments(conversation: &Conversation, index: usize) -> Value {
+        let arguments = &conversation.messages[index]["tool_calls"][0]["function"]["arguments"];
+        serde_json::from_str(arguments.as_str().unwrap()).unwrap()
+    }
+
     fn content_length(conversation: &Conversation, index: usize) -> usize {
         conversation.messages[index]["content"]
             .as_str()
@@ -588,6 +650,55 @@ mod tests {
         output(&mut conversation, 3000);
         let after = conversation.room_for_output().unwrap();
         assert!(room - after >= 3000, "room {room}, after {after}");
+    }
+
+    #[test]
+    fn a_written_file_makes_way_once_the_model_replied_after_it() {
+        let mut conversation = conversation(8192);
+        write(&mut conversation, 20_000);
+        reply(&mut conversation);
+        conversation.free_context();
+        let arguments = arguments(&conversation, 1);
+        assert_eq!(arguments["path"], "a.txt");
+        assert_eq!(arguments["content"], DROPPED_WRITE);
+    }
+
+    #[test]
+    fn the_last_reply_keeps_what_it_wrote() {
+        let mut conversation = conversation(8192);
+        write(&mut conversation, 20_000);
+        conversation.free_context();
+        let arguments = arguments(&conversation, 1);
+        assert_eq!(arguments["content"].as_str().unwrap().len(), 20_000);
+    }
+
+    #[test]
+    fn room_for_output_counts_written_files_as_gone() {
+        let mut conversation = conversation(8192);
+        write(&mut conversation, 15_000);
+        reply(&mut conversation);
+        // About 18,000 characters under the budget; kept, the file would leave under 3,500.
+        let room = conversation.room_for_output().unwrap();
+        assert!(room > 10_000, "room {room}");
+    }
+
+    #[test]
+    fn an_edit_loses_its_long_text_and_keeps_the_rest() {
+        let arguments = json!({"path": "a.txt", "old_text": "x".repeat(500), "new_text": "y"});
+        let mut function = json!({"name": "edit_file", "arguments": arguments.to_string()});
+        drop_written(&mut function);
+        let arguments: Value =
+            serde_json::from_str(function["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(arguments["path"], "a.txt");
+        assert_eq!(arguments["old_text"], DROPPED_WRITE);
+        assert_eq!(arguments["new_text"], "y");
+    }
+
+    #[test]
+    fn making_way_adds_nothing_to_a_message_without_calls() {
+        let mut message = json!({"role": "user", "content": "hi"});
+        make_way(&mut message);
+        assert_eq!(message, json!({"role": "user", "content": "hi"}));
     }
 
     #[test]

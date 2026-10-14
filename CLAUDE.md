@@ -154,6 +154,12 @@ dependencies.
   from, and with no room at all the model is told to answer with what it
   has. Dropped unseen, the model only asks again, and each try leaves the
   history fuller, until nothing fits.
+- **What the model wrote into a file makes way like an output,** once it
+  has replied after the write (`make_way`). The file holds that text, and
+  it is most of a conversation that writes files; kept, nothing else could
+  free the room. The call keeps its path, its arguments stay valid JSON
+  (the chat template reads them back), and the note in their place says
+  to read the file.
 - **A reply that ends with nothing is never silent.** When it ran out of
   room (`finish_reason: "length"`), Lokal asks once more, with a note to
   reason briefly; the reasoning isn't kept, so the second try has room. If
@@ -299,8 +305,6 @@ Tracked as issues:
   matters in each** (#16). Asking the model to keep notes was tried three
   ways and failed;
 - **a vision model seeing an image through `read_file`** (#17);
-- **the content of files the model wrote making way in the context, like
-  seen outputs** (#18);
 - **the model reloaded with enough context when LM Studio gave it the 8K
   default, with a `context` setting**, and `server.rs` moved to `/api/v1`
   with it (#19).
