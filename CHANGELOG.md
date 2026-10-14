@@ -5,6 +5,18 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.4.1 — 2026-10-14
+
+- A conversation that writes files no longer fills up with them. Once the
+  model has moved on, the text of the files it wrote leaves the
+  conversation, the way command outputs already did: the files hold it, and
+  the model reads them again when it needs to.
+- A reply that runs out of room in the middle of writing a file no longer
+  breaks the conversation. Every request after it used to fail with HTTP
+  500 until /new. Now that step doesn't run, the model is asked again to
+  keep it short, and the conversation goes on. `lokal -r` mends a saved
+  conversation that had one.
+
 ## 0.4.0 — 2026-10-13
 
 - A long file no longer sends the model in circles when the context is
