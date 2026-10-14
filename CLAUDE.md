@@ -286,7 +286,8 @@ Tracked as issues:
 - **other local servers** (#1, Ollama first);
 - **an auto mode inside a sandbox** (#2);
 - **queued messages while Lokal works** (#3);
-- **`/compact`** (#4);
+- **`/compact`, and the same on its own when dropping outputs isn't
+  enough** (#4);
 - **an `ask` tool** (#7);
 - **the page's terminal, animated** (#8);
 - **`about-me.md` renamed `user.md`**, to weigh (#9);
@@ -296,7 +297,13 @@ Tracked as issues:
 - **a test against a real server** (#13);
 - **a file bigger than the context read in parts, with Lokal noting what
   matters in each** (#16). Asking the model to keep notes was tried three
-  ways and failed.
+  ways and failed;
+- **a vision model seeing an image through `read_file`** (#17);
+- **the content of files the model wrote making way in the context, like
+  seen outputs** (#18);
+- **the model reloaded with enough context when LM Studio gave it the 8K
+  default, with a `context` setting**, and `server.rs` moved to `/api/v1`
+  with it (#19).
 
 Decided, and kept here so they aren't undone:
 
