@@ -168,7 +168,7 @@ one below. When it changed, check every line of this list against the running
 server before anything else, then update the version and the date.** Do the
 same whenever Lokal misbehaves with LM Studio.
 
-Last checked against **LM Studio 0.4.18**, on 2026-10-13.
+Last checked against **LM Studio 0.4.26**, on 2026-10-14.
 
 | Lokal relies on | Where | How to check |
 |---|---|---|
@@ -177,14 +177,14 @@ Last checked against **LM Studio 0.4.18**, on 2026-10-13.
 | An unknown endpoint answers HTTP 200 with `{"error": "..."}`, so the `error` field matters more than the status | `http.rs`, `server.rs` | `curl -i <host>:1234/api/v0/nonexistent` |
 | Streaming is `data: {json}` lines ending in `data: [DONE]`, and `stream_options.include_usage` adds a last piece with `usage.total_tokens` and no choices | `chat.rs` | a streamed `curl -N` of `/v1/chat/completions` |
 | Reasoning comes in `delta.reasoning_content` (with "separate reasoning content" on) or inside `<think>` in the content | `answer.rs`, `chat.rs` | the same request, with a reasoning model |
-| A tool call streams its `index`, `id` and `function.name` first, then its `arguments` in one piece once they're complete, ending with `finish_reason: "tool_calls"`; blank content may come first. While a long file is generated, nothing arrives, so the spinner shows only the time | `chat.rs`, `conversation.rs` | a request with one tool that the prompt asks it to use |
+| A tool call streams its `index`, `id` and `function.name` first, then its `arguments` in small pieces as they're generated, ending with `finish_reason: "tool_calls"`; blank content may come first. While a long file is written, the spinner shows its size growing | `chat.rs`, `conversation.rs` | a streamed request with one tool that the prompt asks it to use to write a long file |
 | A `model` that doesn't exist falls back to the loaded model instead of failing | `server.rs` checks the name first | a request with `"model": "nope"` |
 | `max_tokens` caps a reply, and one cut short ends with `finish_reason: "length"` | `conversation.rs` | a request with `"max_tokens": 50` and a long question |
 | Under WSL's NAT networking, the server is reached at the Windows host (the default gateway) only with "Serve on Local Network" on | `server.rs`, `system.rs` | `curl <gateway>:1234/v1/models` from WSL |
 
 LM Studio writes its version to `~/.lmstudio/.internal/historical-version-info.json`
-on the machine it runs on (`targetHistories` → `lmstudio` →
-`lastRecordedAppVersion`). From WSL, that's under `/mnt/c/Users/<user>/`.
+on the machine it runs on (the `targetHistories` entry whose `target` is
+`lmstudio`, its `lastRecordedAppVersion`). From WSL, that's under `/mnt/c/Users/<user>/`.
 Its About screen shows the same thing.
 
 **The page's "Set up LM Studio" steps name its screens and options** (the

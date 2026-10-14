@@ -436,9 +436,9 @@ fn working_label(started: Instant, writing: Option<&ToolProgress>, used: Option<
     if elapsed < LABEL_AFTER {
         return String::new();
     }
-    // LM Studio holds a tool call's arguments back until they're complete, so
-    // while a file is written nothing arrives to count: then only the time,
-    // rather than a size and a token count that sit still.
+    // A server may hold a tool call's arguments back until they're complete:
+    // while nothing arrives to count, only the time, rather than a size and a
+    // token count that sit still.
     let waiting_on_arguments = writing.is_some_and(|call| call.bytes == 0);
     let time = match used {
         Some(used) if !waiting_on_arguments => format!("{} · {used}", text::duration(elapsed)),
