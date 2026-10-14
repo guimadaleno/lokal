@@ -129,6 +129,8 @@ pub const ASKING_AGAIN: &str =
 pub const NO_ANSWER: &str =
     "The model stopped without an answer. Ask again, or /new to start fresh.";
 pub const RAN_OUT: &str = "The model ran out of room before answering, most likely reasoning in circles. /new starts fresh.";
+pub const CUT_SHORT: &str = "The model ran out of room in the middle of a step, so it didn't run. Asking it again, to keep it short.";
+pub const CUT_SHORT_AGAIN: &str = "The model ran out of room in the middle of a step again, so it didn't run. /new starts fresh; more context in LM Studio gives it more room.";
 
 pub fn ran_out_of_room(context: u64) -> String {
     format!(

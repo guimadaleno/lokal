@@ -165,6 +165,13 @@ dependencies.
   reason briefly; the reasoning isn't kept, so the second try has room. If
   that fails too, it says the context ran out. While the model works, the
   spinner says how much of the context the reply has reached.
+- **A step cut short never runs, and never stays as it came.** A reply
+  that runs out of room in the middle of a tool call leaves arguments that
+  aren't JSON, and LM Studio answers every later request with HTTP 500
+  while they're in the conversation. They're kept as `{}`
+  (`kept_arguments`), nothing that reply asked for runs, and the model
+  hears why, once (`CUT_SHORT_RESULT`); a second time ends the turn.
+  `lokal -r` mends a saved conversation the same way.
 
 ## LM Studio moves under Lokal
 
@@ -186,6 +193,7 @@ Last checked against **LM Studio 0.4.26**, on 2026-10-14.
 | A tool call streams its `index`, `id` and `function.name` first, then its `arguments` in small pieces as they're generated, ending with `finish_reason: "tool_calls"`; blank content may come first. While a long file is written, the spinner shows its size growing | `chat.rs`, `conversation.rs` | a streamed request with one tool that the prompt asks it to use to write a long file |
 | A `model` that doesn't exist falls back to the loaded model instead of failing | `server.rs` checks the name first | a request with `"model": "nope"` |
 | `max_tokens` caps a reply, and one cut short ends with `finish_reason: "length"` | `conversation.rs` | a request with `"max_tokens": 50` and a long question |
+| A tool call's `arguments` in the conversation must be valid JSON: arguments cut short get HTTP 500 with an HTML page | `conversation.rs` (`kept_arguments`) | a request whose history has a call with `"arguments": "{\"path\": \"a"` |
 | Under WSL's NAT networking, the server is reached at the Windows host (the default gateway) only with "Serve on Local Network" on | `server.rs`, `system.rs` | `curl <gateway>:1234/v1/models` from WSL |
 
 LM Studio writes its version to `~/.lmstudio/.internal/historical-version-info.json`

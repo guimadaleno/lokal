@@ -109,10 +109,8 @@ pub fn run(call: &ToolCall, input: &mut Input, room: Option<usize>) -> Outcome {
             "remember" => remember(&args, input),
             other => Err(format!("there's no tool called {other}.")),
         },
-        Err(_) => Err(format!(
-            "the arguments aren't valid JSON: {}",
-            call.arguments
-        )),
+        // Not repeated back: they can be a whole file.
+        Err(error) => Err(format!("the arguments aren't valid JSON ({error}).")),
     };
     result.unwrap_or_else(|error| Outcome::Done(format!("Error: {error}")))
 }

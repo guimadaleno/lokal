@@ -30,6 +30,9 @@ const SKIPPED_AFTER_NO: &str = "Not run: the user declined an earlier step.";
 const NO_ANSWER_RESULT: &str = "(No answer: the reply stopped before it began.)";
 const ASK_AGAIN_NOTE: &str = "(From Lokal, not the user: your last reply ran out of room while \
     still reasoning, before any answer or step. Reason briefly this time, then answer or take the next step.)";
+const CUT_SHORT_RESULT: &str = "Not run: your reply ran out of room before this step was complete. \
+    Reason briefly this time, then take it again. A file too long for one reply goes in parts: \
+    write_file with its start, then edit_file to add the rest.";
 
 pub struct Conversation {
     pub server: Server,
@@ -143,8 +146,8 @@ impl Conversation {
                 }
             };
             self.tokens = reply.tokens.or(self.tokens);
+            let ran_out = reply.finish.as_deref() == Some("length");
             if reply.content.is_empty() && reply.tool_calls.is_empty() {
-                let ran_out = reply.finish.as_deref() == Some("length");
                 // Out of room before a word: once, ask again for less reasoning.
                 // The reasoning isn't kept, so the second try starts with room.
                 if ran_out && !asked_again {
@@ -167,6 +170,27 @@ impl Conversation {
                 break;
             }
             self.messages.push(assistant_message(&reply));
+            // Out of room in the middle of a step: it isn't whole, so nothing
+            // the reply asked for runs. Once, the model hears why and tries again.
+            if ran_out
+                && reply
+                    .tool_calls
+                    .iter()
+                    .any(|call| !is_object(&call.arguments))
+            {
+                for call in &reply.tool_calls {
+                    self.messages.push(
+                        json!({"role": "tool", "tool_call_id": call.id, "content": CUT_SHORT_RESULT}),
+                    );
+                }
+                if asked_again {
+                    eprintln!("{}", style::red(text::CUT_SHORT_AGAIN));
+                    break;
+                }
+                asked_again = true;
+                eprintln!("{}", style::gray(text::CUT_SHORT));
+                continue;
+            }
             if reply.tool_calls.is_empty() || !self.run_tools(&reply, input) {
                 break;
             }
@@ -411,6 +435,7 @@ impl Conversation {
             return false;
         };
         self.messages = messages.clone();
+        mend_arguments(&mut self.messages);
         self.tokens = saved["tokens"].as_u64();
         true
     }
@@ -536,13 +561,43 @@ fn assistant_message(reply: &Reply) -> Value {
                 json!({
                     "id": call.id,
                     "type": "function",
-                    "function": {"name": call.name, "arguments": call.arguments}
+                    "function": {"name": call.name, "arguments": kept_arguments(&call.arguments)}
                 })
             })
             .collect();
         message["tool_calls"] = Value::Array(calls);
     }
     message
+}
+
+/// A call's arguments as the conversation keeps them. The server reads them
+/// back into the prompt, and arguments that aren't JSON, such as ones cut
+/// short, make it fail every request after. Those are kept as `{}`, and so
+/// is anything but an object, which no tool takes.
+fn kept_arguments(arguments: &str) -> &str {
+    if is_object(arguments) {
+        arguments
+    } else {
+        "{}"
+    }
+}
+
+fn is_object(arguments: &str) -> bool {
+    serde_json::from_str::<Value>(arguments).is_ok_and(|value| value.is_object())
+}
+
+/// A saved conversation may hold arguments the server can't read back:
+/// kept as they are, it couldn't go on.
+fn mend_arguments(messages: &mut [Value]) {
+    let calls = messages
+        .iter_mut()
+        .filter_map(|message| message.get_mut("tool_calls"))
+        .filter_map(Value::as_array_mut)
+        .flatten();
+    for arguments in calls.filter_map(|call| call.pointer_mut("/function/arguments")) {
+        let kept = kept_arguments(arguments.as_str().unwrap_or_default()).to_string();
+        *arguments = kept.into();
+    }
 }
 
 #[cfg(test)]
@@ -699,6 +754,54 @@ mod tests {
         let mut message = json!({"role": "user", "content": "hi"});
         make_way(&mut message);
         assert_eq!(message, json!({"role": "user", "content": "hi"}));
+    }
+
+    #[test]
+    fn arguments_cut_short_are_kept_as_an_empty_object() {
+        let call = |id: &str, arguments: &str| chat::ToolCall {
+            id: id.into(),
+            name: "write_file".into(),
+            arguments: arguments.into(),
+        };
+        let reply = Reply {
+            tool_calls: vec![
+                call("1", r#"{"path": "a.txt", "content": "unfini"#),
+                call("2", r#"{"path": "b.txt", "content": "whole"}"#),
+            ],
+            ..Reply::default()
+        };
+        let message = assistant_message(&reply);
+        assert_eq!(message["tool_calls"][0]["function"]["arguments"], "{}");
+        assert_eq!(
+            message["tool_calls"][1]["function"]["arguments"],
+            r#"{"path": "b.txt", "content": "whole"}"#
+        );
+    }
+
+    #[test]
+    fn a_saved_conversation_with_arguments_the_server_cant_read_is_mended() {
+        let call = |arguments: &str| {
+            json!({"id": "1", "type": "function",
+                "function": {"name": "write_file", "arguments": arguments}})
+        };
+        let calls = [
+            call(r#"{"path": "a"#),
+            call("[1]"),
+            call(r#"{"path": "b"}"#),
+        ];
+        let mut messages = vec![
+            json!({"role": "user", "content": "hi"}),
+            json!({"role": "assistant", "content": "", "tool_calls": calls}),
+        ];
+        mend_arguments(&mut messages);
+        let kept: Vec<&str> = messages[1]["tool_calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|call| call["function"]["arguments"].as_str().unwrap())
+            .collect();
+        assert_eq!(kept, ["{}", "{}", r#"{"path": "b"}"#]);
+        assert_eq!(messages[0], json!({"role": "user", "content": "hi"}));
     }
 
     #[test]
