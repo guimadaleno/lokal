@@ -143,6 +143,12 @@ dependencies.
   something, so no key reaches a question it wasn't typed for.
 - **One reply gets at most half the context** (`max_tokens`). A model
   reasoning in circles then stops there instead of filling all of it.
+- **An output always reaches the model before it can be dropped.** Each
+  tool output is cut to the room left once the outputs the model already
+  saw make way (`room_for_output`). A cut read says the line to read on
+  from, and with no room at all the model is told to answer with what it
+  has. Dropped unseen, the model only asks again, and each try leaves the
+  history fuller, until nothing fits.
 - **A reply that ends with nothing is never silent.** When it ran out of
   room (`finish_reason: "length"`), Lokal asks once more, with a note to
   reason briefly; the reasoning isn't kept, so the second try has room. If
@@ -161,7 +167,8 @@ Last checked against **LM Studio 0.4.18**, on 2026-10-13.
 
 | Lokal relies on | Where | How to check |
 |---|---|---|
-| `GET /api/v0/models` lists `id`, `type` (`llm`, `vlm`, `embeddings`), `state` (`loaded`) and `loaded_context_length` | `server.rs` | `curl <host>:1234/api/v0/models` |
+| `GET /api/v0/models` lists `id`, `type` (`llm`, `vlm`, `embeddings`), `state` (`loaded`), `loaded_context_length` and `max_context_length` | `server.rs` | `curl <host>:1234/api/v0/models` |
+| A model loads with 8,192 tokens of context unless the person sets more, which is why Lokal says so at the start below 16K | `main.rs` (`SMALL_CONTEXT`) | `loaded_context_length` of a model loaded with its defaults |
 | An unknown endpoint answers HTTP 200 with `{"error": "..."}`, so the `error` field matters more than the status | `http.rs`, `server.rs` | `curl -i <host>:1234/api/v0/nonexistent` |
 | Streaming is `data: {json}` lines ending in `data: [DONE]`, and `stream_options.include_usage` adds a last piece with `usage.total_tokens` and no choices | `chat.rs` | a streamed `curl -N` of `/v1/chat/completions` |
 | Reasoning comes in `delta.reasoning_content` (with "separate reasoning content" on) or inside `<think>` in the content | `answer.rs`, `chat.rs` | the same request, with a reasoning model |
@@ -281,7 +288,10 @@ Tracked as issues:
 - **a highlight for deletes outside the working folder**, to weigh (#10);
 - **an aarch64 build** (#11);
 - **`lokal --uninstall`** (#12);
-- **a test against a real server** (#13).
+- **a test against a real server** (#13);
+- **a file bigger than the context read in parts, with Lokal noting what
+  matters in each** (#16). Asking the model to keep notes was tried three
+  ways and failed.
 
 Decided, and kept here so they aren't undone:
 

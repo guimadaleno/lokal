@@ -43,6 +43,9 @@ use input::{Input, Line};
 
 /// Past this many lines, about-me.md costs noticeable context on every turn.
 const LONG_ABOUT_ME: usize = 30;
+/// Below this, a long file or output no longer fits in one read. LM Studio
+/// loads models with 8K unless told otherwise.
+const SMALL_CONTEXT: u64 = 16_384;
 
 fn main() -> ExitCode {
     let started = Instant::now();
@@ -109,6 +112,7 @@ fn main() -> ExitCode {
     if request.is_empty() {
         update = update::start(config.updates_off);
         print_header(&server);
+        warn_if_context_is_small(&server);
         first_command = ask_first_question(&mut input);
         warn_if_about_me_is_long();
     }
@@ -429,6 +433,16 @@ fn open_in_editor(paths: &[&std::path::Path]) {
         .status();
     if !status.is_ok_and(|status| status.success()) {
         eprintln!("{}", style::red(&text::no_editor(&editor)));
+    }
+}
+
+/// Only when the model takes more: otherwise there's nothing to raise.
+fn warn_if_context_is_small(server: &server::Server) {
+    if let (Some(context), Some(most)) = (server.context, server.max_context)
+        && context < SMALL_CONTEXT
+        && most > context
+    {
+        eprintln!("{}", style::gray(&text::small_context(context, most)));
     }
 }
 

@@ -243,6 +243,14 @@ pub fn context_size(tokens: u64) -> String {
     format!("{} tokens of context", number(tokens))
 }
 
+pub fn small_context(context: u64, most: u64) -> String {
+    format!(
+        "The model is loaded with {} tokens of context, so long files and outputs get cut. It takes up to {}: raise Context Length in LM Studio, if memory allows.",
+        number(context),
+        number(most)
+    )
+}
+
 pub fn tokens_in_use(tokens: u64, context: u64) -> String {
     format!(
         "{} tokens ({}%)",

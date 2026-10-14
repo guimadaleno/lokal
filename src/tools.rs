@@ -14,8 +14,15 @@ use crate::{allowlist, config, diff, style, text};
 
 /// How much command output the model gets; longer output loses its middle.
 const OUTPUT_LIMIT: usize = 12_000;
-/// The same for files.
+/// How much of a file one read gives the model; a longer one says where to read on.
 const FILE_LIMIT: usize = 30_000;
+/// With less room than this left in the context, an output would be too
+/// little to use.
+const LEAST_ROOM: usize = 1_000;
+/// Ends what the model is told when the context has no room left: a clear
+/// stop, or it keeps asking for less and less.
+const CONTEXT_FULL: &str = "Answer with what you have, or, if that isn't enough, tell the user \
+    the context is full: /new starts a fresh conversation.";
 /// The longest line `remember` adds to about-me.md.
 const NOTE_LIMIT: usize = 200;
 
@@ -47,7 +54,8 @@ pub fn definitions() -> Value {
         ),
         tool(
             "read_file",
-            "Read a text file. A long file comes back without its middle; read a part with from_line and to_line.",
+            "Read a text file. A long file comes back cut short, saying the line to read on from; \
+             read a part with from_line and to_line.",
             json!({
                 "path": {"type": "string"},
                 "from_line": {"type": "integer", "description": "First line to read, counting from 1."},
@@ -89,11 +97,13 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
     })
 }
 
-pub fn run(call: &ToolCall, input: &mut Input) -> Outcome {
+/// Runs one tool call. `room` is how many characters its output may take,
+/// when the context's size is known.
+pub fn run(call: &ToolCall, input: &mut Input, room: Option<usize>) -> Outcome {
     let result = match serde_json::from_str::<Value>(&call.arguments) {
         Ok(args) => match call.name.as_str() {
-            "run_command" => run_command(&args, input),
-            "read_file" => read_file(&args),
+            "run_command" => run_command(&args, input, room),
+            "read_file" => read_file(&args, room),
             "write_file" => write_file(&args, input),
             "edit_file" => edit_file(&args, input),
             "remember" => remember(&args, input),
@@ -107,7 +117,7 @@ pub fn run(call: &ToolCall, input: &mut Input) -> Outcome {
     result.unwrap_or_else(|error| Outcome::Done(format!("Error: {error}")))
 }
 
-fn run_command(args: &Value, input: &mut Input) -> Result<Outcome, String> {
+fn run_command(args: &Value, input: &mut Input, room: Option<usize>) -> Result<Outcome, String> {
     let command = text_arg(args, "command")?;
     eprintln!("{} {}", style::accent("$"), command.replace('\n', "\n  "));
     if !allowlist::is_read_only(command) {
@@ -132,16 +142,24 @@ fn run_command(args: &Value, input: &mut Input) -> Result<Outcome, String> {
     }
     // The output is a block of its own, after the command and any question.
     match shell::run(command).map_err(|error| format!("couldn't start bash: {error}"))? {
-        Run::Finished { output, code } => Ok(Outcome::Done(command_result(&output, code))),
+        Run::Finished { output, code } => Ok(Outcome::Done(command_result(
+            &output,
+            code,
+            limit(room, OUTPUT_LIMIT),
+        ))),
         Run::Stopped => Ok(Outcome::Stopped),
     }
 }
 
-fn command_result(output: &str, code: Option<i32>) -> String {
+fn command_result(output: &str, code: Option<i32>, limit: usize) -> String {
     let mut result = if output.trim().is_empty() {
         "(no output)".to_string()
+    } else if limit < LEAST_ROOM {
+        format!(
+            "The command ran, but there's no room left in the context for its output. {CONTEXT_FULL}"
+        )
     } else {
-        clip(output, OUTPUT_LIMIT)
+        clip(output, limit)
     };
     match code {
         Some(0) => {}
@@ -151,7 +169,7 @@ fn command_result(output: &str, code: Option<i32>) -> String {
     result
 }
 
-fn read_file(args: &Value) -> Result<Outcome, String> {
+fn read_file(args: &Value, room: Option<usize>) -> Result<Outcome, String> {
     let path = path_arg(args)?;
     let from = args["from_line"].as_u64().map(|line| line.max(1) as usize);
     let to = args["to_line"].as_u64().map(|line| line as usize);
@@ -169,26 +187,72 @@ fn read_file(args: &Value) -> Result<Outcome, String> {
         config::shown(&path),
         style::gray(&range)
     );
+    let limit = limit(room, FILE_LIMIT);
+    if limit < LEAST_ROOM {
+        return Ok(Outcome::Done(format!(
+            "Not read: there's no room left in the context for it. {CONTEXT_FULL}"
+        )));
+    }
     let bytes =
         fs::read(&path).map_err(|error| format!("can't read {}: {error}", path.display()))?;
     let contents =
         String::from_utf8(bytes).map_err(|_| format!("{} isn't a text file.", path.display()))?;
-    if from.is_none() && to.is_none() {
-        return Ok(Outcome::Done(clip(&contents, FILE_LIMIT)));
+    read_part(&contents, from, to, limit).map(Outcome::Done)
+}
+
+/// The lines from `from` to `to`, or the whole file, as many whole lines as
+/// fit in `limit` characters. A part cut short says where to read on, so the
+/// model reads the rest instead of guessing at it.
+fn read_part(
+    contents: &str,
+    from: Option<usize>,
+    to: Option<usize>,
+    limit: usize,
+) -> Result<String, String> {
+    if from.is_none() && to.is_none() && contents.len() <= limit {
+        return Ok(contents.to_string());
     }
+    let lines: Vec<&str> = contents.lines().collect();
+    let total = lines.len();
     let from = from.unwrap_or(1);
-    let total = contents.lines().count();
+    if from > total {
+        return Err(format!(
+            "the file has {total} lines, so line {from} is past its end."
+        ));
+    }
     let to = to.unwrap_or(total).min(total);
-    let part: Vec<&str> = contents
-        .lines()
-        .skip(from - 1)
-        .take((to + 1).saturating_sub(from))
-        .collect();
-    let part = part.join("\n");
-    Ok(Outcome::Done(format!(
-        "Lines {from}-{to} of {total}:\n{}",
-        clip(&part, FILE_LIMIT)
-    )))
+    if to < from {
+        return Err(format!("to_line {to} comes before from_line {from}."));
+    }
+    let part = &lines[from - 1..to];
+    let mut size = 0;
+    let fitting = part
+        .iter()
+        .take_while(|line| {
+            size += line.len() + 1;
+            size <= limit
+        })
+        .count();
+    if fitting == part.len() {
+        return Ok(format!(
+            "Lines {from}-{to} of {total}:\n{}",
+            part.join("\n")
+        ));
+    }
+    if fitting == 0 {
+        let start = &part[0][..part[0].floor_char_boundary(limit)];
+        return Ok(format!(
+            "Line {from} of {total} is too long to show whole; here's its start:\n{start}"
+        ));
+    }
+    let last = from + fitting - 1;
+    Ok(format!(
+        "Lines {from}-{last} of {total}; the rest doesn't fit in one read. These lines get dropped \
+         as the context fills and your reasoning isn't kept: write down in your reply the facts \
+         from them your answer needs, then read on from line {}:\n{}",
+        last + 1,
+        part[..fitting].join("\n")
+    ))
 }
 
 fn write_file(args: &Value, input: &mut Input) -> Result<Outcome, String> {
@@ -335,6 +399,12 @@ fn path_arg(args: &Value) -> Result<PathBuf, String> {
     })
 }
 
+/// What an output may take: the tool's own limit, or the room left in the
+/// context when that's less.
+fn limit(room: Option<usize>, own: usize) -> usize {
+    room.map_or(own, |room| room.min(own))
+}
+
 /// Keeps the start and the end of a long text, cut at line breaks: that's
 /// where the useful part of an output usually is.
 fn clip(text: &str, limit: usize) -> String {
@@ -406,7 +476,73 @@ mod tests {
 
     #[test]
     fn command_result_notes_failures() {
-        assert_eq!(command_result("", Some(0)), "(no output)");
-        assert_eq!(command_result("oops\n", Some(2)), "oops\n\n[exit code 2]");
+        assert_eq!(command_result("", Some(0), OUTPUT_LIMIT), "(no output)");
+        assert_eq!(
+            command_result("oops\n", Some(2), OUTPUT_LIMIT),
+            "oops\n\n[exit code 2]"
+        );
+    }
+
+    #[test]
+    fn command_result_without_room_still_says_it_ran() {
+        let result = command_result("lots of output\n", Some(1), 10);
+        assert!(result.starts_with("The command ran, but there's no room left"));
+        assert!(result.ends_with("[exit code 1]"));
+    }
+
+    fn numbered(count: usize) -> String {
+        (1..=count).map(|n| format!("line {n}\n")).collect()
+    }
+
+    #[test]
+    fn read_part_gives_a_file_that_fits_as_it_is() {
+        let file = numbered(3);
+        assert_eq!(read_part(&file, None, None, 1000).unwrap(), file);
+        assert_eq!(
+            read_part(&file, Some(2), None, 1000).unwrap(),
+            "Lines 2-3 of 3:\nline 2\nline 3"
+        );
+    }
+
+    #[test]
+    fn read_part_cuts_at_a_line_and_says_where_to_read_on() {
+        // Each line is 7 or 8 characters with its newline: 25 fit in 200.
+        let file = numbered(100);
+        let part = read_part(&file, None, None, 200).unwrap();
+        let (header, body) = part.split_once('\n').unwrap();
+        let last = body.lines().count();
+        assert!(header.starts_with(&format!("Lines 1-{last} of 100; the rest doesn't fit")));
+        assert!(header.ends_with(&format!("read on from line {}:", last + 1)));
+        assert_eq!(body.lines().last().unwrap(), format!("line {last}"));
+        assert!(body.len() <= 200);
+        let next = read_part(&file, Some(last + 1), None, 200).unwrap();
+        assert!(next.starts_with(&format!("Lines {}-", last + 1)));
+    }
+
+    #[test]
+    fn read_part_shows_the_start_of_a_line_too_long_for_the_room() {
+        let file = format!("{}\nshort\n", "x".repeat(500));
+        let part = read_part(&file, None, None, 100).unwrap();
+        assert_eq!(
+            part,
+            format!(
+                "Line 1 of 2 is too long to show whole; here's its start:\n{}",
+                "x".repeat(100)
+            )
+        );
+    }
+
+    #[test]
+    fn read_part_refuses_lines_past_the_end() {
+        let file = numbered(125);
+        assert_eq!(
+            read_part(&file, Some(400), Some(750), 1000).unwrap_err(),
+            "the file has 125 lines, so line 400 is past its end."
+        );
+        assert!(read_part(&file, Some(10), Some(5), 1000).is_err());
+        assert_eq!(
+            read_part(&file, Some(124), Some(750), 1000).unwrap(),
+            "Lines 124-125 of 125:\nline 124\nline 125"
+        );
     }
 }

@@ -20,7 +20,9 @@ use crate::{config, interrupt, keys, prompt, reasoning, style, text};
 /// When the spinner starts saying what the model is doing.
 const LABEL_AFTER: Duration = Duration::from_secs(2);
 /// Stands in for a tool's output once it's dropped to free up context.
-const DROPPED_OUTPUT: &str = "[Output dropped to free up context.]";
+const DROPPED_OUTPUT: &str = "[Output dropped to free up context, after you saw it.]";
+/// About three characters a token: rough, and on the high side.
+const CHARS_PER_TOKEN: usize = 3;
 const STOPPED_RESULT: &str = "Stopped by the user.";
 const SKIPPED_AFTER_NO: &str = "Not run: the user declined an earlier step.";
 const NO_ANSWER_RESULT: &str = "(No answer: the reply stopped before it began.)";
@@ -49,7 +51,8 @@ enum Failure {
 
 impl Conversation {
     pub fn new(server: Server, facts: Facts) -> Self {
-        let system = prompt::system_prompt(&facts, config::read_about_me().as_deref());
+        let system =
+            prompt::system_prompt(&facts, server.context, config::read_about_me().as_deref());
         Conversation {
             server,
             facts,
@@ -67,7 +70,11 @@ impl Conversation {
 
     /// Picks about-me.md up again after it changed.
     pub fn refresh_system_prompt(&mut self) {
-        self.system = prompt::system_prompt(&self.facts, config::read_about_me().as_deref());
+        self.system = prompt::system_prompt(
+            &self.facts,
+            self.server.context,
+            config::read_about_me().as_deref(),
+        );
     }
 
     /// Turns the reasoning on screen on or off; true when it's on now.
@@ -172,7 +179,7 @@ impl Conversation {
     fn run_tools(&mut self, reply: &Reply, input: &mut Input) -> bool {
         let mut stopped = false;
         let mut declined = false;
-        for call in &reply.tool_calls {
+        for (index, call) in reply.tool_calls.iter().enumerate() {
             // Every call gets a result, even the ones skipped after a stop or a no.
             let result = if stopped || interrupt::happened() {
                 stopped = true;
@@ -180,7 +187,12 @@ impl Conversation {
             } else if declined {
                 SKIPPED_AFTER_NO.to_string()
             } else {
-                let outcome = tools::run(call, input);
+                // An even share of the room with the calls still to come, so
+                // the first doesn't take it all; what a short output leaves
+                // goes to the next.
+                let calls_left = reply.tool_calls.len() - index;
+                let room = self.room_for_output().map(|room| room / calls_left);
+                let outcome = tools::run(call, input, room);
                 // A blank line after each step, so its output doesn't run into what follows.
                 eprintln!();
                 match outcome {
@@ -318,15 +330,15 @@ impl Conversation {
     }
 
     /// Near the end of the context, the oldest tool outputs go first: they
-    /// take the most room and matter least later on.
+    /// take the most room and matter least later on. The outputs the model
+    /// hasn't seen yet stay, cut to fit instead (`room_for_output`): dropped
+    /// unseen, it would only ask for them again, and again.
     fn free_context(&mut self) {
         let Some(context) = self.server.context else {
             return;
         };
-        // Leave a quarter for the model's reasoning and reply.
-        let budget = context * 3 / 4;
-        for index in 0..self.messages.len() {
-            if self.estimated_tokens() <= budget {
+        for index in 0..self.unseen_from() {
+            if self.estimated_tokens() <= budget(context) {
                 return;
             }
             let message = &mut self.messages[index];
@@ -336,11 +348,40 @@ impl Conversation {
         }
     }
 
-    /// About three characters a token: rough, and on the high side.
+    /// How many characters the next tool output may take, when the context's
+    /// size is known: the room left once every output the model has seen
+    /// makes way, since those go first.
+    fn room_for_output(&self) -> Option<usize> {
+        let context = self.server.context?;
+        let mut messages = self.messages.clone();
+        for message in &mut messages[..self.unseen_from()] {
+            if message["role"] == "tool" {
+                message["content"] = DROPPED_OUTPUT.into();
+            }
+        }
+        let room = budget(context).saturating_sub(self.estimate(&messages));
+        Some(room as usize * CHARS_PER_TOKEN)
+    }
+
+    /// Where the messages the model hasn't replied to yet begin.
+    fn unseen_from(&self) -> usize {
+        self.messages
+            .iter()
+            .rposition(|message| message["role"] == "assistant")
+            .map_or(0, |index| index + 1)
+    }
+
     fn estimated_tokens(&self) -> u64 {
-        let characters =
-            self.system.len() + serde_json::to_string(&self.messages).map_or(0, |json| json.len());
-        characters as u64 / 3
+        self.estimate(&self.messages)
+    }
+
+    /// The request's size in tokens with these messages: rough, and on the
+    /// high side.
+    fn estimate(&self, messages: &[Value]) -> u64 {
+        let characters = self.system.len()
+            + tools::definitions().to_string().len()
+            + serde_json::to_string(messages).map_or(0, |json| json.len());
+        (characters / CHARS_PER_TOKEN) as u64
     }
 
     fn save(&self) {
@@ -373,6 +414,12 @@ impl Conversation {
         self.tokens = saved["tokens"].as_u64();
         true
     }
+}
+
+/// What the conversation may fill: a quarter of the context stays for the
+/// model's reasoning and reply.
+fn budget(context: u64) -> u64 {
+    context * 3 / 4
 }
 
 /// A tool call as the model writes it.
@@ -452,4 +499,101 @@ fn assistant_message(reply: &Reply) -> Value {
         message["tool_calls"] = Value::Array(calls);
     }
     message
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn conversation(context: u64) -> Conversation {
+        Conversation {
+            server: Server {
+                address: String::new(),
+                model: String::new(),
+                context: Some(context),
+                max_context: None,
+                pinned: false,
+            },
+            facts: Facts {
+                os: String::new(),
+                wsl: false,
+                user: String::new(),
+                home: String::new(),
+                cwd: String::new(),
+                windows_folders: Vec::new(),
+                scratch: None,
+            },
+            system: String::new(),
+            messages: vec![json!({"role": "user", "content": "read it"})],
+            tokens: None,
+            model_time: None,
+            show_reasoning: false,
+        }
+    }
+
+    /// The model replies with a step.
+    fn reply(conversation: &mut Conversation) {
+        let call = json!({"id": "1", "type": "function",
+            "function": {"name": "read_file", "arguments": "{}"}});
+        conversation
+            .messages
+            .push(json!({"role": "assistant", "content": "", "tool_calls": [call]}));
+    }
+
+    /// The step's output arrives.
+    fn output(conversation: &mut Conversation, characters: usize) {
+        conversation
+            .messages
+            .push(json!({"role": "tool", "tool_call_id": "1", "content": "x".repeat(characters)}));
+    }
+
+    fn content_length(conversation: &Conversation, index: usize) -> usize {
+        conversation.messages[index]["content"]
+            .as_str()
+            .unwrap()
+            .len()
+    }
+
+    #[test]
+    fn older_outputs_make_way_for_the_newest() {
+        let mut conversation = conversation(8192);
+        reply(&mut conversation);
+        output(&mut conversation, 9000);
+        reply(&mut conversation);
+        output(&mut conversation, 12_000);
+        conversation.free_context();
+        assert_eq!(conversation.messages[2]["content"], DROPPED_OUTPUT);
+        assert_eq!(content_length(&conversation, 4), 12_000);
+    }
+
+    #[test]
+    fn an_output_the_model_hasnt_seen_is_never_dropped() {
+        let mut conversation = conversation(8192);
+        reply(&mut conversation);
+        output(&mut conversation, 30_000);
+        conversation.free_context();
+        assert_eq!(content_length(&conversation, 2), 30_000);
+    }
+
+    #[test]
+    fn room_for_output_counts_seen_outputs_as_gone() {
+        let mut conversation = conversation(8192);
+        reply(&mut conversation);
+        output(&mut conversation, 9000);
+        reply(&mut conversation);
+        // About 18,000 characters under the budget; the 9,000 seen don't count.
+        let room = conversation.room_for_output().unwrap();
+        assert!(room > 12_000, "room {room}");
+        // A first output of this step, not seen yet, does count.
+        output(&mut conversation, 3000);
+        let after = conversation.room_for_output().unwrap();
+        assert!(room - after >= 3000, "room {room}, after {after}");
+    }
+
+    #[test]
+    fn room_for_output_is_unknown_without_the_context() {
+        let mut conversation = conversation(8192);
+        conversation.server.context = None;
+        assert_eq!(conversation.room_for_output(), None);
+    }
 }

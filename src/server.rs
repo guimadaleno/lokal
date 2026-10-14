@@ -17,6 +17,8 @@ pub struct Server {
     pub model: String,
     /// The model's context length in tokens, when the server reports it.
     pub context: Option<u64>,
+    /// The most context the model takes, when the server reports it.
+    pub max_context: Option<u64>,
     /// Set in the settings, rather than found.
     pub pinned: bool,
 }
@@ -33,11 +35,12 @@ pub fn find(config: &Config) -> Result<Server, String> {
         }
         None => look_for_server()?,
     };
-    let (model, context) = pick_model(&address, config.model.as_deref())?;
+    let (model, context, max_context) = pick_model(&address, config.model.as_deref())?;
     Ok(Server {
         address,
         model,
         context,
+        max_context,
         pinned: config.server.is_some(),
     })
 }
@@ -81,8 +84,12 @@ fn is_listening(address: &str) -> bool {
 }
 
 /// The configured model, or else the one loaded in LM Studio, or else the
-/// first one an OpenAI-compatible server lists.
-fn pick_model(address: &str, wanted: Option<&str>) -> Result<(String, Option<u64>), String> {
+/// first one an OpenAI-compatible server lists; with its context and the
+/// most it takes, when the server says.
+fn pick_model(
+    address: &str,
+    wanted: Option<&str>,
+) -> Result<(String, Option<u64>, Option<u64>), String> {
     // LM Studio's own API says which model is loaded and with what context.
     if let Ok(listing) = http::get_json(address, "/api/v0/models")
         && let Some(models) = listing["data"].as_array()
@@ -91,18 +98,18 @@ fn pick_model(address: &str, wanted: Option<&str>) -> Result<(String, Option<u64
     }
     let listing = http::get_json(address, "/v1/models")?;
     if let Some(model) = wanted {
-        return Ok((model.to_string(), None));
+        return Ok((model.to_string(), None, None));
     }
     listing["data"][0]["id"]
         .as_str()
-        .map(|id| (id.to_string(), None))
+        .map(|id| (id.to_string(), None, None))
         .ok_or_else(|| text::NO_MODELS.into())
 }
 
 fn pick_lm_studio_model(
     models: &[Value],
     wanted: Option<&str>,
-) -> Result<(String, Option<u64>), String> {
+) -> Result<(String, Option<u64>, Option<u64>), String> {
     let model = match wanted {
         Some(name) => models
             .iter()
@@ -116,7 +123,11 @@ fn pick_lm_studio_model(
             .ok_or(text::NO_MODEL_LOADED)?,
     };
     let id = model["id"].as_str().unwrap_or_default().to_string();
-    Ok((id, model["loaded_context_length"].as_u64()))
+    Ok((
+        id,
+        model["loaded_context_length"].as_u64(),
+        model["max_context_length"].as_u64(),
+    ))
 }
 
 #[cfg(test)]
@@ -146,16 +157,17 @@ mod tests {
         let models = json!([
             {"id": "embedder", "type": "embeddings", "state": "loaded"},
             {"id": "idle", "type": "llm", "state": "not-loaded"},
-            {"id": "chat", "type": "llm", "state": "loaded", "loaded_context_length": 32768}
+            {"id": "chat", "type": "llm", "state": "loaded",
+             "loaded_context_length": 32768, "max_context_length": 131072}
         ]);
         let models = models.as_array().unwrap();
         assert_eq!(
             pick_lm_studio_model(models, None).unwrap(),
-            ("chat".into(), Some(32768))
+            ("chat".into(), Some(32768), Some(131072))
         );
         assert_eq!(
             pick_lm_studio_model(models, Some("idle")).unwrap(),
-            ("idle".into(), None)
+            ("idle".into(), None, None)
         );
         assert!(pick_lm_studio_model(models, Some("missing")).is_err());
     }

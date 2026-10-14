@@ -1,5 +1,5 @@
-//! The system prompt: how to work, what this machine is, and what the person
-//! wrote in about-me.md.
+//! The system prompt: how to work, what this machine is, how much context
+//! there is, and what the person wrote in about-me.md.
 
 use crate::system::Facts;
 
@@ -16,11 +16,13 @@ it can't ask for input, so pass flags like -y, and if it needs sudo, give the us
 - Read-only commands run right away. Anything else is shown to the user first, and they may decline; \
 if they do, don't look for a way around it, ask what they want instead.
 - Change existing files with edit_file and create new ones with write_file. The user reviews a diff first.
+- Tool outputs leave the conversation as it fills up, and your reasoning isn't kept: when a file comes back cut, \
+write down in your reply what you need from it before reading on.
 - Reply in the user's language. Talk naturally and directly, like a colleague; casual is fine.
 - Keep answers short. This is a terminal: **bold**, `inline code` and code blocks show styled; \
 tables and headings don't help here, so skip them.";
 
-pub fn system_prompt(facts: &Facts, about_me: Option<&str>) -> String {
+pub fn system_prompt(facts: &Facts, context: Option<u64>, about_me: Option<&str>) -> String {
     let mut prompt = String::from(HOW_TO_WORK);
     prompt.push_str("\n\nThis computer:\n");
     let system = if facts.wsl {
@@ -39,6 +41,12 @@ pub fn system_prompt(facts: &Facts, about_me: Option<&str>) -> String {
             "- Scratch folder, deleted when Lokal quits: {scratch}. A file the user asks for goes \
              where they say, or in the working directory; a file you make only to get the work done \
              (a download, output to look through, a script to run once) goes in the scratch folder.\n"
+        ));
+    }
+    if let Some(context) = context {
+        prompt.push_str(&format!(
+            "\nYour context holds {context} tokens in all: this prompt, the conversation, tool outputs, \
+             your reasoning and your reply.\n"
         ));
     }
     if let Some(about_me) = about_me.map(str::trim).filter(|text| !text.is_empty()) {
