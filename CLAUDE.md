@@ -83,6 +83,11 @@ dependencies.
   person's own lines and Lokal acting; code in an answer is a soft
   blue-gray. A full-width background was tried on the prompt line and
   glitched, so don't bring it back.
+  - **Two things pulse, gently** (`style::pulse_*`, in truecolor, since the
+    256-color steps are too coarse to ease): the label while the model
+    works, slowly, and the marker on the option an approval is on, quicker.
+    Only the marker moves, never Yes itself: the menu starts on No, and the
+    pulse follows the person's choice instead of pulling toward one.
 - **Every block gets room to breathe,** so the screen never feels
   cluttered. A blank line follows the request and the `$` line of a command.
   Output starts after one, only when there is output, so a silent command

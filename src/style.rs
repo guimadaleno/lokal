@@ -5,6 +5,7 @@ use std::fs::OpenOptions;
 use std::io::IsTerminal;
 use std::os::fd::AsRawFd;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 pub fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -35,6 +36,39 @@ pub fn faint(text: &str) -> String {
 /// A soft orange: the spinner and the person's own messages.
 pub fn accent(text: &str) -> String {
     paint("38;5;173", text)
+}
+
+/// The faint label while the model works, breathing slowly a little brighter.
+pub fn pulse_faint(text: &str, since: Instant) -> String {
+    pulse(
+        text,
+        [78, 78, 78],
+        [118, 118, 118],
+        since,
+        Duration::from_millis(2400),
+    )
+}
+
+/// The accent, breathing quicker toward a lighter orange: the marker on the
+/// option an approval is on.
+pub fn pulse_accent(text: &str, since: Instant) -> String {
+    pulse(
+        text,
+        [215, 135, 95],
+        [250, 178, 138],
+        since,
+        Duration::from_millis(1000),
+    )
+}
+
+/// Text whose color goes from `from` to `to` and back once every `period`,
+/// easing at both ends. It starts on `from`: faint's and accent's own color.
+fn pulse(text: &str, from: [u8; 3], to: [u8; 3], since: Instant, period: Duration) -> String {
+    let phase = since.elapsed().as_secs_f32() / period.as_secs_f32();
+    let mix = (1.0 - (phase * std::f32::consts::TAU).cos()) / 2.0;
+    let [red, green, blue] =
+        [0, 1, 2].map(|i| (from[i] as f32 + (to[i] as f32 - from[i] as f32) * mix).round() as u8);
+    paint(&format!("38;2;{red};{green};{blue}"), text)
 }
 
 pub fn red(text: &str) -> String {

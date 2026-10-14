@@ -5,8 +5,12 @@
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
+use std::time::Instant;
 
 use crate::style;
+
+/// How often the selected option's marker is repainted while it pulses, in ms.
+const PULSE_FRAME: i32 = 60;
 
 pub struct Item<'a> {
     pub label: &'a str,
@@ -40,9 +44,14 @@ pub fn choose(question: &str, items: &[Item], safe: usize) -> Option<Choice> {
         .ok()?;
     let raw = RawMode::enter(&terminal)?;
     let mut selected = safe;
+    let shown = Instant::now();
     let _ = write!(terminal, "\x1b[?25l  {question}");
-    draw(&mut terminal, items, selected, false);
+    draw(&mut terminal, items, selected, false, shown);
     let choice = loop {
+        if !key_within(&terminal, PULSE_FRAME) {
+            pulse_marker(&mut terminal, items.len(), selected, shown);
+            continue;
+        }
         let picked = match read_key(&mut terminal) {
             Key::Up => {
                 selected = selected.saturating_sub(1);
@@ -60,7 +69,7 @@ pub fn choose(question: &str, items: &[Item], safe: usize) -> Option<Choice> {
         };
         match picked {
             Some(index) => break Choice::Picked(index),
-            None => draw(&mut terminal, items, selected, true),
+            None => draw(&mut terminal, items, selected, true, shown),
         }
     };
     // Back up to the question and replace the options with the answer.
@@ -87,7 +96,7 @@ fn pick_by_key(items: &[Item], key: char) -> Option<usize> {
 }
 
 /// One line per option, the selected one marked. `again` redraws in place.
-fn draw(terminal: &mut File, items: &[Item], selected: usize, again: bool) {
+fn draw(terminal: &mut File, items: &[Item], selected: usize, again: bool, shown: Instant) {
     let mut text = String::new();
     if again {
         text.push_str(&format!("\r\x1b[{}A", items.len() - 1));
@@ -100,11 +109,29 @@ fn draw(terminal: &mut File, items: &[Item], selected: usize, again: bool) {
             text.push('\n');
         }
         if index == selected {
-            text.push_str(&format!("  {} {}", style::accent("›"), item.label));
+            text.push_str(&format!(
+                "  {} {}",
+                style::pulse_accent("›", shown),
+                item.label
+            ));
         } else {
             text.push_str(&format!("    {}", style::gray(item.label)));
         }
     }
+    let _ = terminal.write_all(text.as_bytes());
+    let _ = terminal.flush();
+}
+
+/// Paints the selected option's marker again, in the pulse's color of now.
+/// The cursor goes back to the last option's line, where `draw` left it.
+fn pulse_marker(terminal: &mut File, count: usize, selected: usize, shown: Instant) {
+    let up = count - 1 - selected;
+    let marker = style::pulse_accent("›", shown);
+    let text = if up == 0 {
+        format!("\r  {marker}")
+    } else {
+        format!("\x1b[{up}A\r  {marker}\x1b[{up}B")
+    };
     let _ = terminal.write_all(text.as_bytes());
     let _ = terminal.flush();
 }
@@ -126,11 +153,11 @@ fn read_key(terminal: &mut File) -> Key {
 
 /// An arrow key is Esc followed by [A or [B (or OA, OB); Esc alone is Esc.
 fn read_escape(terminal: &mut File) -> Key {
-    if !has_more(terminal) {
+    if !key_within(terminal, 30) {
         return Key::Escape;
     }
     let mut last = 0;
-    while has_more(terminal) {
+    while key_within(terminal, 30) {
         match read_byte(terminal) {
             Some(byte) => last = byte,
             None => break,
@@ -154,15 +181,16 @@ fn read_byte(terminal: &mut File) -> Option<u8> {
     }
 }
 
-/// Whether another byte arrives within a moment: the rest of a key's sequence.
-fn has_more(terminal: &File) -> bool {
+/// Whether a byte arrives within `milliseconds`: a key, or the rest of one's
+/// sequence.
+fn key_within(terminal: &File, milliseconds: i32) -> bool {
     let mut poll = libc::pollfd {
         fd: terminal.as_raw_fd(),
         events: libc::POLLIN,
         revents: 0,
     };
     // SAFETY: one valid pollfd, for the length given.
-    unsafe { libc::poll(&mut poll, 1, 30) > 0 }
+    unsafe { libc::poll(&mut poll, 1, milliseconds) > 0 }
 }
 
 /// Keys arrive one by one, unechoed, and Ctrl+C arrives as a key. The

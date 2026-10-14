@@ -462,7 +462,7 @@ fn working_label(started: Instant, writing: Option<&ToolProgress>, used: Option<
             label_with(path.as_deref())
         }
     };
-    format!(" {}", style::faint(&label))
+    format!(" {}", style::pulse_faint(&label, started))
 }
 
 /// The end of a text that fits in `room` characters, marked with … when cut.
