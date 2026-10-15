@@ -78,6 +78,11 @@ dependencies.
 - **Every word on screen lives in `src/text.rs`.** The voice is casual but
   precise, like a colleague, with no jokes and no emoji. Approval prompts,
   "Stopped." and errors stay plain.
+  - **The page's terminal plays the real screen** (`site/index.html`): the
+    approval's options, the working labels, the prompt's status, the
+    spinner's frames, the reasoning window and the two pulses, at Lokal's
+    timings. When one of them changes here, it changes there too. Its
+    markup is the last frame, and what shows without motion.
 - **The look stays discreet:** faint and gray tones from `src/style.rs`, one
   line, and no boxes or color blocks. Orange (`style::accent`) marks the
   person's own lines and Lokal acting; code in an answer is a soft
@@ -303,7 +308,6 @@ Tracked as issues:
 - **`/compact`, and the same on its own when dropping outputs isn't
   enough** (#4);
 - **an `ask` tool** (#7);
-- **the page's terminal, animated** (#8);
 - **`about-me.md` renamed `user.md`**, to weigh (#9);
 - **a highlight for deletes outside the working folder**, to weigh (#10);
 - **an aarch64 build** (#11);

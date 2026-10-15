@@ -34,6 +34,12 @@
   --term-gray:   #9a948d;   /* 6.2:1 */
   --term-faint:  #4a4744;   /* the line between turns, never text */
   --term-orange: #d7875f;   /* 6.7:1 */
+  /* Faint on purpose, as in Lokal: the reasoning, the working label and the
+     prompt's status. The first two go away; -up is where the label pulses to,
+     and --term-orange-up where the approval's marker does. */
+  --term-dim:       #4e4b48;
+  --term-dim-up:    #76716c;
+  --term-orange-up: #fab28a;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -60,7 +66,7 @@ body {
   font: 400 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, "Noto Sans", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
-code, pre { font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; }
+code, pre, .screen { font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; }
 a { color: var(--orange); }
 .wrap { max-width: 960px; margin: 0 auto; padding: 0 16px; }
 
@@ -85,11 +91,20 @@ a { color: var(--orange); }
 
 /* ------------------------------------------------------------------ the terminal */
 .terminal { max-width: 760px; margin: 48px auto 0; background: var(--term); color: var(--term-ink); border-radius: 12px; padding: 18px 20px 20px; font-size: 13.5px; line-height: 1.55; text-align: left; box-shadow: 0 20px 50px rgba(0, 0, 0, .18); overflow-x: auto; }
-.terminal pre { margin: 0; white-space: pre; }
+/* One block per line, so the animation can add and take away whole lines. */
+.screen .l { display: block; white-space: pre; min-height: 1.55em; }
 .t-gray { color: var(--term-gray); }
 .t-orange { color: var(--term-orange); }
+.t-dim { color: var(--term-dim); }
 .t-bold { font-weight: 700; }
-.t-rule { display: block; color: var(--term-faint); overflow: hidden; white-space: nowrap; }
+.t-rule { color: var(--term-faint); overflow: hidden; white-space: nowrap; }
+.t-cursor { background: var(--term-ink); }
+.t-status { float: right; color: var(--term-dim); }
+/* Lokal's two pulses: the working label slowly, the approval's marker quicker. */
+.t-label { color: var(--term-dim); animation: label-pulse 2.4s ease-in-out infinite; }
+.t-marker { color: var(--term-orange); animation: marker-pulse 1s ease-in-out infinite; }
+@keyframes label-pulse { 50% { color: var(--term-dim-up); } }
+@keyframes marker-pulse { 50% { color: var(--term-orange-up); } }
 
 /* ------------------------------------------------------------------ sections */
 .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px; padding: 56px 0 8px; }
@@ -126,25 +141,32 @@ footer { margin-top: 64px; padding: 24px 0 48px; border-top: 1px solid var(--rul
     <div class="install"><code id="install">curl -fsSLo lokal https://download.guimadaleno.com/lokal/0.3.0/lokal &amp;&amp; chmod +x lokal &amp;&amp; ./lokal --install</code><button type="button" data-copy="install">Copy</button></div>
     <p class="install-note">Version <span id="version">0.3.0</span>, for Linux and WSL on x86-64. One file, which installs itself in <code>~/.local/bin</code> and keeps itself up to date. <span id="checksum" class="checksum">Its SHA-256 is in <a href="https://download.guimadaleno.com/lokal/SHA256SUMS">SHA256SUMS</a>.</span></p>
 
+    <!-- The last frame of the conversation the script plays, and what shows
+         without it. data-type is typed at the prompt; data-think and data-run
+         wait on the spinner first, with the reasoning window if there's a
+         thought; data-stream comes in as the answer does. -->
     <div class="terminal" aria-label="Lokal in a terminal">
-<pre><span class="t-bold">Lokal</span> <span id="term-version">0.3.0</span>  <span class="t-gray">qwen3.8-27b</span>
-<span class="t-orange">&gt; is the web container running?</span>
-
-<span class="t-orange">$</span> docker ps -a --filter name=web --format '{{.Names}} {{.Status}}'
-
-  <span class="t-gray">web Exited (0) 2 hours ago</span>
-
-It's <span class="t-bold">stopped</span>: it exited 2 hours ago.
-<span class="t-rule">────────────────────────────────────────────────────────────────────────────────────────────────</span><span class="t-orange">&gt; start it</span>
-
-<span class="t-orange">$</span> docker start web
-
-  <span class="t-gray">Starts the stopped container web.</span>
-  Run it?
-    <span class="t-gray">Yes</span>
-    <span class="t-gray">Yes, and don't ask again this session</span>
-    <span class="t-gray">Yes, and don't ask again in this project</span>
-  <span class="t-orange">›</span> No</pre>
+      <div class="screen" id="screen">
+        <span class="l"><span class="t-bold">Lokal</span> <span id="term-version">0.3.0</span>  <span class="t-gray">qwen3.8-27b</span></span>
+        <span class="l t-orange" data-type>&gt; is the web container running?</span>
+        <span class="l"></span>
+        <span class="l" data-think="The user is asking whether the web container is running. Probably a Docker container named web. docker ps -a with a name filter lists it even if it has stopped, and shows its status." data-used="~1k of 33k tokens" data-call><span class="t-orange">$</span> docker ps -a --filter name=web --format '{{.Names}} {{.Status}}'</span>
+        <span class="l"></span>
+        <span class="l" data-run>  <span class="t-gray">web Exited (0) 2 hours ago</span></span>
+        <span class="l"></span>
+        <span class="l" data-think="Exited (0) two hours ago: it stopped cleanly. Say so." data-stream>It's <span class="t-bold">stopped</span>: it exited 2 hours ago.</span>
+        <span class="l t-rule">────────────────────────────────────────────────────────────────────────────────────────────────</span>
+        <span class="l t-orange" data-type data-status="4s · 3%">&gt; start it</span>
+        <span class="l"></span>
+        <span class="l" data-think="They want it running again. It exists and exited cleanly, so docker start web brings it back as it was." data-used="~2k of 33k tokens" data-call><span class="t-orange">$</span> docker start web</span>
+        <span class="l"></span>
+        <span class="l">  <span class="t-gray">Starts the stopped container web.</span></span>
+        <span class="l">  Run it?</span>
+        <span class="l">    <span class="t-gray">Yes</span></span>
+        <span class="l">    <span class="t-gray">Yes, and don't ask again this session</span></span>
+        <span class="l">    <span class="t-gray">Yes, and don't ask again in this project</span></span>
+        <span class="l">  <span class="t-marker">›</span> No</span>
+      </div>
     </div>
   </section>
 
@@ -221,6 +243,136 @@ document.addEventListener('click', function (event) {
   var asked = location.hash.slice(1).split('-');
   if (asked[0] === 'dark' || asked[0] === 'light') document.documentElement.dataset.theme = asked[0];
   if (asked[1] === 'still') document.documentElement.dataset.still = '';
+})();
+
+// The terminal plays its conversation once it's in view, at Lokal's own pace
+// and with its own spinner, label and reasoning window. Without motion, the
+// markup stays as it is: the last frame.
+(function () {
+  var screen = document.getElementById('screen');
+  if (document.documentElement.hasAttribute('data-still') ||
+      matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  var lines = Array.prototype.slice.call(screen.children);
+  screen.style.minHeight = screen.offsetHeight + 'px';
+  // The first line stays: it holds the version the release fills in.
+  lines.slice(1).forEach(function (line) { line.remove(); });
+
+  var FRAMES = ['·', '•', '●', '•', '·'];
+  var LABEL_AFTER = 2000;
+  var REASONING_ROWS = 4;
+
+  function wait(ms) { return new Promise(function (done) { setTimeout(done, ms); }); }
+
+  function span(className, text) {
+    var element = document.createElement('span');
+    element.className = className;
+    element.textContent = text || '';
+    return element;
+  }
+
+  // The reasoning's last rows, cut at the terminal's width less six, as Lokal does.
+  function lastRows(text) {
+    var probe = screen.appendChild(span('', '0000000000'));
+    var columns = Math.floor(screen.clientWidth / (probe.getBoundingClientRect().width / 10));
+    probe.remove();
+    var width = Math.max(20, columns - 6), rows = [];
+    for (var at = 0; at < text.length; at += width) rows.push(text.slice(at, at + width));
+    return rows.slice(-REASONING_ROWS);
+  }
+
+  // Typed at the prompt, with the last turn's status at the far right.
+  async function type(line) {
+    var html = line.innerHTML, request = line.textContent.slice(2);
+    var cursor = span('t-cursor', ' ');
+    var status = line.dataset.status && span('t-status', line.dataset.status);
+    screen.appendChild(line);
+    for (var typed = 0; typed <= request.length; typed++) {
+      line.textContent = '> ' + request.slice(0, typed);
+      line.appendChild(cursor);
+      if (status) line.appendChild(status);
+      await wait(typed === 0 ? 900 : 45 + Math.random() * 60);
+    }
+    await wait(300);
+    line.innerHTML = html;
+  }
+
+  // The spinner while the model works or a command runs; above it, the
+  // reasoning as it comes, which clears before the step or the answer.
+  async function work(thought, used, call) {
+    var started = Date.now(), frame = 0, doing = 'thinking', rows = [];
+    var spinner = screen.appendChild(span('l'));
+    var dot = spinner.appendChild(span('t-orange'));
+    var label = spinner.appendChild(span('t-label'));
+    function tick() {
+      dot.textContent = FRAMES[frame++ % FRAMES.length];
+      var elapsed = Date.now() - started;
+      if (elapsed >= LABEL_AFTER) {
+        label.textContent = ' ' + doing + ' · ' + Math.round(elapsed / 1000) + 's' + (used ? ' · ' + used : '');
+      }
+    }
+    // The window's rows and a blank one, between the last line and the spinner.
+    function show(text) {
+      rows.forEach(function (row) { row.remove(); });
+      rows = !text ? [] : lastRows(text)
+        .map(function (row) { return span('l t-dim', '  ' + row); })
+        .concat(span('l'));
+      rows.forEach(function (row) { screen.insertBefore(row, spinner); });
+    }
+    tick();
+    var spinning = setInterval(tick, 160);
+    var words = thought ? thought.split(' ') : [];
+    await wait(words.length ? 600 : 500);
+    for (var count = 1; count <= words.length; count++) {
+      show(words.slice(0, count).join(' '));
+      await wait(55);
+    }
+    await wait(words.length ? 300 : 0);
+    show('');
+    if (call) {
+      doing = 'writing a command';
+      tick();
+      await wait(700);
+    }
+    clearInterval(spinning);
+    spinner.remove();
+  }
+
+  // The answer as it streams, a few characters at a time.
+  async function stream(line) {
+    var html = line.innerHTML, length = line.textContent.length;
+    screen.appendChild(line);
+    for (var shown = 0; shown < length; shown += 3) {
+      line.innerHTML = html;
+      var walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT), node, left = shown;
+      while ((node = walker.nextNode())) {
+        var kept = Math.min(left, node.length);
+        left -= kept;
+        node.data = node.data.slice(0, kept);
+      }
+      await wait(35);
+    }
+    line.innerHTML = html;
+  }
+
+  async function play() {
+    for (var i = 1; i < lines.length; i++) {
+      var line = lines[i], data = line.dataset;
+      if ('type' in data) { await type(line); continue; }
+      if ('run' in data) await work();
+      if ('think' in data) await work(data.think, data.used, 'call' in data);
+      if ('stream' in data) { await stream(line); continue; }
+      screen.appendChild(line);
+    }
+  }
+
+  if (!('IntersectionObserver' in window)) return play();
+  var watch = new IntersectionObserver(function (entries) {
+    if (!entries[0].isIntersecting) return;
+    watch.disconnect();
+    play();
+  }, { threshold: 0.5 });
+  watch.observe(screen);
 })();
 </script>
 </body>
