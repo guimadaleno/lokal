@@ -30,8 +30,8 @@ impl Window {
         }
     }
 
-    /// Redraws the window when it's due. The cursor ends on the row below
-    /// it, where the spinner goes.
+    /// Redraws the window when it's due. A blank row follows it, and the
+    /// cursor ends on the row after that, where the spinner goes.
     pub fn draw(&mut self) {
         if !style::enabled() || self.drawn_at.is_some_and(|at| at.elapsed() < REDRAW_EVERY) {
             return;
@@ -46,9 +46,10 @@ impl Window {
         for row in &rows {
             out.push_str(&format!("  {}\n", style::faint(row)));
         }
+        out.push('\n');
         eprint!("{out}");
         let _ = std::io::stderr().flush();
-        self.drawn_rows = rows.len();
+        self.drawn_rows = rows.len() + 1;
         self.drawn_at = Some(Instant::now());
     }
 

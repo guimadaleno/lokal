@@ -92,7 +92,7 @@ dependencies.
   cluttered. A blank line follows the request and the `$` line of a command.
   Output starts after one, only when there is output, so a silent command
   leaves no double gap. Each step ends with one, and a faint line closes
-  each turn.
+  each turn. The reasoning window keeps one between itself and the spinner.
 - **Markdown is styled on the screen only.** The conversation keeps what
   the model wrote, and a piped answer stays plain Markdown. A style ends
   with its line, so a stray marker can't paint the rest of the screen.
