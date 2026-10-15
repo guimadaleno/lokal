@@ -28,6 +28,7 @@
   --btn:      #a2532c;   /* white on it: 5.5:1 */
   --chevron:  #1c1a18;   /* the mark's chevron, beside the name */
   --dot:      #c06a40;   /* the mark's dot, a graphic: 3.6:1 */
+  --grid:     #d9d3cc;   /* the backdrop's cells, never text */
   /* The terminal stays a terminal in both themes. */
   --term:        #131211;
   --term-ink:    #ece8e3;   /* 15.3:1 */
@@ -45,13 +46,13 @@
   :root:not([data-theme="light"]) {
     --ground: #131211; --raised: #1c1a18; --ink: #ece8e3; --muted: #9a948d;
     --rule: #2c2926; --orange: #d7875f; --code: #87afd7; --chevron: #ece8e3;
-    --dot: #d7875f; --term: #0d0c0b;
+    --dot: #d7875f; --grid: #2e2b28; --term: #0d0c0b;
   }
 }
 :root[data-theme="dark"] {
   --ground: #131211; --raised: #1c1a18; --ink: #ece8e3; --muted: #9a948d;
   --rule: #2c2926; --orange: #d7875f; --code: #87afd7; --chevron: #ece8e3;
-  --dot: #d7875f; --term: #0d0c0b;
+  --dot: #d7875f; --grid: #2e2b28; --term: #0d0c0b;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -69,6 +70,16 @@ body {
 code, pre, .screen { font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; }
 a { color: var(--orange); }
 .wrap { max-width: 960px; margin: 0 auto; padding: 0 16px; }
+
+/* ------------------------------------------------------------------ backdrop
+   Faint cells behind the hero, where a dot now and then wakes the way
+   Lokal's spinner does, slowly, and sleeps again. It fades out before the
+   sections, so nothing under the text moves. Only transform and opacity
+   animate, which the browser does without repainting. */
+.backdrop { position: absolute; top: 0; left: 0; right: 0; height: 880px; overflow: hidden; pointer-events: none; background: radial-gradient(circle, var(--grid) 1px, transparent 1.5px) 0 0 / 24px 24px; mask-image: radial-gradient(ellipse 90% 85% at 50% 0, #000 35%, transparent 100%); }
+.backdrop i { position: absolute; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: var(--dot); opacity: 0; animation: wake 8s ease-in-out infinite; }
+@keyframes wake { 0%, 100% { opacity: 0; transform: scale(.25); } 50% { opacity: .75; transform: scale(1); } }
+main { position: relative; }
 
 /* ------------------------------------------------------------------ hero */
 .hero { padding: 72px 0 32px; text-align: center; }
@@ -132,6 +143,7 @@ footer { margin-top: 64px; padding: 24px 0 48px; border-top: 1px solid var(--rul
 </style>
 </head>
 <body>
+<div class="backdrop" id="backdrop" aria-hidden="true"></div>
 <main class="wrap">
   <section class="hero">
     <div class="logo">
@@ -245,6 +257,51 @@ document.addEventListener('click', function (event) {
   var asked = location.hash.slice(1).split('-');
   if (asked[0] === 'dark' || asked[0] === 'light') document.documentElement.dataset.theme = asked[0];
   if (asked[1] === 'still') document.documentElement.dataset.still = '';
+})();
+
+// The backdrop's waking dots, about one for every hundred and twenty cells.
+// Each moves to another cell while it sleeps, so no pattern shows, and
+// never near the hero's words: a dot between letters reads as one of them.
+// Without motion, only the cells show.
+(function () {
+  var backdrop = document.getElementById('backdrop');
+  if (document.documentElement.hasAttribute('data-still') ||
+      matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  var CELL = 24;
+  var words = document.querySelectorAll('.logo, .lead, .install, .install-note, .terminal');
+
+  function clear(x, y) {
+    var origin = backdrop.getBoundingClientRect();
+    return Array.prototype.every.call(words, function (element) {
+      var box = element.getBoundingClientRect();
+      return x < box.left - origin.left - CELL / 2 || x > box.right - origin.left + CELL / 2 ||
+             y < box.top - origin.top - CELL / 2 || y > box.bottom - origin.top + CELL / 2;
+    });
+  }
+
+  // Where there's no clear cell, as on a phone at times, it sleeps a round.
+  function move(dot) {
+    var columns = Math.floor(backdrop.clientWidth / CELL);
+    var rows = Math.floor(backdrop.clientHeight / CELL);
+    for (var tries = 0; tries < 20; tries++) {
+      var x = (Math.floor(Math.random() * columns) + 0.5) * CELL;
+      var y = (Math.floor(Math.random() * rows) + 0.5) * CELL;
+      if (clear(x, y)) break;
+    }
+    dot.style.left = x + 'px';
+    dot.style.top = y + 'px';
+    dot.style.visibility = tries < 20 ? '' : 'hidden';
+  }
+
+  var count = Math.round(backdrop.clientWidth * backdrop.clientHeight / (120 * CELL * CELL));
+  for (var i = 0; i < count; i++) {
+    var dot = backdrop.appendChild(document.createElement('i'));
+    dot.style.animationDuration = 6 + Math.random() * 4 + 's';
+    dot.style.animationDelay = -Math.random() * 10 + 's';
+    dot.addEventListener('animationiteration', function (event) { move(event.target); });
+    move(dot);
+  }
 })();
 
 // The terminal plays its conversation once it's in view, at Lokal's own pace
