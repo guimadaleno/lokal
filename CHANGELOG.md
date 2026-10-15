@@ -5,6 +5,11 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.4.2 — 2026-10-14
+
+- The model's reasoning, while it thinks, now has a blank line between it
+  and the line that says it's thinking, so the two no longer run together.
+
 ## 0.4.1 — 2026-10-14
 
 - A conversation that writes files no longer fills up with them. Once the
