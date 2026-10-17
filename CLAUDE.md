@@ -83,8 +83,9 @@ dependencies.
   - **The page's terminal plays the real screen** (`site/index.html`): the
     approval's options, the working labels, the prompt's status, the
     spinner's frames, the reasoning window (as `/reasoning` shows it) and
-    the two pulses, at Lokal's timings. When one of them changes here, it changes there too. Its
-    markup is the last frame, and what shows without motion.
+    the two pulses, at Lokal's timings. When one of them changes here, it
+    changes there too. Its markup is the last frame, and what shows without
+    motion.
 - **The look stays discreet:** faint and gray tones from `src/style.rs`, one
   line, and no boxes or color blocks. Orange (`style::accent`) marks the
   person's own lines and Lokal acting; code in an answer is a soft
@@ -180,7 +181,8 @@ dependencies.
   - **What could be a secret is left out by the code:** a remote's address
     loses its user, password and query, where a token often sits. A cloud
     tool is "configured" from whether its settings file or variable
-    exists, never from what it holds, and no other variable is read.
+    exists, never from what it holds. Of the other variables, only `PATH`,
+    `SHELL` and `TZ` are read.
   - **Text from the disk is one short clean line,** given to the model as
     facts, not instructions: a branch or a folder name could carry some.
   - **The PATH's relative folders are skipped,** so a project can't plant a
