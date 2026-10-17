@@ -5,6 +5,23 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.5.0 — 2026-10-17
+
+- The model's reasoning no longer shows while it thinks unless you ask for
+  it: /reasoning turns its small window on for the session.
+- A project's LOKAL.md and AGENTS.md now go along with every message, from
+  the project's root down to the folder you're in, so the model knows how
+  to work there. They take at most an eighth of the context, a line at the
+  start says which go along and what they cost, /info lists them, and
+  /memory opens them. A change counts from your next message.
+- /recon tells the model what this machine and the project have: the
+  tools on your PATH with the versions that matter, whether Docker
+  answers, and the project's branch and remotes. Lokal gathers it itself,
+  leaves out what could be a secret, and shows you all of what the model
+  gets.
+- Typing / lists the commands that fit on the line instead of wrapping,
+  and /info keeps long values in their column.
+
 ## 0.4.2 — 2026-10-14
 
 - The model's reasoning, while it thinks, now has a blank line between it
