@@ -304,7 +304,7 @@ cargo clippy --all-targets
 
 | What | Measured |
 |---|---|
-| Release binary (static, stripped) | 1.9 MB |
+| Release binary (static, stripped) | 2.0 MB |
 | Start to the prompt, server found | ~40 ms |
 | Memory at the prompt | ~3 MB |
 
