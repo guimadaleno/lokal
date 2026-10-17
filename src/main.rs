@@ -432,18 +432,30 @@ fn print_rows(rows: &[(&str, String)]) {
 }
 
 /// `text` in lines of at most `room` characters, each broken after a ", "
-/// or a " · ". A piece longer than that keeps a line of its own; no room
+/// or a " · ", and a piece longer than a line where the line ends. No room
 /// known, one line.
 fn wrapped(text: &str, room: usize) -> Vec<String> {
+    if room == 0 {
+        return vec![text.to_string()];
+    }
     let mut lines = Vec::new();
     let mut line = String::new();
     for piece in pieces(text) {
-        let fits = line.chars().count() + piece.trim_end().chars().count() <= room;
-        if !line.is_empty() && room > 0 && !fits {
+        if !line.is_empty() && line.chars().count() + piece.trim_end().chars().count() > room {
             lines.push(line.trim_end().to_string());
             line.clear();
         }
         line.push_str(piece);
+        // What follows a broken piece goes on after its end.
+        while line.trim_end().chars().count() > room {
+            lines.push(line.chars().take(room).collect());
+            line = line
+                .chars()
+                .skip(room)
+                .collect::<String>()
+                .trim_start()
+                .to_string();
+        }
     }
     lines.push(line.trim_end().to_string());
     lines
@@ -581,9 +593,19 @@ mod tests {
             ["git 2.43.0,", "cargo, node ·", "docker"]
         );
         assert_eq!(wrapped("a, b", 0), ["a, b"]);
+        assert_eq!(wrapped("", 10), [""]);
+        // Longer than a line: broken where it ends, and the rest goes on after it.
         assert_eq!(
             wrapped("~/a/very/long/path · 3 lines", 10),
-            ["~/a/very/long/path ·", "3 lines"]
+            ["~/a/very/l", "ong/path ·", "3 lines"]
+        );
+        assert_eq!(
+            wrapped("~/a/long/path.md · 3 lines", 12),
+            ["~/a/long/pat", "h.md ·", "3 lines"]
+        );
+        assert_eq!(
+            wrapped("~/a/long/path.md · 0", 12),
+            ["~/a/long/pat", "h.md · 0"]
         );
     }
 }

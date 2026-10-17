@@ -210,8 +210,7 @@ pub const RECON_NONE: &str = "none of the usual ones";
 pub const RECON_DOCKER_DOWN: &str = "installed, but its daemon doesn't answer";
 pub const RECON_NO_BRANCH: &str = "no branch checked out";
 pub const RECON_NOT_A_REPOSITORY: &str = "not a git repository";
-pub const RECON_DONE: &str =
-    "The model knows this from your next message on. /recon again brings it up to date.";
+pub const RECON_DONE: &str = "The model knows this from your next message on.";
 
 /// "daemon 29.5.3 · 2 containers running"
 pub fn recon_docker(version: &str, running: usize) -> String {
