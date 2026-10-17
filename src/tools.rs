@@ -79,7 +79,8 @@ pub fn definitions() -> Value {
         tool(
             "remember",
             "Add one short line to the notes every conversation starts with (about-me.md). \
-             Only when the user asks you to remember something; they approve the line first.",
+             Only when the user asks you to remember something; they approve the line first. \
+             Something only about this project goes in its LOKAL.md instead, changed like any file.",
             json!({"note": {"type": "string", "description": "The fact or preference, in one short line."}}),
             &["note"],
         ),

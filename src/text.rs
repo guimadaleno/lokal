@@ -22,6 +22,7 @@ Settings live in ~/.config/lokal/config (server = 192.0.2.10:1234, model = name,
 pub const COMMANDS: &[(&str, &str)] = &[
     ("/new", "start fresh"),
     ("/prefs", "edit what Lokal knows about you"),
+    ("/memory", "edit the project's notes for the model"),
     ("/config", "edit Lokal's settings"),
     ("/info", "show the model, the server and what's in use"),
     ("/update", "check for a newer Lokal now"),
@@ -190,6 +191,34 @@ pub const INFO_ABOUT_ME: &str = "about me";
 pub const INFO_SETTINGS: &str = "settings";
 pub const INFO_PROJECT: &str = "project";
 pub const INFO_SCRATCH: &str = "scratch";
+pub const INFO_NOTES: &str = "notes";
+pub const NO_NOTES: &str = "none yet (/memory starts a LOKAL.md)";
+pub const NOTES_CHANGED: &str =
+    "The project's notes changed, so the model gets the new ones from here.";
+pub const NOTES_GONE: &str = "The project has no notes now.";
+
+/// The line at the start that says which notes go along, and their cost.
+pub fn notes_taken(names: &[&str], tokens: u64, cut: bool) -> String {
+    let cut = if cut {
+        ", cut to fit; the model reads the rest when it needs it"
+    } else {
+        ""
+    };
+    format!(
+        "The project's notes go along with every message: {} · {}{cut}",
+        names.join(", "),
+        about_tokens(tokens)
+    )
+}
+
+/// One note in /info: "src/AGENTS.md · ~1k tokens".
+pub fn note_size(name: &str, tokens: u64, cut: bool) -> String {
+    match (tokens, cut) {
+        (0, true) => format!("{name} · didn't fit"),
+        (_, true) => format!("{name} · {}, cut to fit", about_tokens(tokens)),
+        _ => format!("{name} · {}", about_tokens(tokens)),
+    }
+}
 
 pub fn scratch_folder(path: Option<&str>) -> String {
     match path {
@@ -309,14 +338,21 @@ pub fn writing_tool(name: &str, path: Option<&str>, bytes: usize) -> String {
 
 /// "~41k of 65k tokens": how much of the context the reply has reached.
 pub fn tokens_of(used: u64, context: u64) -> String {
-    let short = |n: u64| {
-        if n < 1000 {
-            n.to_string()
-        } else {
-            format!("{}k", (n + 500) / 1000)
-        }
-    };
     format!("~{} of {} tokens", short(used), short(context))
+}
+
+/// "~1k tokens"
+fn about_tokens(tokens: u64) -> String {
+    format!("~{} tokens", short(tokens))
+}
+
+/// 812, 41k
+fn short(n: u64) -> String {
+    if n < 1000 {
+        n.to_string()
+    } else {
+        format!("{}k", (n + 500) / 1000)
+    }
 }
 
 /// 812 B, 14 KB, 2.3 MB

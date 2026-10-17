@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use crate::chat::{self, Event, Reply};
 use crate::input::Input;
 use crate::markdown::Markdown;
+use crate::memory::{self, Note};
 use crate::server::Server;
 use crate::spinner::Spinner;
 use crate::system::Facts;
@@ -25,6 +26,10 @@ const DROPPED_OUTPUT: &str = "[Output dropped to free up context, after you saw 
 const DROPPED_WRITE: &str = "[Dropped to free up context; read the file for what it holds now.]";
 /// About three characters a token: rough, and on the high side.
 const CHARS_PER_TOKEN: usize = 3;
+/// The project's notes go along with every request, so they get an eighth
+/// of the context; this much when its size isn't known, an eighth of 32K.
+const NOTES_SHARE: u64 = 8;
+const NOTES_ROOM_UNKNOWN: usize = 4096 * CHARS_PER_TOKEN;
 const STOPPED_RESULT: &str = "Stopped by the user.";
 const SKIPPED_AFTER_NO: &str = "Not run: the user declined an earlier step.";
 const NO_ANSWER_RESULT: &str = "(No answer: the reply stopped before it began.)";
@@ -37,6 +42,9 @@ const CUT_SHORT_RESULT: &str = "Not run: your reply ran out of room before this 
 pub struct Conversation {
     pub server: Server,
     facts: Facts,
+    /// LOKAL.md and AGENTS.md as last read: at the start of each turn, and
+    /// after /memory.
+    notes: Vec<Note>,
     system: String,
     /// Everything after the system prompt, in the chat API's format.
     messages: Vec<Value>,
@@ -57,21 +65,27 @@ enum Failure {
 
 impl Conversation {
     pub fn new(server: Server, facts: Facts) -> Self {
-        let system =
-            prompt::system_prompt(&facts, server.context, config::read_about_me().as_deref());
-        Conversation {
+        let mut conversation = Conversation {
             server,
             facts,
-            system,
+            notes: Vec::new(),
+            system: String::new(),
             messages: Vec::new(),
             tokens: None,
             model_time: None,
             show_reasoning: false,
-        }
+        };
+        conversation.notes = conversation.read_notes();
+        conversation.refresh_system_prompt();
+        conversation
     }
 
     pub fn scratch(&self) -> Option<&str> {
         self.facts.scratch.as_deref()
+    }
+
+    pub fn notes(&self) -> &[Note] {
+        &self.notes
     }
 
     /// Picks about-me.md up again after it changed.
@@ -79,8 +93,28 @@ impl Conversation {
         self.system = prompt::system_prompt(
             &self.facts,
             self.server.context,
+            &self.notes,
             config::read_about_me().as_deref(),
         );
+    }
+
+    /// Reads the project's notes again; true when they changed, and the
+    /// model gets the new ones from the next request.
+    pub fn refresh_notes(&mut self) -> bool {
+        let notes = self.read_notes();
+        if notes == self.notes {
+            return false;
+        }
+        self.notes = notes;
+        self.refresh_system_prompt();
+        true
+    }
+
+    fn read_notes(&self) -> Vec<Note> {
+        let room = self.server.context.map_or(NOTES_ROOM_UNKNOWN, |context| {
+            (context / NOTES_SHARE) as usize * CHARS_PER_TOKEN
+        });
+        memory::load(Path::new(&self.facts.cwd), room)
     }
 
     /// Turns the reasoning on screen on or off; true when it's on now.
@@ -118,6 +152,10 @@ impl Conversation {
     /// answers, the person stops it, or something fails.
     pub fn send(&mut self, request: &str, input: &mut Input) {
         interrupt::clear();
+        // Notes edited since the last turn count from this one on.
+        if self.refresh_notes() {
+            eprintln!("{}\n", style::gray(text::NOTES_CHANGED));
+        }
         let turn_start = self.messages.len();
         let mut model_time = Duration::ZERO;
         let mut asked_again = false;
@@ -442,6 +480,11 @@ impl Conversation {
     }
 }
 
+/// A text's size in tokens: rough, and on the high side.
+pub fn tokens_in(text: &str) -> u64 {
+    (text.len() / CHARS_PER_TOKEN) as u64
+}
+
 /// What the conversation may fill: a quarter of the context stays for the
 /// model's reasoning and reply.
 fn budget(context: u64) -> u64 {
@@ -623,6 +666,7 @@ mod tests {
                 windows_folders: Vec::new(),
                 scratch: None,
             },
+            notes: Vec::new(),
             system: String::new(),
             messages: vec![json!({"role": "user", "content": "read it"})],
             tokens: None,

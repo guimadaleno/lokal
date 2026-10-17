@@ -120,6 +120,7 @@ dependencies.
 | `input.rs` | The `>` prompt (hints, completion, Ctrl+C twice) and approvals |
 | `menu.rs` | The arrow-key choice the approvals use |
 | `prompt.rs`, `system.rs` | The system prompt and the machine facts in it |
+| `memory.rs` | The project's notes: LOKAL.md and AGENTS.md, from the git root down |
 | `update.rs`, `install.rs` | Updating itself; `lokal --install` |
 | `release.rs` | guimadaleno/release's client, **copied unchanged** |
 | `report.rs` | guimadaleno/issues' client, **copied unchanged** |
@@ -153,6 +154,24 @@ dependencies.
   a lone Esc stops the turn, and other keys are dropped rather than echoed
   over the output. The reader ends before anything asks the person
   something, so no key reaches a question it wasn't typed for.
+- **The project's notes are the project's, and take a share of the
+  context** (`memory.rs`): LOKAL.md, then AGENTS.md, in the git root and
+  every folder down to the working directory, each file once however it's
+  reached.
+  - **A note that leads outside the project is skipped:** a repository could
+    link its AGENTS.md to any file of the person's, and it would reach the
+    model unasked. For the same reason the walk stops at the git root: a
+    file in a folder above belongs to something else.
+  - **They get an eighth of the context,** cut at a line, with the model
+    told to read the rest: they go along with every request, and at LM
+    Studio's 8K a long AGENTS.md would leave no room to work.
+  - **They come before about-me.md in the prompt,** framed as the
+    project's: what the person wrote wins over what a repository says. The
+    model changes them like any file, with a diff and a yes.
+  - **They're guidance, never secrets:** they're versioned with the
+    project, and other tools read them too.
+  - **A change counts from the next turn, with a line saying so;**
+    `/memory` opens them, and `/info` shows each one and what it costs.
 - **One reply gets at most half the context** (`max_tokens`). A model
   reasoning in circles then stops there instead of filling all of it.
 - **An output always reaches the model before it can be dropped.** Each

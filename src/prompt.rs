@@ -1,6 +1,7 @@
 //! The system prompt: how to work, what this machine is, how much context
-//! there is, and what the person wrote in about-me.md.
+//! there is, the project's notes, and what the person wrote in about-me.md.
 
+use crate::memory::Note;
 use crate::system::Facts;
 
 const HOW_TO_WORK: &str = "\
@@ -22,7 +23,12 @@ write down in your reply what you need from it before reading on.
 - Keep answers short. This is a terminal: **bold**, `inline code` and code blocks show styled; \
 tables and headings don't help here, so skip them.";
 
-pub fn system_prompt(facts: &Facts, context: Option<u64>, about_me: Option<&str>) -> String {
+pub fn system_prompt(
+    facts: &Facts,
+    context: Option<u64>,
+    notes: &[Note],
+    about_me: Option<&str>,
+) -> String {
     let mut prompt = String::from(HOW_TO_WORK);
     prompt.push_str("\n\nThis computer:\n");
     let system = if facts.wsl {
@@ -48,6 +54,25 @@ pub fn system_prompt(facts: &Facts, context: Option<u64>, about_me: Option<&str>
             "\nYour context holds {context} tokens in all: this prompt, the conversation, tool outputs, \
              your reasoning and your reply.\n"
         ));
+    }
+    // Before about-me.md: what the person wrote wins over what a repository says.
+    if !notes.is_empty() {
+        prompt.push_str(
+            "\nThe project's notes, from its LOKAL.md and AGENTS.md files, on how to work in it. \
+             Follow them here; what the user says comes first.\n",
+        );
+        for note in notes {
+            let path = note.path.display();
+            prompt.push_str(&format!("\n{path}:\n{}", note.text));
+            if !note.text.is_empty() && !note.text.ends_with('\n') {
+                prompt.push('\n');
+            }
+            if note.cut {
+                prompt.push_str(&format!(
+                    "[The rest of {path} didn't fit here: read the file when it matters.]\n"
+                ));
+            }
+        }
     }
     if let Some(about_me) = about_me.map(str::trim).filter(|text| !text.is_empty()) {
         prompt.push_str("\nWhat the user wrote about themselves and how they like answers (this wins over the defaults above):\n");

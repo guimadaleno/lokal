@@ -12,6 +12,7 @@ mod install;
 mod interrupt;
 mod keys;
 mod markdown;
+mod memory;
 mod menu;
 mod prompt;
 mod reasoning;
@@ -35,6 +36,7 @@ mod tools;
 mod update;
 
 use std::env;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::Instant;
 
@@ -123,6 +125,9 @@ fn main() -> ExitCode {
         .as_ref()
         .map(|scratch| scratch.path().display().to_string());
     let mut conversation = Conversation::new(server, facts);
+    if request.is_empty() && !conversation.notes().is_empty() {
+        print_notes(&conversation);
+    }
     if resume {
         if !conversation.resume() {
             eprintln!("{}", style::gray(text::NOTHING_TO_RESUME));
@@ -236,6 +241,26 @@ fn run_command(
             warn_if_about_me_is_long();
             conversation.refresh_system_prompt();
         }
+        "/memory" => {
+            // The notes there are, or a first LOKAL.md, made only if it's saved.
+            let mut paths: Vec<PathBuf> = conversation
+                .notes()
+                .iter()
+                .map(|note| note.path.clone())
+                .collect();
+            if paths.is_empty() {
+                paths.push(memory::first_path(&env::current_dir().unwrap_or_default()));
+            }
+            let paths: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
+            open_in_editor(&paths);
+            if conversation.refresh_notes() {
+                if conversation.notes().is_empty() {
+                    eprintln!("{}", style::gray(text::NOTES_GONE));
+                } else {
+                    print_notes(conversation);
+                }
+            }
+        }
         "/config" => edit_settings(),
         "/info" => {
             eprintln!();
@@ -342,7 +367,7 @@ fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
     let about_me = config::about_me_path();
     let about_me_lines = config::read_about_me().map_or(0, |text| text.lines().count());
     let settings = config::settings_path();
-    let rows = [
+    let mut rows = vec![
         (text::INFO_VERSION, format!("{} · {updates}", text::VERSION)),
         (text::INFO_MODEL, format!("{}{context}", server.model)),
         (text::INFO_SERVER, format!("{} · {found}", server.address)),
@@ -365,11 +390,21 @@ fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
                 input.project().count(),
             ),
         ),
-        (
-            text::INFO_SCRATCH,
-            text::scratch_folder(conversation.scratch()),
-        ),
     ];
+    // One row a note, the label on the first.
+    let notes = conversation.notes();
+    if notes.is_empty() {
+        rows.push((text::INFO_NOTES, text::NO_NOTES.to_string()));
+    }
+    for (index, note) in notes.iter().enumerate() {
+        let label = if index == 0 { text::INFO_NOTES } else { "" };
+        let tokens = conversation::tokens_in(&note.text);
+        rows.push((label, text::note_size(&note.name, tokens, note.cut)));
+    }
+    rows.push((
+        text::INFO_SCRATCH,
+        text::scratch_folder(conversation.scratch()),
+    ));
     for (label, value) in rows {
         eprintln!("  {}{value}", style::gray(&format!("{label:<10}")));
     }
@@ -420,7 +455,7 @@ fn edit_settings() {
     }
 }
 
-fn open_in_editor(paths: &[&std::path::Path]) {
+fn open_in_editor(paths: &[&Path]) {
     let editor = env::var("VISUAL")
         .or_else(|_| env::var("EDITOR"))
         .unwrap_or_else(|_| "nano".into());
@@ -444,6 +479,19 @@ fn warn_if_context_is_small(server: &server::Server) {
     {
         eprintln!("{}", style::gray(&text::small_context(context, most)));
     }
+}
+
+/// Which of the project's notes go along, and what they cost: what's in
+/// every request is never a surprise.
+fn print_notes(conversation: &Conversation) {
+    let notes = conversation.notes();
+    let names: Vec<&str> = notes.iter().map(|note| note.name.as_str()).collect();
+    let tokens = notes
+        .iter()
+        .map(|note| conversation::tokens_in(&note.text))
+        .sum();
+    let cut = notes.iter().any(|note| note.cut);
+    eprintln!("{}", style::gray(&text::notes_taken(&names, tokens, cut)));
 }
 
 fn warn_if_about_me_is_long() {
