@@ -25,6 +25,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/memory", "edit the project's notes for the model"),
     ("/config", "edit Lokal's settings"),
     ("/info", "show the model, the server and what's in use"),
+    (
+        "/recon",
+        "tell the model about this machine and the project",
+    ),
     ("/update", "check for a newer Lokal now"),
     ("/reasoning", "show or hide the model's reasoning"),
     ("/feedback", "report a problem or an idea"),
@@ -196,6 +200,27 @@ pub const NO_NOTES: &str = "none yet (/memory starts a LOKAL.md)";
 pub const NOTES_CHANGED: &str =
     "The project's notes changed, so the model gets the new ones from here.";
 pub const NOTES_GONE: &str = "The project has no notes now.";
+
+pub const RECON_HOST: &str = "host";
+pub const RECON_TOOLS: &str = "tools";
+pub const RECON_DOCKER: &str = "docker";
+pub const RECON_PROJECT: &str = "project";
+pub const RECON_SET_UP: &str = "configured";
+pub const RECON_NONE: &str = "none of the usual ones";
+pub const RECON_DOCKER_DOWN: &str = "installed, but its daemon doesn't answer";
+pub const RECON_NO_BRANCH: &str = "no branch checked out";
+pub const RECON_NOT_A_REPOSITORY: &str = "not a git repository";
+pub const RECON_DONE: &str =
+    "The model knows this from your next message on. /recon again brings it up to date.";
+
+/// "daemon 29.5.3 · 2 containers running"
+pub fn recon_docker(version: &str, running: usize) -> String {
+    match running {
+        0 => format!("daemon {version} · no containers running"),
+        1 => format!("daemon {version} · 1 container running"),
+        running => format!("daemon {version} · {running} containers running"),
+    }
+}
 
 /// The line at the start that says which notes go along, and their cost.
 pub fn notes_taken(names: &[&str], tokens: u64, cut: bool) -> String {

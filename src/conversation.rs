@@ -42,6 +42,8 @@ const CUT_SHORT_RESULT: &str = "Not run: your reply ran out of room before this 
 pub struct Conversation {
     pub server: Server,
     facts: Facts,
+    /// What the last /recon found, for this session.
+    recon: Vec<(&'static str, String)>,
     /// LOKAL.md and AGENTS.md as last read: at the start of each turn, and
     /// after /memory.
     notes: Vec<Note>,
@@ -68,6 +70,7 @@ impl Conversation {
         let mut conversation = Conversation {
             server,
             facts,
+            recon: Vec::new(),
             notes: Vec::new(),
             system: String::new(),
             messages: Vec::new(),
@@ -92,10 +95,18 @@ impl Conversation {
     pub fn refresh_system_prompt(&mut self) {
         self.system = prompt::system_prompt(
             &self.facts,
+            &self.recon,
             self.server.context,
             &self.notes,
             config::read_about_me().as_deref(),
         );
+    }
+
+    /// What /recon found goes along from the next request, in place of
+    /// what it found before.
+    pub fn set_recon(&mut self, rows: Vec<(&'static str, String)>) {
+        self.recon = rows;
+        self.refresh_system_prompt();
     }
 
     /// Reads the project's notes again; true when they changed, and the
@@ -666,6 +677,7 @@ mod tests {
                 windows_folders: Vec::new(),
                 scratch: None,
             },
+            recon: Vec::new(),
             notes: Vec::new(),
             system: String::new(),
             messages: vec![json!({"role": "user", "content": "read it"})],

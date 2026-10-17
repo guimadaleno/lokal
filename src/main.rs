@@ -16,6 +16,7 @@ mod memory;
 mod menu;
 mod prompt;
 mod reasoning;
+mod recon;
 // guimadaleno/release's client/release.rs, copied unchanged: no formatting or
 // lint fixes may touch its bytes.
 #[rustfmt::skip]
@@ -267,6 +268,14 @@ fn run_command(
             print_info(conversation, input, session);
             eprintln!();
         }
+        "/recon" => {
+            let rows = gather_recon();
+            eprintln!();
+            print_rows(&rows);
+            eprintln!();
+            eprintln!("{}", style::gray(text::RECON_DONE));
+            conversation.set_recon(rows);
+        }
         "/update" => check_for_update(session),
         "/reasoning" => {
             let shown = conversation.toggle_reasoning();
@@ -405,9 +414,69 @@ fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
         text::INFO_SCRATCH,
         text::scratch_folder(conversation.scratch()),
     ));
+    print_rows(&rows);
+}
+
+/// Labels in one column, values in the next. A value too long for the
+/// terminal goes on under itself, broken after a separator, so it never
+/// runs under the labels.
+fn print_rows(rows: &[(&str, String)]) {
+    // The indent and the label's column.
+    let room = style::terminal_width().map_or(0, |width| width.saturating_sub(13));
     for (label, value) in rows {
-        eprintln!("  {}{value}", style::gray(&format!("{label:<10}")));
+        for (index, line) in wrapped(value, room).iter().enumerate() {
+            let label = if index == 0 { *label } else { "" };
+            eprintln!("  {}{line}", style::gray(&format!("{label:<10}")));
+        }
     }
+}
+
+/// `text` in lines of at most `room` characters, each broken after a ", "
+/// or a " · ". A piece longer than that keeps a line of its own; no room
+/// known, one line.
+fn wrapped(text: &str, room: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for piece in pieces(text) {
+        let fits = line.chars().count() + piece.trim_end().chars().count() <= room;
+        if !line.is_empty() && room > 0 && !fits {
+            lines.push(line.trim_end().to_string());
+            line.clear();
+        }
+        line.push_str(piece);
+    }
+    lines.push(line.trim_end().to_string());
+    lines
+}
+
+/// The text cut after each separator, which stays with what it follows.
+fn pieces(text: &str) -> Vec<&str> {
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    while let Some((at, length)) = [", ", " · "]
+        .iter()
+        .filter_map(|separator| Some((text[start..].find(separator)?, separator.len())))
+        .min()
+    {
+        let end = start + at + length;
+        pieces.push(&text[start..end]);
+        start = end;
+    }
+    pieces.push(&text[start..]);
+    pieces
+}
+
+/// `/recon`'s probes, with the spinner meanwhile: Docker can take a moment.
+fn gather_recon() -> Vec<(&'static str, String)> {
+    let folder = env::current_dir().unwrap_or_default();
+    let gathering = std::thread::spawn(move || recon::gather(&folder));
+    let mut spinner = spinner::Spinner::new();
+    while !gathering.is_finished() {
+        spinner.tick();
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+    spinner.clear();
+    gathering.join().unwrap_or_default()
 }
 
 /// `/update`: asks for the newest version now, with the spinner meanwhile.
@@ -498,5 +567,23 @@ fn warn_if_about_me_is_long() {
     let lines = config::read_about_me().map_or(0, |contents| contents.lines().count());
     if lines > LONG_ABOUT_ME {
         eprintln!("{}", style::gray(&text::long_prefs(lines)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_values_break_after_a_separator() {
+        assert_eq!(
+            wrapped("git 2.43.0, cargo, node · docker", 16),
+            ["git 2.43.0,", "cargo, node ·", "docker"]
+        );
+        assert_eq!(wrapped("a, b", 0), ["a, b"]);
+        assert_eq!(
+            wrapped("~/a/very/long/path · 3 lines", 10),
+            ["~/a/very/long/path ·", "3 lines"]
+        );
     }
 }

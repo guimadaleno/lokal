@@ -121,6 +121,7 @@ dependencies.
 | `menu.rs` | The arrow-key choice the approvals use |
 | `prompt.rs`, `system.rs` | The system prompt and the machine facts in it |
 | `memory.rs` | The project's notes: LOKAL.md and AGENTS.md, from the git root down |
+| `recon.rs` | `/recon`: what the machine and the project have, gathered by Lokal itself |
 | `update.rs`, `install.rs` | Updating itself; `lokal --install` |
 | `release.rs` | guimadaleno/release's client, **copied unchanged** |
 | `report.rs` | guimadaleno/issues' client, **copied unchanged** |
@@ -172,6 +173,21 @@ dependencies.
     project, and other tools read them too.
   - **A change counts from the next turn, with a line saying so;**
     `/memory` opens them, and `/info` shows each one and what it costs.
+- **`/recon` is Lokal's code, never the model's** (`recon.rs`): fixed
+  probes that change nothing, run without a shell, each within a time
+  limit. A model sent to look around would spend the context on it, and
+  could be steered by what it finds.
+  - **What could be a secret is left out by the code:** a remote's address
+    loses its user, password and query, where a token often sits. A cloud
+    tool is "configured" from whether its settings file or variable
+    exists, never from what it holds, and no other variable is read.
+  - **Text from the disk is one short clean line,** given to the model as
+    facts, not instructions: a branch or a folder name could carry some.
+  - **The PATH's relative folders are skipped,** so a project can't plant a
+    program the probes would run; under WSL, so are Windows' drives, whose
+    programs are Windows' own and slow to look through.
+  - **It lasts for the session** and shows whole on screen, just as the
+    model gets it; nothing of it is written to disk.
 - **One reply gets at most half the context** (`max_tokens`). A model
   reasoning in circles then stops there instead of filling all of it.
 - **An output always reaches the model before it can be dropped.** Each
