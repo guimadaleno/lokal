@@ -338,8 +338,9 @@ impl Helper {
 }
 
 /// The commands matching what's typed. For the only match: the rest of its
-/// name, then what it does.
-fn command_hint(line: &str, pos: usize) -> Option<Hint> {
+/// name, then what it does. Several are listed in the room `width` leaves,
+/// whole names only and … when some don't fit, so the line never wraps.
+fn command_hint(line: &str, pos: usize, width: Option<usize>) -> Option<Hint> {
     if pos < line.len() {
         return None;
     }
@@ -357,9 +358,23 @@ fn command_hint(line: &str, pos: usize) -> Option<Hint> {
             })
         }
         several => {
-            let names: Vec<&str> = several.iter().map(|(name, _)| *name).collect();
+            // One column short of the edge, so the terminal doesn't wrap it.
+            let room = width.map_or(usize::MAX, |width| {
+                width.saturating_sub(PROMPT.len() + line.chars().count() + 1)
+            });
+            let mut display = String::from(" ");
+            for (index, (name, _)) in several.iter().enumerate() {
+                // Room for the … stays, in case the next one doesn't fit.
+                let ellipsis = if index + 1 < several.len() { 3 } else { 0 };
+                if display.chars().count() + 2 + name.len() + ellipsis > room {
+                    display.push_str("  …");
+                    break;
+                }
+                display.push_str("  ");
+                display.push_str(name);
+            }
             Some(Hint {
-                display: format!("   {}", names.join("  ")),
+                display,
                 completion: None,
             })
         }
@@ -390,7 +405,7 @@ impl Hinter for Helper {
             self.quit_armed.store(false, Ordering::SeqCst);
         }
         if line.starts_with('/') {
-            command_hint(line, pos)
+            command_hint(line, pos, style::terminal_width())
         } else {
             self.line_hint(line)
         }
@@ -464,7 +479,7 @@ mod tests {
 
     #[test]
     fn slash_alone_lists_every_command() {
-        let hint = command_hint("/", 1).unwrap();
+        let hint = command_hint("/", 1, None).unwrap();
         assert_eq!(
             hint.display,
             "   /new  /prefs  /memory  /config  /info  /recon  /update  /reasoning  /feedback  /help  /about  /exit"
@@ -473,10 +488,18 @@ mod tests {
     }
 
     #[test]
+    fn a_narrow_terminal_lists_the_commands_that_fit() {
+        let hint = command_hint("/", 1, Some(40)).unwrap();
+        assert_eq!(hint.display, "   /new  /prefs  /memory  /config  …");
+        // With the prompt and the slash, one column short of the edge.
+        assert_eq!("> /".len() + hint.display.chars().count(), 39);
+    }
+
+    #[test]
     fn one_match_completes_and_explains() {
-        let hint = command_hint("/pr", 3).unwrap();
+        let hint = command_hint("/pr", 3, None).unwrap();
         assert_eq!(hint.display, "efs  edit what Lokal knows about you");
         assert_eq!(hint.completion.as_deref(), Some("efs"));
-        assert!(command_hint("/xyz", 4).is_none());
+        assert!(command_hint("/xyz", 4, None).is_none());
     }
 }
