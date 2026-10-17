@@ -45,7 +45,8 @@ pub struct Conversation {
     /// How long the model worked on the last turn, not counting commands
     /// running or the person deciding on an approval.
     model_time: Option<Duration>,
-    /// `/reasoning`: the model's reasoning on screen, faint, for this session.
+    /// `/reasoning`: the model's reasoning on screen, faint, for this
+    /// session. Off until asked for.
     show_reasoning: bool,
 }
 
@@ -65,7 +66,7 @@ impl Conversation {
             messages: Vec::new(),
             tokens: None,
             model_time: None,
-            show_reasoning: true,
+            show_reasoning: false,
         }
     }
 

@@ -43,9 +43,11 @@ dependencies.
   never says yes; without a terminal, nothing beyond reading runs. Keys
   pressed before an approval question was on screen are discarded, because
   a "y" typed early would approve a command nobody has seen.
-- **Keep the model's reasoning.** While it thinks, its last few lines show
-  faint in a small window that clears itself when the answer or a step
-  begins (`src/reasoning.rs`; `/reasoning` hides it for the session). The
+- **Keep the model's reasoning.** It shows only when the person asks:
+  `/reasoning` turns on, for the session, a small window where its last few
+  lines show faint while it thinks, and which clears itself when the answer
+  or a step begins (`src/reasoning.rs`). It starts off, since a window
+  redrawing on every turn is noise to whoever doesn't read it. The
   conversation and the scrollback keep none of it. Reasoning sent inside
   `<think>` never shows (`src/answer.rs`).
 - **Send anything on its own beyond the update check.** The model server is
@@ -80,8 +82,8 @@ dependencies.
   "Stopped." and errors stay plain.
   - **The page's terminal plays the real screen** (`site/index.html`): the
     approval's options, the working labels, the prompt's status, the
-    spinner's frames, the reasoning window and the two pulses, at Lokal's
-    timings. When one of them changes here, it changes there too. Its
+    spinner's frames, the reasoning window (as `/reasoning` shows it) and
+    the two pulses, at Lokal's timings. When one of them changes here, it changes there too. Its
     markup is the last frame, and what shows without motion.
 - **The look stays discreet:** faint and gray tones from `src/style.rs`, one
   line, and no boxes or color blocks. Orange (`style::accent`) marks the

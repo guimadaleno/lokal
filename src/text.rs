@@ -138,8 +138,7 @@ pub fn ran_out_of_room(context: u64) -> String {
         number(context)
     )
 }
-pub const REASONING_SHOWN: &str =
-    "The model's reasoning shows again, in a small window that clears itself.";
+pub const REASONING_SHOWN: &str = "The model's reasoning shows for the rest of this session, in a small window that clears itself.";
 pub const REASONING_HIDDEN: &str = "The model's reasoning is hidden for the rest of this session.";
 
 pub const FEEDBACK_KIND: &str = "What would you like to tell the developer?";
