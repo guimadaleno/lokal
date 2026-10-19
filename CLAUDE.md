@@ -12,6 +12,20 @@ dependencies.
   on the read-only list in `src/allowlist.rs` run on their own. That list is
   Lokal's code, never the model's judgement: a model can be talked into
   anything by a file it reads.
+  - **git also runs programs a repository's own settings name, even to
+    read:** core.fsmonitor on `git status`, filters and diff drivers on
+    `git diff`, `log -p` and `blame`, `gpg.program` on `git log` (measured
+    with git 2.43). Those settings are files in `.git` that anything could
+    have written. So a command with git runs unasked only when the
+    repository's settings, not the person's global ones, name none of them
+    (`src/gitconfig.rs`). Otherwise it's asked, on No, with the setting
+    named, whatever was approved before.
+  - **What runs unasked gets fsmonitor off and stays out of submodules**
+    (`gitconfig::UNASKED`, through `GIT_CONFIG_PARAMETERS`), since a
+    submodule's settings are its own and Lokal doesn't read them. So an
+    unasked `git status` doesn't list changes inside submodules, and a git
+    option about submodules is asked about. A git before 2.26 can't say
+    where a setting comes from, so there every git command is asked.
 - **Write a file without showing the diff and getting a yes.** The person
   sees what changes before it does, every time: file changes have no
   "don't ask again".
@@ -142,6 +156,7 @@ dependencies.
 | `server.rs`, `http.rs` | Finding the server and its model; plain-HTTP requests |
 | `tools.rs`, `shell.rs`, `diff.rs` | The model's tools, running a command, showing a change |
 | `allowlist.rs` | Which commands run without asking, and which questions open on Yes |
+| `gitconfig.rs` | What a repository's own git settings would have git run |
 | `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it |
 | `input.rs` | The `>` prompt (hints, completion, Ctrl+C twice) and approvals |
 | `menu.rs` | The arrow-key choice the approvals use |

@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use crate::chat::ToolCall;
 use crate::input::{Approval, Input};
 use crate::shell::{self, Run};
-use crate::{allowlist, config, diff, style, text};
+use crate::{allowlist, config, diff, gitconfig, style, text};
 
 /// How much command output the model gets; longer output loses its middle.
 const OUTPUT_LIMIT: usize = 12_000;
@@ -133,9 +133,27 @@ pub fn run(
 fn run_command(args: &Value, input: &mut Input, room: Option<usize>) -> Result<Outcome, String> {
     let command = text_arg(args, "command")?;
     eprintln!("{} {}", style::accent("$"), command.replace('\n', "\n  "));
-    if !allowlist::is_read_only(command) {
+    // git also runs what the repository's own settings name: then even a
+    // read is asked about, on No, whatever was approved before.
+    let git_warning = if allowlist::uses_git(command) {
+        match gitconfig::program_setting() {
+            Ok(None) => None,
+            Ok(Some(setting)) => Some(text::git_runs_program(&setting)),
+            Err(()) => Some(text::GIT_SETTINGS_UNREAD.to_string()),
+        }
+    } else {
+        None
+    };
+    let unasked = allowlist::is_read_only(command) && git_warning.is_none();
+    if !unasked {
         eprintln!();
-        if let Some(note) = input.approved_before(command) {
+        if let Some(warning) = &git_warning {
+            eprintln!("  {warning}");
+        }
+        if let Some(note) = input
+            .approved_before(command)
+            .filter(|_| git_warning.is_none())
+        {
             eprintln!("  {}", style::faint(note));
         } else {
             // What the model says the command does, where the person decides on it.
@@ -146,15 +164,19 @@ fn run_command(args: &Value, input: &mut Input, room: Option<usize>) -> Result<O
             {
                 eprintln!("  {}", style::gray(explanation));
             }
-            let approval = input.approve(command, allowlist::opens_on_yes(command));
+            let on_yes = allowlist::opens_on_yes(command) && git_warning.is_none();
+            let approval = input.approve(command, on_yes);
             input.keep_approval(&approval, command);
             if let Some(outcome) = refused(approval) {
                 return Ok(outcome);
             }
         }
     }
+    let git_settings: &[(&str, &str)] = if unasked { &gitconfig::UNASKED } else { &[] };
     // The output is a block of its own, after the command and any question.
-    match shell::run(command).map_err(|error| format!("couldn't start bash: {error}"))? {
+    match shell::run(command, git_settings)
+        .map_err(|error| format!("couldn't start bash: {error}"))?
+    {
         Run::Finished { output, code } => Ok(Outcome::Done(command_result(
             &output,
             code,

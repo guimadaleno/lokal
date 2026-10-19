@@ -171,6 +171,11 @@ fn git_is_read_only(args: &[String]) -> bool {
     let Some((sub, rest)) = args.split_first() else {
         return false;
     };
+    // A submodule's own settings could name programs, and a command that
+    // runs unasked is kept out of submodules (gitconfig::UNASKED).
+    if rest.iter().any(|arg| arg.contains("submodule")) {
+        return false;
+    }
     match sub.as_str() {
         "branch" => rest
             .iter()
@@ -180,6 +185,17 @@ fn git_is_read_only(args: &[String]) -> bool {
             GIT_READ_ONLY.contains(&sub) && !rest.iter().any(|arg| matches_option(arg, "--output"))
         }
     }
+}
+
+/// Whether git is one of the programs in the command: then what it runs
+/// also depends on the repository's settings (`gitconfig`).
+pub fn uses_git(command: &str) -> bool {
+    split(command).is_some_and(|programs| {
+        programs
+            .iter()
+            .filter_map(|words| words.first())
+            .any(|program| program.rsplit('/').next() == Some("git"))
+    })
 }
 
 /// Whether a command's question may open on Yes, so Enter approves it: only
@@ -407,6 +423,9 @@ mod tests {
             "git diff --output=patch",
             "git diff --out=patch",
             "git -C other status",
+            "git diff --submodule=diff",
+            "git status --ignore-submodules=none",
+            "git ls-files --recurse-submodules",
             "find . -delete",
             "find . \"-exec\" rm {} ;",
             "find . -name x -execdir rm {} +",
@@ -438,6 +457,14 @@ mod tests {
         ] {
             assert!(!is_read_only(command), "should ask: {command}");
         }
+    }
+
+    #[test]
+    fn finds_git_among_the_programs() {
+        assert!(uses_git("git status"));
+        assert!(uses_git("cd src && /usr/bin/git diff | head"));
+        assert!(!uses_git("ls git"));
+        assert!(!uses_git("echo $(git status)"));
     }
 
     #[test]

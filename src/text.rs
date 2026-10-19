@@ -79,6 +79,14 @@ pub const APPROVALS_HEADER: &str = "\
 # then the exact command. Delete a line to be asked again.
 ";
 pub const NO_TERMINAL: &str = "Skipped: there's no terminal to ask you on.";
+pub const GIT_SETTINGS_UNREAD: &str =
+    "Lokal couldn't read this repository's git settings, so it asks first.";
+
+pub fn git_runs_program(setting: &str) -> String {
+    format!(
+        "This repository's git settings name a program for git to run ({setting}), so Lokal asks first."
+    )
+}
 
 pub const STEP_READ: &str = "read";
 pub const STEP_CREATE: &str = "create";

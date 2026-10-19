@@ -1,6 +1,7 @@
 //! Runs one command for the model. Its output shows as it comes (the first
 //! lines of it) and is kept whole for the model; Ctrl+C stops it.
 
+use std::env;
 use std::io::{self, BufRead, BufReader};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
@@ -23,7 +24,8 @@ pub enum Run {
     Stopped,
 }
 
-pub fn run(command: &str) -> io::Result<Run> {
+/// Runs `command` in bash, with `git_settings` over what git would read.
+pub fn run(command: &str, git_settings: &[(&str, &str)]) -> io::Result<Run> {
     let (reader, writer) = io::pipe()?;
     let mut shell = Command::new("bash");
     shell
@@ -34,6 +36,15 @@ pub fn run(command: &str) -> io::Result<Run> {
         .stderr(writer)
         .env("PAGER", "cat")
         .env("GIT_PAGER", "cat");
+    // What `git -c` passes on, which every git reads and hands to the
+    // submodules it goes into; after any the person set, so these win.
+    if !git_settings.is_empty() {
+        let mut parameters = env::var("GIT_CONFIG_PARAMETERS").unwrap_or_default();
+        for (name, value) in git_settings {
+            parameters.push_str(&format!(" '{name}={value}'"));
+        }
+        shell.env("GIT_CONFIG_PARAMETERS", parameters.trim_start());
+    }
     // SAFETY: setsid is safe to call between fork and exec.
     // A session of its own: no terminal to wait on for input (sudo fails at
     // once instead of hanging), and Ctrl+C reaches it only through Lokal.

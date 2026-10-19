@@ -6,6 +6,7 @@ mod config;
 mod conversation;
 mod diff;
 mod feedback;
+mod gitconfig;
 mod http;
 mod input;
 mod install;
