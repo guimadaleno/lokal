@@ -83,6 +83,7 @@ pub const STEP_READ: &str = "read";
 pub const STEP_CREATE: &str = "create";
 pub const STEP_EDIT: &str = "edit";
 pub const STEP_REMEMBER: &str = "remember";
+pub const ALREADY_REMEMBERED: &str = "Already there, so nothing changes.";
 
 pub const NO_HTTPS: &str =
     "Lokal only speaks plain HTTP to the server, so `server` can't be an https:// address.";

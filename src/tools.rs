@@ -78,10 +78,18 @@ pub fn definitions() -> Value {
         ),
         tool(
             "remember",
-            "Add one short line to the notes every conversation starts with (user.md). \
-             Only when the user asks you to remember something; they approve the line first. \
+            "Add one short line to the notes every conversation starts with (user.md), or update \
+             a line already there with replaces. Only when the user asks you to remember something; \
+             they approve the change first. A note already there isn't added again. \
              Something only about this project goes in its LOKAL.md instead, changed like any file.",
-            json!({"note": {"type": "string", "description": "The fact or preference, in one short line."}}),
+            json!({
+                "note": {"type": "string", "description": "The fact or preference, in one short line."},
+                "replaces": {
+                    "type": "string",
+                    "description": "A line already in user.md that the note updates, copied exactly; \
+                        its copies go too. Leave it out to add a new line."
+                }
+            }),
             &["note"],
         ),
     ])
@@ -298,7 +306,7 @@ fn edit_file(args: &Value, input: &mut Input) -> Result<Outcome, String> {
     propose(&path, text::STEP_EDIT, &old, &new, input)
 }
 
-/// The one way the model adds to user.md: a line the person asked it to
+/// The one way the model changes user.md: a line the person asked it to
 /// remember, shown as a diff and written only with a yes.
 fn remember(args: &Value, input: &mut Input) -> Result<Outcome, String> {
     let note = text_arg(args, "note")?
@@ -311,19 +319,78 @@ fn remember(args: &Value, input: &mut Input) -> Result<Outcome, String> {
     if note.chars().count() > NOTE_LIMIT {
         return Err(format!("keep the note under {NOTE_LIMIT} characters."));
     }
+    let replaces = args["replaces"]
+        .as_str()
+        .filter(|line| !line.trim().is_empty());
+    let path = config::user_md_path();
     let old = config::read_user_md().unwrap_or_default();
-    let mut new = old.clone();
-    if !new.is_empty() && !new.ends_with('\n') {
-        new.push('\n');
+    let Some(new) = remembered(&old, &note, replaces)? else {
+        eprintln!(
+            "{} {}",
+            style::accent(text::STEP_REMEMBER),
+            config::shown(&path)
+        );
+        eprintln!("  {}", style::gray(text::ALREADY_REMEMBERED));
+        return Ok(Outcome::Done(
+            "It's already in user.md, so nothing changed.".into(),
+        ));
+    };
+    propose(&path, text::STEP_REMEMBER, &old, &new, input)
+}
+
+/// user.md with `note` added at its end, or in place of the line `replaces`
+/// names, whose copies go too. None when that changes nothing, as for a
+/// note already there.
+fn remembered(old: &str, note: &str, replaces: Option<&str>) -> Result<Option<String>, String> {
+    let line = format!("- {note}\n");
+    let new = match replaces {
+        None if old.lines().any(|existing| same_note(existing, note)) => return Ok(None),
+        None => {
+            let mut new = old.to_string();
+            if !new.is_empty() && !new.ends_with('\n') {
+                new.push('\n');
+            }
+            new + &line
+        }
+        Some(replaces) => {
+            if !old.lines().any(|existing| same_note(existing, replaces)) {
+                return Err(format!(
+                    "user.md has no line \"{replaces}\". Copy the line exactly, or leave \
+                     replaces out to add a new one."
+                ));
+            }
+            let mut new = String::new();
+            let mut placed = false;
+            for existing in old.lines() {
+                if !same_note(existing, replaces) {
+                    new.push_str(existing);
+                    new.push('\n');
+                } else if !placed {
+                    new.push_str(&line);
+                    placed = true;
+                }
+            }
+            new
+        }
+    };
+    Ok((new != old).then_some(new))
+}
+
+/// Two lines say the same when they differ only in a leading "- " or "* ",
+/// in spacing or in case.
+fn same_note(line: &str, note: &str) -> bool {
+    fn plain(text: &str) -> String {
+        let text = text.trim();
+        let text = text
+            .strip_prefix("- ")
+            .or_else(|| text.strip_prefix("* "))
+            .unwrap_or(text);
+        text.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
     }
-    new.push_str(&format!("- {note}\n"));
-    propose(
-        &config::user_md_path(),
-        text::STEP_REMEMBER,
-        &old,
-        &new,
-        input,
-    )
+    plain(line) == plain(note)
 }
 
 /// Shows the change as a diff and writes it if the person agrees.
@@ -528,6 +595,53 @@ mod tests {
                 "Line 1 of 2 is too long to show whole; here's its start:\n{}",
                 "x".repeat(100)
             )
+        );
+    }
+
+    #[test]
+    fn remember_adds_a_note_once() {
+        let old = "How I like answers: short\n- uses vim\n";
+        assert_eq!(
+            remembered(old, "works in Rust", None).unwrap().unwrap(),
+            "How I like answers: short\n- uses vim\n- works in Rust\n"
+        );
+        assert_eq!(remembered(old, "Uses  Vim", None).unwrap(), None);
+        assert_eq!(
+            remembered("- uses vim", "works in Rust", None)
+                .unwrap()
+                .unwrap(),
+            "- uses vim\n- works in Rust\n"
+        );
+        assert_eq!(
+            remembered("", "uses vim", None).unwrap().unwrap(),
+            "- uses vim\n"
+        );
+    }
+
+    #[test]
+    fn remember_replaces_a_line_and_its_copies() {
+        let old = "- uses vim\n- works in Rust\n- uses vim\n";
+        assert_eq!(
+            remembered(old, "uses helix", Some("- uses vim"))
+                .unwrap()
+                .unwrap(),
+            "- uses helix\n- works in Rust\n"
+        );
+        // The same note in place of itself only drops the copies.
+        assert_eq!(
+            remembered(old, "uses vim", Some("uses vim"))
+                .unwrap()
+                .unwrap(),
+            "- uses vim\n- works in Rust\n"
+        );
+        assert_eq!(
+            remembered("- uses vim\n", "uses vim", Some("uses vim")).unwrap(),
+            None
+        );
+        assert!(
+            remembered(old, "uses helix", Some("uses emacs"))
+                .unwrap_err()
+                .contains("no line \"uses emacs\"")
         );
     }
 

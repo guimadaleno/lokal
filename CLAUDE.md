@@ -39,6 +39,11 @@ dependencies.
   approve commands, or plant instructions in what every conversation starts
   with. The one way in is `remember`, which adds a line to user.md when
   the person asks, shown as a diff.
+  - **`remember` never adds a line that's already there,** and can put a
+    note in place of one line and its copies (`replaces`), so notes saved
+    twice can be tidied from the conversation. It can't remove a line
+    without putting the new one in its place: the person sees the swap in
+    the diff, and `/prefs` is where they delete.
   - **user.md was about-me.md:** a copy under the old name moves to the new
     one the first time it's needed (`config::user_md_path`), and stays in use
     where the move fails, so the person's notes are never lost.
