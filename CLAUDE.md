@@ -374,7 +374,6 @@ Tracked as issues:
 - **an `ask` tool** (#7);
 - **a highlight for deletes outside the working folder**, to weigh (#10);
 - **an aarch64 build** (#11);
-- **a test against a real server** (#13);
 - **a file bigger than the context read in parts, with Lokal noting what
   matters in each** (#16). Asking the model to keep notes was tried three
   ways and failed;
