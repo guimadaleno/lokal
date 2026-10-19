@@ -337,10 +337,10 @@ cargo clippy --all-targets
 - **`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` are the repository's
   secrets** for the `guimadaleno-update-lokal` bucket, and are scoped to that
   bucket only.
-- **The page publishes with `DEPLOY_KEY`, `DEPLOY_KNOWN_HOSTS`, `DEPLOY_USER`
-  and `DEPLOY_HOST`,** like the other apps' pages: a deploy key the server
-  holds to Lokal's folder only, through `rrsync -no-del`. Without them,
-  `site.yml` does nothing.
+- **The page publishes with the same R2 token,** like the other apps' pages:
+  `site.yml` copies `site/` into `page/` in Lokal's bucket, never deleting,
+  and the site's Worker serves that prefix at guimadaleno.com/lokal/. Without
+  the token, `site.yml` does nothing.
 
 ## Measured
 
