@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -31,6 +31,12 @@ pub struct Reply {
     /// Why the model stopped, as the server says it: "stop", "tool_calls",
     /// or "length" when it ran out of room.
     pub finish: Option<String>,
+    /// Tokens the reply generated: the server's count when it gives one,
+    /// one a piece otherwise.
+    pub generated: u64,
+    /// From the first token to the last, so the time the server takes to
+    /// read the prompt isn't in it.
+    pub generating: Duration,
 }
 
 pub enum Event {
@@ -95,6 +101,7 @@ fn stream(
     let reader = http::post_json(address, "/v1/chat/completions", body)?;
     let mut reply = Reply::default();
     let mut filter = AnswerFilter::new();
+    let mut first_token = None;
     // Server-sent events: one `data: {json}` line per piece, then `data: [DONE]`.
     for line in reader.lines() {
         if abandoned.load(Ordering::SeqCst) {
@@ -112,7 +119,10 @@ fn stream(
         if let Some(message) = http::error_message(&piece) {
             return Err(text::server_said(&message));
         }
-        add_piece(&piece, &mut reply, &mut filter, sender);
+        if add_piece(&piece, &mut reply, &mut filter, sender) {
+            let now = Instant::now();
+            reply.generating = now - *first_token.get_or_insert(now);
+        }
     }
     let rest = filter.finish();
     if !rest.is_empty() {
@@ -122,14 +132,34 @@ fn stream(
     Ok(reply)
 }
 
-fn add_piece(piece: &Value, reply: &mut Reply, filter: &mut AnswerFilter, sender: &Sender<Event>) {
+/// Adds one piece of the stream to the reply. True when the model
+/// generated something in it, rather than only the usage or a finish.
+fn add_piece(
+    piece: &Value,
+    reply: &mut Reply,
+    filter: &mut AnswerFilter,
+    sender: &Sender<Event>,
+) -> bool {
+    let delta = &piece["choices"][0]["delta"];
+    let has_text = |field: &str| delta[field].as_str().is_some_and(|text| !text.is_empty());
+    let generated = has_text("reasoning_content")
+        || has_text("content")
+        || delta["tool_calls"]
+            .as_array()
+            .is_some_and(|calls| !calls.is_empty());
+    if generated {
+        reply.generated += 1;
+    }
+    // A piece isn't always one token: the server's count, at the end, wins.
+    if let Some(tokens) = piece["usage"]["completion_tokens"].as_u64() {
+        reply.generated = tokens;
+    }
     if let Some(tokens) = piece["usage"]["total_tokens"].as_u64() {
         reply.tokens = Some(tokens);
     }
     if let Some(finish) = piece["choices"][0]["finish_reason"].as_str() {
         reply.finish = Some(finish.to_string());
     }
-    let delta = &piece["choices"][0]["delta"];
     if let Some(reasoning) = delta["reasoning_content"]
         .as_str()
         .filter(|text| !text.is_empty())
@@ -171,6 +201,7 @@ fn add_piece(piece: &Value, reply: &mut Reply, filter: &mut AnswerFilter, sender
             bytes: target.arguments.len(),
         });
     }
+    generated
 }
 
 /// The `"path"` in a tool call's arguments, read from the JSON while it is
@@ -228,6 +259,31 @@ mod tests {
         assert!(
             matches!(last, Some(Event::ToolCall { ref name, bytes: 16, .. }) if name == "run_command")
         );
+    }
+
+    #[test]
+    fn counts_a_token_a_piece_until_the_server_counts() {
+        let (sender, _events) = mpsc::channel();
+        let mut reply = Reply::default();
+        let mut filter = AnswerFilter::new();
+        let generated = [
+            json!({"choices": [{"delta": {"reasoning_content": "hmm"}}]}),
+            json!({"choices": [{"delta": {"content": "Hi"}}]}),
+        ];
+        let not_generated = [
+            json!({"choices": [{"delta": {"role": "assistant", "content": ""}}]}),
+            json!({"choices": [{"delta": {}, "finish_reason": "stop"}]}),
+        ];
+        for piece in &generated {
+            assert!(add_piece(piece, &mut reply, &mut filter, &sender));
+        }
+        for piece in &not_generated {
+            assert!(!add_piece(piece, &mut reply, &mut filter, &sender));
+        }
+        assert_eq!(reply.generated, 2);
+        let usage = json!({"choices": [], "usage": {"completion_tokens": 5, "total_tokens": 90}});
+        assert!(!add_piece(&usage, &mut reply, &mut filter, &sender));
+        assert_eq!(reply.generated, 5);
     }
 
     #[test]

@@ -406,6 +406,11 @@ pub fn tokens_of(used: u64, context: u64) -> String {
     format!("~{} of {} tokens", short(used), short(context))
 }
 
+/// "24 tok/s": how fast the model generated on the last turn.
+pub fn speed(tokens_per_second: u64) -> String {
+    format!("{tokens_per_second} tok/s")
+}
+
 /// "~1k tokens"
 fn about_tokens(tokens: u64) -> String {
     format!("~{} tokens", short(tokens))

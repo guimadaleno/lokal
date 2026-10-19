@@ -20,6 +20,9 @@ use crate::{config, interrupt, keys, prompt, reasoning, style, text};
 
 /// When the spinner starts saying what the model is doing.
 const LABEL_AFTER: Duration = Duration::from_secs(2);
+/// How long the model has to generate on a turn before its speed shows:
+/// a few tokens' worth says little about it.
+const SPEED_AFTER: Duration = Duration::from_secs(1);
 /// Stands in for a tool's output once it's dropped to free up context.
 const DROPPED_OUTPUT: &str = "[Output dropped to free up context, after you saw it.]";
 /// Stands in for the text a file change carried once it's dropped.
@@ -55,6 +58,8 @@ pub struct Conversation {
     /// How long the model worked on the last turn, not counting commands
     /// running or the person deciding on an approval.
     model_time: Option<Duration>,
+    /// Tokens a second the model generated on the last turn.
+    speed: Option<u64>,
     /// `/reasoning`: the model's reasoning on screen, faint, for this
     /// session. Off until asked for.
     show_reasoning: bool,
@@ -76,6 +81,7 @@ impl Conversation {
             messages: Vec::new(),
             tokens: None,
             model_time: None,
+            speed: None,
             show_reasoning: false,
         };
         conversation.notes = conversation.read_notes();
@@ -143,20 +149,21 @@ impl Conversation {
         self.messages.clear();
         self.tokens = None;
         self.model_time = None;
+        self.speed = None;
     }
 
-    /// The model's time on the last turn and how full the context is, like
-    /// "38s · 12%"; each part once it's known.
+    /// The model's time on the last turn, how full the context is and how
+    /// fast the model generated, like "38s · 12% · 24 tok/s"; each part once
+    /// it's known.
     pub fn status(&self) -> Option<String> {
         let time = self.model_time.map(text::duration);
         let context = self
             .tokens
             .zip(self.server.context)
             .map(|(tokens, context)| format!("{}%", (tokens * 100 / context.max(1)).min(100)));
-        match (time, context) {
-            (Some(time), Some(context)) => Some(format!("{time} · {context}")),
-            (time, context) => time.or(context),
-        }
+        let speed = self.speed.map(text::speed);
+        let parts: Vec<String> = [time, context, speed].into_iter().flatten().collect();
+        (!parts.is_empty()).then(|| parts.join(" · "))
     }
 
     /// Sends one request and works on it, tools and all, until the model
@@ -169,6 +176,7 @@ impl Conversation {
         }
         let turn_start = self.messages.len();
         let mut model_time = Duration::ZERO;
+        let (mut generated, mut generating) = (0, Duration::ZERO);
         let mut asked_again = false;
         self.messages
             .push(json!({"role": "user", "content": request}));
@@ -196,6 +204,9 @@ impl Conversation {
                 }
             };
             self.tokens = reply.tokens.or(self.tokens);
+            // The first token starts the clock, so it isn't among those it times.
+            generated += reply.generated.saturating_sub(1);
+            generating += reply.generating;
             let ran_out = reply.finish.as_deref() == Some("length");
             if reply.content.is_empty() && reply.tool_calls.is_empty() {
                 // Out of room before a word: once, ask again for less reasoning.
@@ -246,6 +257,7 @@ impl Conversation {
             }
         }
         self.model_time = Some(model_time);
+        self.speed = speed(generated, generating);
         self.save();
     }
 
@@ -547,6 +559,11 @@ fn drop_written(function: &mut Value) {
     }
 }
 
+/// Tokens a second, once the model has generated for long enough.
+fn speed(tokens: u64, time: Duration) -> Option<u64> {
+    (time >= SPEED_AFTER).then(|| (tokens as f64 / time.as_secs_f64()).round() as u64)
+}
+
 /// A tool call as the model writes it.
 struct ToolProgress {
     name: String,
@@ -684,6 +701,7 @@ mod tests {
             messages: vec![json!({"role": "user", "content": "read it"})],
             tokens: None,
             model_time: None,
+            speed: None,
             show_reasoning: false,
         }
     }
@@ -867,5 +885,26 @@ mod tests {
         let mut conversation = conversation(8192);
         conversation.server.context = None;
         assert_eq!(conversation.room_for_output(), None);
+    }
+
+    #[test]
+    fn speed_shows_after_a_second_of_generating() {
+        assert_eq!(speed(9, Duration::from_millis(900)), None);
+        assert_eq!(speed(0, Duration::ZERO), None);
+        assert_eq!(speed(50, Duration::from_millis(2100)), Some(24));
+    }
+
+    #[test]
+    fn status_has_each_part_once_known() {
+        let mut conversation = conversation(8192);
+        assert_eq!(conversation.status(), None);
+        conversation.speed = Some(24);
+        assert_eq!(conversation.status().as_deref(), Some("24 tok/s"));
+        conversation.model_time = Some(Duration::from_secs(38));
+        conversation.tokens = Some(1000);
+        assert_eq!(
+            conversation.status().as_deref(),
+            Some("38s · 12% · 24 tok/s")
+        );
     }
 }

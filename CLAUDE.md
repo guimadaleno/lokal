@@ -272,7 +272,7 @@ Last checked against **LM Studio 0.4.26**, on 2026-10-14.
 | `GET /api/v0/models` lists `id`, `type` (`llm`, `vlm`, `embeddings`), `state` (`loaded`), `loaded_context_length` and `max_context_length` | `server.rs` | `curl <host>:1234/api/v0/models` |
 | A model loads with 8,192 tokens of context unless the person sets more, which is why Lokal says so at the start below 16K | `main.rs` (`SMALL_CONTEXT`) | `loaded_context_length` of a model loaded with its defaults, or `defaultContextLength` in `~/.lmstudio/settings.json`; a model's own default, set in LM Studio, wins over it |
 | An unknown endpoint answers HTTP 200 with `{"error": "..."}`, so the `error` field matters more than the status | `http.rs`, `server.rs` | `curl -i <host>:1234/api/v0/nonexistent` |
-| Streaming is `data: {json}` lines ending in `data: [DONE]`, and `stream_options.include_usage` adds a last piece with `usage.total_tokens` and no choices | `chat.rs` | a streamed `curl -N` of `/v1/chat/completions` |
+| Streaming is `data: {json}` lines ending in `data: [DONE]`, and `stream_options.include_usage` adds a last piece with `usage.total_tokens`, `usage.completion_tokens` and no choices. The prompt's status counts the reply's speed from the latter, since a piece isn't always one token | `chat.rs` | a streamed `curl -N` of `/v1/chat/completions` |
 | Reasoning comes in `delta.reasoning_content` (with "separate reasoning content" on) or inside `<think>` in the content | `answer.rs`, `chat.rs` | the same request, with a reasoning model |
 | A tool call streams its `index`, `id` and `function.name` first, then its `arguments` in small pieces as they're generated, ending with `finish_reason: "tool_calls"`; blank content may come first. While a long file is written, the spinner shows its size growing | `chat.rs`, `conversation.rs` | a streamed request with one tool that the prompt asks it to use to write a long file |
 | A `model` that doesn't exist falls back to the loaded model instead of failing | `server.rs` checks the name first | a request with `"model": "nope"` |
@@ -375,6 +375,9 @@ Measured on a current laptop, under WSL.
 - **Servers other than LM Studio:** the chat path should work with any
   OpenAI-compatible server through `server = host:port`, but none has been
   tried. The context gauge stays hidden without LM Studio's `/api/v0/models`.
+  The speed in the prompt's status is timed by Lokal, from the first token
+  to the last, and counts a token a piece where a server sends no
+  `usage.completion_tokens`: tried with a fake server that sends none.
 - **"Couldn't find a model server":** written, but not seen, since that needs
   LM Studio stopped.
 
