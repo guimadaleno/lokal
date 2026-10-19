@@ -375,8 +375,8 @@ Measured on a current laptop, under WSL.
 - **Servers other than LM Studio:** the chat path should work with any
   OpenAI-compatible server through `server = host:port`, but none has been
   tried. The context gauge stays hidden without LM Studio's `/api/v0/models`.
-  The speed in the prompt's status is timed by Lokal, from the first token
-  to the last, and counts a token a piece where a server sends no
+  The speed is timed by Lokal from the first token on. The spinner counts
+  a token a piece, and so does the prompt's status where a server sends no
   `usage.completion_tokens`: tried with a fake server that sends none.
 - **"Couldn't find a model server":** written, but not seen, since that needs
   LM Studio stopped.

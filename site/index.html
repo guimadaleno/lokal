@@ -165,7 +165,7 @@ footer { margin-top: 64px; padding: 24px 0 48px; border-top: 1px solid var(--rul
         <span class="l"><span class="t-bold">Lokal</span> <span id="term-version">0.3.0</span>  <span class="t-gray">qwen3.8-27b</span></span>
         <span class="l t-orange" data-type>&gt; is the web container running?</span>
         <span class="l"></span>
-        <span class="l" data-think="The user is asking whether the web container is running. Probably a Docker container named web. docker ps -a with a name filter lists it even if it has stopped, and shows its status." data-used="~1k of 33k tokens" data-call><span class="t-orange">$</span> docker ps -a --filter name=web --format '{{.Names}} {{.Status}}'</span>
+        <span class="l" data-think="The user is asking whether the web container is running. Probably a Docker container named web. docker ps -a with a name filter lists it even if it has stopped, and shows its status." data-used="~1k of 33k tokens" data-speed="52 tok/s" data-call><span class="t-orange">$</span> docker ps -a --filter name=web --format '{{.Names}} {{.Status}}'</span>
         <span class="l"></span>
         <span class="l" data-run>  <span class="t-gray">web Exited (0) 2 hours ago</span></span>
         <span class="l"></span>
@@ -173,7 +173,7 @@ footer { margin-top: 64px; padding: 24px 0 48px; border-top: 1px solid var(--rul
         <span class="l t-rule">────────────────────────────────────────────────────────────────────────────────────────────────</span>
         <span class="l t-orange" data-type data-status="4s · 3% · 52 tok/s">&gt; start it</span>
         <span class="l"></span>
-        <span class="l" data-think="They want it running again. It exists and exited cleanly, so docker start web brings it back as it was." data-used="~2k of 33k tokens" data-call><span class="t-orange">$</span> docker start web</span>
+        <span class="l" data-think="They want it running again. It exists and exited cleanly, so docker start web brings it back as it was." data-used="~2k of 33k tokens" data-speed="53 tok/s" data-call><span class="t-orange">$</span> docker start web</span>
         <span class="l"></span>
         <span class="l">  <span class="t-gray">Starts the stopped container web.</span></span>
         <span class="l">  Run it?</span>
@@ -330,12 +330,17 @@ document.addEventListener('click', function (event) {
     return element;
   }
 
+  // How many characters fit across the terminal.
+  function columns() {
+    var probe = screen.appendChild(span('', '0000000000'));
+    var fit = Math.floor(screen.clientWidth / (probe.getBoundingClientRect().width / 10));
+    probe.remove();
+    return fit;
+  }
+
   // The reasoning's last rows, cut at the terminal's width less six, as Lokal does.
   function lastRows(text) {
-    var probe = screen.appendChild(span('', '0000000000'));
-    var columns = Math.floor(screen.clientWidth / (probe.getBoundingClientRect().width / 10));
-    probe.remove();
-    var width = Math.max(20, columns - 6), rows = [];
+    var width = Math.max(20, columns() - 6), rows = [];
     for (var at = 0; at < text.length; at += width) rows.push(text.slice(at, at + width));
     return rows.slice(-REASONING_ROWS);
   }
@@ -358,8 +363,8 @@ document.addEventListener('click', function (event) {
 
   // The spinner while the model works or a command runs; above it, the
   // reasoning as it comes, which clears before the step or the answer.
-  async function work(thought, used, call) {
-    var started = Date.now(), frame = 0, doing = 'thinking', rows = [];
+  async function work(thought, used, speed, call) {
+    var started = Date.now(), frame = 0, doing = 'thinking', rows = [], room = columns() - 4;
     var spinner = screen.appendChild(span('l'));
     var dot = spinner.appendChild(span('t-orange'));
     var label = spinner.appendChild(span('t-label'));
@@ -367,7 +372,10 @@ document.addEventListener('click', function (event) {
       dot.textContent = FRAMES[frame++ % FRAMES.length];
       var elapsed = Date.now() - started;
       if (elapsed >= LABEL_AFTER) {
-        label.textContent = ' ' + doing + ' · ' + Math.round(elapsed / 1000) + 's' + (used ? ' · ' + used : '');
+        // On one line, as in Lokal: the progress gives way from its end.
+        var parts = [Math.round(elapsed / 1000) + 's'].concat([used, speed].filter(Boolean));
+        while (parts.length > 1 && (doing + ' · ' + parts.join(' · ')).length > room) parts.pop();
+        label.textContent = ' ' + doing + ' · ' + parts.join(' · ');
       }
     }
     // The window's rows and a blank one, between the last line and the spinner.
@@ -419,7 +427,7 @@ document.addEventListener('click', function (event) {
       var line = lines[i], data = line.dataset;
       if ('type' in data) { await type(line); continue; }
       if ('run' in data) await work();
-      if ('think' in data) await work(data.think, data.used, 'call' in data);
+      if ('think' in data) await work(data.think, data.used, data.speed, 'call' in data);
       if ('stream' in data) { await stream(line); continue; }
       screen.appendChild(line);
     }

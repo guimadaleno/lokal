@@ -20,8 +20,8 @@ use crate::{config, interrupt, keys, prompt, reasoning, style, text};
 
 /// When the spinner starts saying what the model is doing.
 const LABEL_AFTER: Duration = Duration::from_secs(2);
-/// How long the model has to generate on a turn before its speed shows:
-/// a few tokens' worth says little about it.
+/// How long the model has to generate before its speed shows: a few
+/// tokens' worth says little about it.
 const SPEED_AFTER: Duration = Duration::from_secs(1);
 /// Stands in for a tool's output once it's dropped to free up context.
 const DROPPED_OUTPUT: &str = "[Output dropped to free up context, after you saw it.]";
@@ -318,14 +318,21 @@ impl Conversation {
         let mut spinner = Spinner::new();
         let mut mid_line = false;
         let started = Instant::now();
-        // How much of the context the reply takes as it grows: a piece is
-        // about a token. Reasoning in circles shows here before it fills it.
+        // How much of the context the reply takes as it grows, and how fast
+        // it's generated from its first piece on: a piece is about a token.
+        // Reasoning in circles shows here before it fills the context.
         let prompt_tokens = self.estimated_tokens();
         let mut generated: u64 = 0;
-        let used = |generated: u64| {
-            self.server
+        let mut first_piece: Option<Instant> = None;
+        let progress = |generated: u64, first_piece: Option<Instant>| -> Vec<String> {
+            let used = self
+                .server
                 .context
-                .map(|context| text::tokens_of(prompt_tokens + generated, context))
+                .map(|context| text::tokens_of(prompt_tokens + generated, context));
+            let rate = first_piece
+                .and_then(|first| speed(generated.saturating_sub(1), first.elapsed()))
+                .map(text::speed);
+            [used, rate].into_iter().flatten().collect()
         };
         let mut writing: Option<ToolProgress> = None;
         // The reasoning, when shown, sits in a small window that goes away.
@@ -342,26 +349,35 @@ impl Conversation {
                 }
                 return Err(Failure::Stopped);
             }
-            match request.next(Duration::from_millis(40)) {
+            let event = request.next(Duration::from_millis(40));
+            if matches!(
+                event,
+                Some(Event::Reasoning(_) | Event::Text(_) | Event::ToolCall { .. })
+            ) {
+                generated += 1;
+                first_piece.get_or_insert_with(Instant::now);
+            }
+            match event {
                 None if !mid_line => spinner.tick_with(&working_label(
                     started,
                     writing.as_ref(),
-                    used(generated).as_deref(),
+                    &progress(generated, first_piece),
                 )),
                 None => {}
                 Some(Event::Reasoning(text)) => {
-                    generated += 1;
                     if self.show_reasoning && !mid_line {
                         reasoning.push(&text);
                         reasoning.draw();
                         // The window redrew over the spinner's row: put the spinner back.
-                        let label =
-                            working_label(started, writing.as_ref(), used(generated).as_deref());
+                        let label = working_label(
+                            started,
+                            writing.as_ref(),
+                            &progress(generated, first_piece),
+                        );
                         spinner.redraw(&label);
                     }
                 }
                 Some(Event::Text(text)) => {
-                    generated += 1;
                     spinner.clear();
                     reasoning.clear();
                     let shown = match &mut markdown {
@@ -373,7 +389,6 @@ impl Conversation {
                     mid_line = true;
                 }
                 Some(Event::ToolCall { name, path, bytes }) => {
-                    generated += 1;
                     if !reasoning.is_empty() {
                         spinner.clear();
                         reasoning.clear();
@@ -572,38 +587,49 @@ struct ToolProgress {
 }
 
 /// What the spinner says while the model works, once it has taken a moment:
-/// a long silence looks like a hang otherwise.
-fn working_label(started: Instant, writing: Option<&ToolProgress>, used: Option<&str>) -> String {
+/// a long silence looks like a hang otherwise. `progress` goes after the
+/// time, most important first.
+fn working_label(started: Instant, writing: Option<&ToolProgress>, progress: &[String]) -> String {
     let elapsed = started.elapsed();
     if elapsed < LABEL_AFTER {
         return String::new();
     }
+    let mut parts = vec![text::duration(elapsed)];
     // A server may hold a tool call's arguments back until they're complete:
-    // while nothing arrives to count, only the time, rather than a size and a
-    // token count that sit still.
-    let waiting_on_arguments = writing.is_some_and(|call| call.bytes == 0);
-    let time = match used {
-        Some(used) if !waiting_on_arguments => format!("{} · {used}", text::duration(elapsed)),
-        _ => text::duration(elapsed),
-    };
+    // while nothing arrives to count, only the time, rather than a size, a
+    // token count and a speed that sit still.
+    if writing.is_none_or(|call| call.bytes > 0) {
+        parts.extend_from_slice(progress);
+    }
     // On one line, or the spinner's redraw would leave the rest behind.
     let room = style::terminal_width().map_or(80, |width| width.saturating_sub(4));
-    let label = match writing {
-        None => format!("{} · {time}", text::THINKING),
-        Some(call) => {
-            let label_with = |path: Option<&str>| {
-                let what = text::writing_tool(&call.name, path, call.bytes);
-                format!("{what} · {time}")
-            };
-            // A long path loses its start: the file's name, its size and the time stay.
-            let spare = room.saturating_sub(label_with(Some("")).chars().count());
-            let path = call
-                .path
-                .as_deref()
-                .map(|path| tail(&config::shown(Path::new(path)), spare));
-            label_with(path.as_deref())
-        }
+    let what = |path: Option<&str>| match writing {
+        None => text::THINKING.to_string(),
+        Some(call) => text::writing_tool(&call.name, path, call.bytes),
     };
+    let path = writing
+        .and_then(|call| call.path.as_deref())
+        .map(|path| config::shown(Path::new(path)));
+    // The progress gives way from its end, before the file's name would.
+    let name = path.as_deref().map(|path| {
+        let name = Path::new(path)
+            .file_name()
+            .map(|name| name.to_string_lossy());
+        format!("…{}", name.unwrap_or(path.into()))
+    });
+    while parts.len() > 1
+        && format!("{} · {}", what(name.as_deref()), parts.join(" · "))
+            .chars()
+            .count()
+            > room
+    {
+        parts.pop();
+    }
+    let time = parts.join(" · ");
+    // A long path loses its start: the file's name, its size and the time stay.
+    let spare = room.saturating_sub(format!("{} · {time}", what(Some(""))).chars().count());
+    let path = path.as_deref().map(|path| tail(path, spare));
+    let label = format!("{} · {time}", what(path.as_deref()));
     format!(" {}", style::pulse_faint(&label, started))
 }
 
@@ -892,6 +918,39 @@ mod tests {
         assert_eq!(speed(9, Duration::from_millis(900)), None);
         assert_eq!(speed(0, Duration::ZERO), None);
         assert_eq!(speed(50, Duration::from_millis(2100)), Some(24));
+    }
+
+    #[test]
+    fn the_label_leaves_progress_out_while_arguments_are_held_back() {
+        let started = Instant::now() - Duration::from_secs(3);
+        let progress = ["~2k of 33k tokens".to_string(), "52 tok/s".to_string()];
+        assert!(
+            working_label(started, None, &progress).contains("3s · ~2k of 33k tokens · 52 tok/s")
+        );
+        let held = ToolProgress {
+            name: "run_command".into(),
+            path: None,
+            bytes: 0,
+        };
+        assert!(!working_label(started, Some(&held), &progress).contains("tokens"));
+        // Where it doesn't fit on the line, the progress goes from its end.
+        let long = ["~2k of 33k tokens".to_string(), "x".repeat(80)];
+        let label = working_label(started, None, &long);
+        assert!(label.contains("3s · ~2k of 33k tokens") && !label.contains('x'));
+    }
+
+    #[test]
+    fn the_speed_gives_way_before_the_file_name() {
+        let started = Instant::now() - Duration::from_secs(3);
+        let progress = ["~2k of 33k tokens".to_string(), "52 tok/s".to_string()];
+        let writing = ToolProgress {
+            name: "write_file".into(),
+            path: Some("/srv/some/deep/folder/a_rather_long_file_name_123.rs".into()),
+            bytes: 2000,
+        };
+        let label = working_label(started, Some(&writing), &progress);
+        assert!(label.contains("a_rather_long_file_name_123.rs"));
+        assert!(label.contains("tokens") && !label.contains("tok/s"));
     }
 
     #[test]
