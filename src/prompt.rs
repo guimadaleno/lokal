@@ -1,6 +1,6 @@
 //! The system prompt: how to work, what this machine is (and what /recon
 //! found), how much context there is, the project's notes, and what the
-//! person wrote in about-me.md.
+//! person wrote in user.md.
 
 use crate::memory::Note;
 use crate::system::Facts;
@@ -29,7 +29,7 @@ pub fn system_prompt(
     recon: &[(&str, String)],
     context: Option<u64>,
     notes: &[Note],
-    about_me: Option<&str>,
+    user_md: Option<&str>,
 ) -> String {
     let mut prompt = String::from(HOW_TO_WORK);
     prompt.push_str("\n\nThis computer:\n");
@@ -66,7 +66,7 @@ pub fn system_prompt(
              your reasoning and your reply.\n"
         ));
     }
-    // Before about-me.md: what the person wrote wins over what a repository says.
+    // Before user.md: what the person wrote wins over what a repository says.
     if !notes.is_empty() {
         prompt.push_str(
             "\nThe project's notes, from its LOKAL.md and AGENTS.md files, on how to work in it. \
@@ -85,9 +85,9 @@ pub fn system_prompt(
             }
         }
     }
-    if let Some(about_me) = about_me.map(str::trim).filter(|text| !text.is_empty()) {
+    if let Some(user_md) = user_md.map(str::trim).filter(|text| !text.is_empty()) {
         prompt.push_str("\nWhat the user wrote about themselves and how they like answers (this wins over the defaults above):\n");
-        prompt.push_str(about_me);
+        prompt.push_str(user_md);
         prompt.push('\n');
     }
     prompt

@@ -91,14 +91,14 @@ impl Conversation {
         &self.notes
     }
 
-    /// Picks about-me.md up again after it changed.
+    /// Picks user.md up again after it changed.
     pub fn refresh_system_prompt(&mut self) {
         self.system = prompt::system_prompt(
             &self.facts,
             &self.recon,
             self.server.context,
             &self.notes,
-            config::read_about_me().as_deref(),
+            config::read_user_md().as_deref(),
         );
     }
 

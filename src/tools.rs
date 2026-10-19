@@ -23,7 +23,7 @@ const LEAST_ROOM: usize = 1_000;
 /// stop, or it keeps asking for less and less.
 const CONTEXT_FULL: &str = "Answer with what you have, or, if that isn't enough, tell the user \
     the context is full: /new starts a fresh conversation.";
-/// The longest line `remember` adds to about-me.md.
+/// The longest line `remember` adds to user.md.
 const NOTE_LIMIT: usize = 200;
 
 pub enum Outcome {
@@ -78,7 +78,7 @@ pub fn definitions() -> Value {
         ),
         tool(
             "remember",
-            "Add one short line to the notes every conversation starts with (about-me.md). \
+            "Add one short line to the notes every conversation starts with (user.md). \
              Only when the user asks you to remember something; they approve the line first. \
              Something only about this project goes in its LOKAL.md instead, changed like any file.",
             json!({"note": {"type": "string", "description": "The fact or preference, in one short line."}}),
@@ -298,7 +298,7 @@ fn edit_file(args: &Value, input: &mut Input) -> Result<Outcome, String> {
     propose(&path, text::STEP_EDIT, &old, &new, input)
 }
 
-/// The one way the model adds to about-me.md: a line the person asked it to
+/// The one way the model adds to user.md: a line the person asked it to
 /// remember, shown as a diff and written only with a yes.
 fn remember(args: &Value, input: &mut Input) -> Result<Outcome, String> {
     let note = text_arg(args, "note")?
@@ -311,14 +311,14 @@ fn remember(args: &Value, input: &mut Input) -> Result<Outcome, String> {
     if note.chars().count() > NOTE_LIMIT {
         return Err(format!("keep the note under {NOTE_LIMIT} characters."));
     }
-    let old = config::read_about_me().unwrap_or_default();
+    let old = config::read_user_md().unwrap_or_default();
     let mut new = old.clone();
     if !new.is_empty() && !new.ends_with('\n') {
         new.push('\n');
     }
     new.push_str(&format!("- {note}\n"));
     propose(
-        &config::about_me_path(),
+        &config::user_md_path(),
         text::STEP_REMEMBER,
         &old,
         &new,
@@ -379,7 +379,7 @@ fn writable_path(args: &Value) -> Result<PathBuf, String> {
     let path = path_arg(args)?;
     if config::is_lokal_own(&path) {
         return Err(format!(
-            "{} is one of Lokal's own files (its settings, about-me.md, its saved state), \
+            "{} is one of Lokal's own files (its settings, user.md, its saved state), \
              which you can't change. To keep something the user asked you to remember, use \
              remember; the user edits these files with /prefs and /config.",
             path.display()

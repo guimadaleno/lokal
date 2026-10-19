@@ -1,4 +1,4 @@
-//! Lokal's files: the optional settings, about-me.md, and the last conversation.
+//! Lokal's files: the optional settings, user.md, and the last conversation.
 
 use std::env;
 use std::fs;
@@ -58,17 +58,29 @@ pub fn settings_path() -> PathBuf {
     config_dir().join("config")
 }
 
-pub fn about_me_path() -> PathBuf {
-    config_dir().join("about-me.md")
+pub fn user_md_path() -> PathBuf {
+    user_md_in(&config_dir())
+}
+
+/// user.md in `dir`. The file under its old name, about-me.md, moves there
+/// the first time it's needed; when it can't, the old one stays in use, so
+/// the person's notes are never lost.
+fn user_md_in(dir: &Path) -> PathBuf {
+    let path = dir.join("user.md");
+    let old = dir.join("about-me.md");
+    if !path.exists() && old.exists() && fs::rename(&old, &path).is_err() {
+        return old;
+    }
+    path
 }
 
 /// The person's preferences and facts, or None before the first launch has asked.
-pub fn read_about_me() -> Option<String> {
-    fs::read_to_string(about_me_path()).ok()
+pub fn read_user_md() -> Option<String> {
+    fs::read_to_string(user_md_path()).ok()
 }
 
-pub fn write_about_me(contents: &str) -> io::Result<()> {
-    write(&about_me_path(), contents)
+pub fn write_user_md(contents: &str) -> io::Result<()> {
+    write(&user_md_path(), contents)
 }
 
 pub fn last_conversation_path() -> PathBuf {
@@ -98,7 +110,7 @@ pub fn shown(path: &Path) -> String {
     }
 }
 
-/// One of Lokal's own files: its settings, about-me.md, its approvals, its
+/// One of Lokal's own files: its settings, user.md, its approvals, its
 /// saved conversation. The model never writes to them, even with a yes: it
 /// must not change what it may do, where its words are sent, or what every
 /// conversation starts with.
@@ -154,6 +166,7 @@ fn xdg_dir(variable: &str, fallback: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn reads_settings_and_skips_comments() {
@@ -191,15 +204,43 @@ mod tests {
             env::set_var("XDG_CONFIG_HOME", home.join(".config"));
         }
         assert!(is_lokal_own(&config.join("config")));
-        assert!(is_lokal_own(&config.join("about-me.md")));
+        assert!(is_lokal_own(&config.join("user.md")));
         assert!(is_lokal_own(&home.join("work/../.config/lokal/config")));
         assert!(is_lokal_own(&home.join("work/link/config")));
-        assert!(is_lokal_own(&home.join("work/link/../lokal/about-me.md")));
+        assert!(is_lokal_own(&home.join("work/link/../lokal/user.md")));
         assert!(is_lokal_own(
             &home.join("missing/../.config/lokal/new-file")
         ));
         assert!(!is_lokal_own(&home.join("work/notes.md")));
         assert!(!is_lokal_own(&home.join(".config/lokal-other/config")));
         fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn about_me_md_moves_to_user_md_once() {
+        let dir = std::env::temp_dir().join(format!("lokal-user-md-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        assert_eq!(user_md_in(&dir), dir.join("user.md"));
+
+        fs::write(dir.join("about-me.md"), "- short answers\n").unwrap();
+        assert_eq!(user_md_in(&dir), dir.join("user.md"));
+        assert_eq!(
+            fs::read_to_string(dir.join("user.md")).unwrap(),
+            "- short answers\n"
+        );
+        assert!(!dir.join("about-me.md").exists());
+
+        // Both there: user.md wins, and the old one is left alone.
+        fs::write(dir.join("about-me.md"), "- old\n").unwrap();
+        assert_eq!(user_md_in(&dir), dir.join("user.md"));
+        assert!(dir.join("about-me.md").exists());
+
+        // A move that fails keeps the old one in use.
+        fs::remove_file(dir.join("user.md")).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+        assert_eq!(user_md_in(&dir), dir.join("about-me.md"));
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

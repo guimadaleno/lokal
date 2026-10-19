@@ -33,12 +33,15 @@ dependencies.
   - **The project is the git root around the working directory,** or the
     directory itself. The file keeps its newest 500 lines.
 - **Let the model change Lokal's own files,** not even with a yes. That means
-  the settings, about-me.md, the approvals and the saved conversation, checked
+  the settings, user.md, the approvals and the saved conversation, checked
   on the path the kernel would reach (`config::is_lokal_own`). Otherwise one
   approved diff could send every later conversation to another server,
   approve commands, or plant instructions in what every conversation starts
-  with. The one way in is `remember`, which adds a line to about-me.md when
+  with. The one way in is `remember`, which adds a line to user.md when
   the person asks, shown as a diff.
+  - **user.md was about-me.md:** a copy under the old name moves to the new
+    one the first time it's needed (`config::user_md_path`), and stays in use
+    where the move fails, so the person's notes are never lost.
 - **Take an answer from anything but a terminal as approval.** Piped stdin
   never says yes; without a terminal, nothing beyond reading runs. Keys
   pressed before an approval question was on screen are discarded, because
@@ -59,7 +62,7 @@ dependencies.
   picks Send. The menu starts on Don't send. It sends kinds, never names:
   no server address, no model. **The conversation is never part of it,**
   since it can hold files and secrets the model read.
-- **Grow on disk.** It keeps the last conversation only, and about-me.md is
+- **Grow on disk.** It keeps the last conversation only, and user.md is
   the person's own file.
   - **The scratch folder** (`src/scratch.rs`, `/tmp/lokal-<uid>/<pid>`) is
     where the model is told to put what it makes only to get the work done.
@@ -130,7 +133,7 @@ dependencies.
 | `approvals.rs` | Commands approved for a project |
 | `reasoning.rs` | The small window the reasoning shows in while the model thinks |
 | `scratch.rs` | The session's folder for temporary files |
-| `config.rs` | The settings file, about-me.md, the state files |
+| `config.rs` | The settings file, user.md, the state files |
 | `spinner.rs`, `style.rs`, `interrupt.rs`, `text.rs` | Spinner, colors, Ctrl+C flag, every word on screen |
 | `site/` | The page at guimadaleno.com/lokal/, published by `.github/workflows/site.yml` |
 | `tools/icon.py` | Draws the mark and writes `site/`'s icons from one definition |
@@ -167,7 +170,7 @@ dependencies.
   - **They get an eighth of the context,** cut at a line, with the model
     told to read the rest: they go along with every request, and at LM
     Studio's 8K a long AGENTS.md would leave no room to work.
-  - **They come before about-me.md in the prompt,** framed as the
+  - **They come before user.md in the prompt,** framed as the
     project's: what the person wrote wins over what a repository says. The
     model changes them like any file, with a diff and a yes.
   - **They're guidance, never secrets:** they're versioned with the
@@ -347,7 +350,6 @@ Tracked as issues:
 - **`/compact`, and the same on its own when dropping outputs isn't
   enough** (#4);
 - **an `ask` tool** (#7);
-- **`about-me.md` renamed `user.md`**, to weigh (#9);
 - **a highlight for deletes outside the working folder**, to weigh (#10);
 - **an aarch64 build** (#11);
 - **`lokal --uninstall`** (#12);

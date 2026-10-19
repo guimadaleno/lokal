@@ -44,8 +44,8 @@ use std::time::Instant;
 use conversation::Conversation;
 use input::{Input, Line};
 
-/// Past this many lines, about-me.md costs noticeable context on every turn.
-const LONG_ABOUT_ME: usize = 30;
+/// Past this many lines, user.md costs noticeable context on every turn.
+const LONG_USER_MD: usize = 30;
 /// Below this, a long file or output no longer fits in one read. LM Studio
 /// loads models with 8K unless told otherwise.
 const SMALL_CONTEXT: u64 = 16_384;
@@ -117,7 +117,7 @@ fn main() -> ExitCode {
         print_header(&server);
         warn_if_context_is_small(&server);
         first_command = ask_first_question(&mut input);
-        warn_if_about_me_is_long();
+        warn_if_user_md_is_long();
     }
     // Lives until Lokal quits, and takes its folder with it.
     let scratch = scratch::Scratch::create();
@@ -234,12 +234,12 @@ fn run_command(
             eprintln!("{}", style::gray(text::NEW_CONVERSATION));
         }
         "/prefs" => {
-            let path = config::about_me_path();
+            let path = config::user_md_path();
             if !path.exists() {
-                let _ = config::write_about_me("");
+                let _ = config::write_user_md("");
             }
             open_in_editor(&[&path]);
-            warn_if_about_me_is_long();
+            warn_if_user_md_is_long();
             conversation.refresh_system_prompt();
         }
         "/memory" => {
@@ -331,11 +331,11 @@ fn print_about() {
 }
 
 /// On the first launch, asks one question; skipping it is fine. Either way
-/// about-me.md then exists, so the question isn't asked again. A slash
+/// user.md then exists, so the question isn't asked again. A slash
 /// command typed instead answers nothing: it's returned to run, and the
 /// question comes back at the next launch.
 fn ask_first_question(input: &mut Input) -> Option<String> {
-    if config::read_about_me().is_some() {
+    if config::read_user_md().is_some() {
         return None;
     }
     eprintln!("{}", text::FIRST_QUESTION);
@@ -344,8 +344,8 @@ fn ask_first_question(input: &mut Input) -> Option<String> {
         Some(answer) => format!("{} {answer}\n", text::PREFS_HEADING),
         None => String::new(),
     };
-    let path = config::shown(&config::about_me_path());
-    match config::write_about_me(&contents) {
+    let path = config::shown(&config::user_md_path());
+    match config::write_user_md(&contents) {
         Ok(()) if !contents.is_empty() => eprintln!("{}", style::gray(&text::saved_prefs(&path))),
         Ok(()) => {}
         Err(error) => eprintln!(
@@ -373,8 +373,8 @@ fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
         _ => text::NOTHING_YET.to_string(),
     };
     let session_time = text::duration(session.started.elapsed());
-    let about_me = config::about_me_path();
-    let about_me_lines = config::read_about_me().map_or(0, |text| text.lines().count());
+    let user_md = config::user_md_path();
+    let user_md_lines = config::read_user_md().map_or(0, |text| text.lines().count());
     let settings = config::settings_path();
     let mut rows = vec![
         (text::INFO_VERSION, format!("{} · {updates}", text::VERSION)),
@@ -386,7 +386,7 @@ fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
         ),
         (
             text::INFO_ABOUT_ME,
-            text::file_lines(&config::shown(&about_me), about_me_lines),
+            text::file_lines(&config::shown(&user_md), user_md_lines),
         ),
         (
             text::INFO_SETTINGS,
@@ -575,9 +575,9 @@ fn print_notes(conversation: &Conversation) {
     eprintln!("{}", style::gray(&text::notes_taken(&names, tokens, cut)));
 }
 
-fn warn_if_about_me_is_long() {
-    let lines = config::read_about_me().map_or(0, |contents| contents.lines().count());
-    if lines > LONG_ABOUT_ME {
+fn warn_if_user_md_is_long() {
+    let lines = config::read_user_md().map_or(0, |contents| contents.lines().count());
+    if lines > LONG_USER_MD {
         eprintln!("{}", style::gray(&text::long_prefs(lines)));
     }
 }

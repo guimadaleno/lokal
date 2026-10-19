@@ -408,7 +408,7 @@ pub fn saved_prefs(path: &str) -> String {
 
 pub fn long_prefs(lines: usize) -> String {
     format!(
-        "about-me.md is getting long ({lines} lines). It goes along with every conversation, so trimming it saves room. /prefs opens it."
+        "user.md is getting long ({lines} lines). It goes along with every conversation, so trimming it saves room. /prefs opens it."
     )
 }
 
