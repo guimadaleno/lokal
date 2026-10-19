@@ -19,9 +19,22 @@ dependencies.
     (`src/diff.rs`), so a new file doesn't flood the conversation. "Show the
     rest", between Yes and No, prints them and asks again. Saying yes without
     them is the person's choice, made with the count in front of them.
-- **Approve on a guess.** The approval menu starts on No, so Enter alone or
-  Esc never approves. Saying no ends the turn, so the person says what to do
-  instead.
+- **Approve on a guess where a slip costs much.** A question opens on Yes,
+  so Enter alone approves, only for what Lokal's own rule sees as day to day
+  (`allowlist::opens_on_yes`, `tools::write_opens_on_yes`), never the
+  model's judgement. Esc is always No, so a stray key never approves. Saying
+  no ends the turn, so the person says what to do instead.
+  - **On No:** anything the rule can't read whole; commands that reach past
+    the person (sudo), run code Lokal can't see (a shell, xargs, `curl | sh`,
+    a Windows program), delete or overwrite (rm, mv, dd, `git push`, `reset`,
+    `clean`), change what later git commands run (`git config`: `git status`
+    runs unasked), or stop things; a file outside the working and scratch
+    folders, or in a hidden file or folder on the way (.git, .env, CI); and
+    `remember`, which changes what every conversation starts with.
+  - **The rule only picks where the question starts,** never whether there is
+    one. A command it gets wrong opens on No, as every one did before.
+  - **A working folder that is the home folder or / doesn't count:** it would
+    hold every file.
 - **Approve more than the person saw.** "Don't ask again" covers that exact
   command text, for the session or for the project.
   - **A pattern like `docker *` would let in commands nobody saw**
@@ -106,8 +119,8 @@ dependencies.
   - **Two things pulse, gently** (`style::pulse_*`, in truecolor, since the
     256-color steps are too coarse to ease): the label while the model
     works, slowly, and the marker on the option an approval is on, quicker.
-    Only the marker moves, never Yes itself: the menu starts on No, and the
-    pulse follows the person's choice instead of pulling toward one.
+    Only the marker moves, never an option itself: the pulse follows the
+    selection, wherever the question opened, instead of pulling toward one.
 - **Every block gets room to breathe,** so the screen never feels
   cluttered. A blank line follows the request and the `$` line of a command.
   Output starts after one, only when there is output, so a silent command
@@ -128,7 +141,7 @@ dependencies.
 | `markdown.rs` | Bold, inline code, headings, code blocks and links, styled as the answer streams |
 | `server.rs`, `http.rs` | Finding the server and its model; plain-HTTP requests |
 | `tools.rs`, `shell.rs`, `diff.rs` | The model's tools, running a command, showing a change |
-| `allowlist.rs` | Which commands run without asking |
+| `allowlist.rs` | Which commands run without asking, and which questions open on Yes |
 | `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it |
 | `input.rs` | The `>` prompt (hints, completion, Ctrl+C twice) and approvals |
 | `menu.rs` | The arrow-key choice the approvals use |

@@ -1,6 +1,6 @@
 //! A choice among a few options on the terminal, with the arrow keys and
-//! Enter, or a key per option. Approvals use it, so it starts on the safe
-//! option, and Esc picks that one too.
+//! Enter, or a key per option. Approvals use it, so Esc always picks the
+//! safe option, wherever the choice started.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -34,16 +34,17 @@ enum Key {
     Other,
 }
 
-/// Shows the question and its options, starting on `safe`. When it's done,
-/// the options fold into one line with the answer. None without a terminal.
-pub fn choose(question: &str, items: &[Item], safe: usize) -> Option<Choice> {
+/// Shows the question and its options, starting on `start`; Esc picks
+/// `safe`. When it's done, the options fold into one line with the answer.
+/// None without a terminal.
+pub fn choose(question: &str, items: &[Item], start: usize, safe: usize) -> Option<Choice> {
     let mut terminal = OpenOptions::new()
         .read(true)
         .write(true)
         .open("/dev/tty")
         .ok()?;
     let raw = RawMode::enter(&terminal)?;
-    let mut selected = safe;
+    let mut selected = start;
     let shown = Instant::now();
     let _ = write!(terminal, "\x1b[?25l  {question}");
     draw(&mut terminal, items, selected, false, shown);

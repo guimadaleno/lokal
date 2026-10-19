@@ -142,7 +142,7 @@ pub fn is_lokal_own(path: &Path) -> bool {
 /// The path the kernel would reach, so no spelling of it (`..`, a link, a
 /// relative path) slips past. Each part that exists is resolved before the
 /// next is applied; parts that don't exist yet can't be links.
-fn resolved(path: &Path) -> PathBuf {
+pub fn resolved(path: &Path) -> PathBuf {
     let mut out = if path.is_absolute() {
         PathBuf::from("/")
     } else {

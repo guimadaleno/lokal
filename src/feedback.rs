@@ -46,7 +46,7 @@ pub fn run(
             key: 'n',
         },
     ];
-    let kind = match menu::choose(text::FEEDBACK_KIND, &kinds, 2)? {
+    let kind = match menu::choose(text::FEEDBACK_KIND, &kinds, 2, 2)? {
         menu::Choice::Picked(0) => Kind::Bug,
         menu::Choice::Picked(1) => Kind::Idea,
         _ => return draft,
@@ -110,7 +110,7 @@ pub fn run(
             key: 'n',
         },
     ];
-    match menu::choose(text::FEEDBACK_SEND_QUESTION, &sends, 2)? {
+    match menu::choose(text::FEEDBACK_SEND_QUESTION, &sends, 2, 2)? {
         menu::Choice::Picked(0) => {}
         menu::Choice::Picked(1) => {
             report.system = None;

@@ -1,6 +1,7 @@
 //! The tools the model can call: run a command, read a file, write a file,
 //! edit a file. Anything that changes something asks first.
 
+use std::env;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -107,14 +108,19 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
 }
 
 /// Runs one tool call. `room` is how many characters its output may take,
-/// when the context's size is known.
-pub fn run(call: &ToolCall, input: &mut Input, room: Option<usize>) -> Outcome {
+/// when the context's size is known; `scratch` is the session's folder.
+pub fn run(
+    call: &ToolCall,
+    input: &mut Input,
+    room: Option<usize>,
+    scratch: Option<&Path>,
+) -> Outcome {
     let result = match serde_json::from_str::<Value>(&call.arguments) {
         Ok(args) => match call.name.as_str() {
             "run_command" => run_command(&args, input, room),
             "read_file" => read_file(&args, room),
-            "write_file" => write_file(&args, input),
-            "edit_file" => edit_file(&args, input),
+            "write_file" => write_file(&args, input, scratch),
+            "edit_file" => edit_file(&args, input, scratch),
             "remember" => remember(&args, input),
             other => Err(format!("there's no tool called {other}.")),
         },
@@ -140,7 +146,7 @@ fn run_command(args: &Value, input: &mut Input, room: Option<usize>) -> Result<O
             {
                 eprintln!("  {}", style::gray(explanation));
             }
-            let approval = input.approve(command);
+            let approval = input.approve(command, allowlist::opens_on_yes(command));
             input.keep_approval(&approval, command);
             if let Some(outcome) = refused(approval) {
                 return Ok(outcome);
@@ -262,7 +268,7 @@ fn read_part(
     ))
 }
 
-fn write_file(args: &Value, input: &mut Input) -> Result<Outcome, String> {
+fn write_file(args: &Value, input: &mut Input, scratch: Option<&Path>) -> Result<Outcome, String> {
     let path = writable_path(args)?;
     let content = text_arg(args, "content")?;
     let old = match fs::read_to_string(&path) {
@@ -275,10 +281,18 @@ fn write_file(args: &Value, input: &mut Input) -> Result<Outcome, String> {
     } else {
         text::STEP_CREATE
     };
-    propose(&path, step, old.as_deref().unwrap_or(""), content, input)
+    let on_yes = write_opens_on_yes(&path, scratch);
+    propose(
+        &path,
+        step,
+        old.as_deref().unwrap_or(""),
+        content,
+        input,
+        on_yes,
+    )
 }
 
-fn edit_file(args: &Value, input: &mut Input) -> Result<Outcome, String> {
+fn edit_file(args: &Value, input: &mut Input, scratch: Option<&Path>) -> Result<Outcome, String> {
     let path = writable_path(args)?;
     let old_text = text_arg(args, "old_text")?;
     let new_text = text_arg(args, "new_text")?;
@@ -303,7 +317,8 @@ fn edit_file(args: &Value, input: &mut Input) -> Result<Outcome, String> {
         }
     }
     let new = old.replacen(old_text, new_text, 1);
-    propose(&path, text::STEP_EDIT, &old, &new, input)
+    let on_yes = write_opens_on_yes(&path, scratch);
+    propose(&path, text::STEP_EDIT, &old, &new, input, on_yes)
 }
 
 /// The one way the model changes user.md: a line the person asked it to
@@ -335,7 +350,8 @@ fn remember(args: &Value, input: &mut Input) -> Result<Outcome, String> {
             "It's already in user.md, so nothing changed.".into(),
         ));
     };
-    propose(&path, text::STEP_REMEMBER, &old, &new, input)
+    // On No: it changes what every conversation starts with.
+    propose(&path, text::STEP_REMEMBER, &old, &new, input, false)
 }
 
 /// user.md with `note` added at its end, or in place of the line `replaces`
@@ -393,13 +409,15 @@ fn same_note(line: &str, note: &str) -> bool {
     plain(line) == plain(note)
 }
 
-/// Shows the change as a diff and writes it if the person agrees.
+/// Shows the change as a diff and writes it if the person agrees. The
+/// question opens on Yes only when `opens_on_yes`.
 fn propose(
     path: &Path,
     step: &str,
     old: &str,
     new: &str,
     input: &mut Input,
+    opens_on_yes: bool,
 ) -> Result<Outcome, String> {
     if old == new && step == text::STEP_EDIT {
         return Ok(Outcome::Done(
@@ -408,11 +426,41 @@ fn propose(
     }
     eprintln!("{} {}", style::accent(step), config::shown(path));
     let rest = diff::show(old, new);
-    if let Some(outcome) = refused(input.approve_write(rest)) {
+    if let Some(outcome) = refused(input.approve_write(rest, opens_on_yes)) {
         return Ok(outcome);
     }
     config::write(path, new).map_err(|error| format!("can't write {}: {error}", path.display()))?;
     Ok(Outcome::Done(format!("Wrote {}.", path.display())))
+}
+
+/// Whether a file change's question may open on Yes: only for a file in the
+/// working folder or the scratch folder. A working folder that is the home
+/// folder or / would hold everything, so then it doesn't count.
+fn write_opens_on_yes(path: &Path, scratch: Option<&Path>) -> bool {
+    let home = config::resolved(&config::home());
+    let working = env::current_dir()
+        .ok()
+        .map(|folder| config::resolved(&folder))
+        .filter(|folder| *folder != home && folder.parent().is_some());
+    let folders: Vec<PathBuf> = working
+        .into_iter()
+        .chain(scratch.map(config::resolved))
+        .collect();
+    is_everyday_place(&config::resolved(path), &folders)
+}
+
+/// Inside one of `folders`, with no hidden file or folder on the way there.
+/// Hidden ones are mostly settings that change what other programs run
+/// (git's config and hooks, CI, a shell's start-up, an editor's tasks), or
+/// they hold secrets, like .env.
+fn is_everyday_place(path: &Path, folders: &[PathBuf]) -> bool {
+    folders.iter().any(|folder| {
+        path.strip_prefix(folder).is_ok_and(|inside| {
+            !inside
+                .components()
+                .any(|part| part.as_os_str().as_encoded_bytes().starts_with(b"."))
+        })
+    })
 }
 
 /// None if the person approved; otherwise what to tell the model.
@@ -643,6 +691,31 @@ mod tests {
                 .unwrap_err()
                 .contains("no line \"uses emacs\"")
         );
+    }
+
+    #[test]
+    fn writes_open_on_yes_only_in_plain_files_of_the_folders() {
+        let folders = [
+            PathBuf::from("/home/ana/project"),
+            PathBuf::from("/tmp/lokal-1000/42"),
+        ];
+        for path in [
+            "/home/ana/project/src/main.rs",
+            "/home/ana/project/README.md",
+            "/tmp/lokal-1000/42/download.html",
+        ] {
+            assert!(is_everyday_place(Path::new(path), &folders), "{path}");
+        }
+        for path in [
+            "/home/ana/.bashrc",
+            "/home/ana/project-other/x",
+            "/home/ana/project/.env",
+            "/home/ana/project/.git/config",
+            "/home/ana/project/.github/workflows/ci.yml",
+            "/etc/hosts",
+        ] {
+            assert!(!is_everyday_place(Path::new(path), &folders), "{path}");
+        }
     }
 
     #[test]

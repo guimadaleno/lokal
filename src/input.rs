@@ -134,9 +134,10 @@ impl Input {
         }
     }
 
-    /// Asks before a command runs. The choice starts on No, so Enter alone
-    /// never approves, and offers not to ask again about this exact command.
-    pub fn approve(&mut self, command: &str) -> Approval {
+    /// Asks before a command runs, and offers not to ask again about this
+    /// exact command. The choice starts on Yes only where Lokal's rule says
+    /// a slip costs little (`allowlist::opens_on_yes`), and Esc is always No.
+    pub fn approve(&mut self, command: &str, opens_on_yes: bool) -> Approval {
         if self.editor.is_none() {
             return Approval::Unavailable;
         }
@@ -153,18 +154,20 @@ impl Input {
             .iter()
             .map(|(label, key, _)| menu::Item { label, key: *key })
             .collect();
-        match menu::choose(text::RUN_QUESTION, &items, items.len() - 1) {
+        let no = items.len() - 1;
+        let start = if opens_on_yes { 0 } else { no };
+        match menu::choose(text::RUN_QUESTION, &items, start, no) {
             Some(menu::Choice::Picked(index)) => options.swap_remove(index).2,
             Some(menu::Choice::Interrupted) => Approval::Stop,
             None => Approval::Unavailable,
         }
     }
 
-    /// Asks before a file changes, starting on No; a file change never gets
-    /// "don't ask again". When the diff showed only its start, `rest` holds
-    /// the lines left out, and a choice between Yes and No prints them and
-    /// asks again.
-    pub fn approve_write(&mut self, mut rest: Vec<String>) -> Approval {
+    /// Asks before a file changes, starting on Yes only when `opens_on_yes`,
+    /// with Esc always No; a file change never gets "don't ask again". When
+    /// the diff showed only its start, `rest` holds the lines left out, and
+    /// a choice between Yes and No prints them and asks again.
+    pub fn approve_write(&mut self, mut rest: Vec<String>, opens_on_yes: bool) -> Approval {
         if self.editor.is_none() {
             return Approval::Unavailable;
         }
@@ -187,7 +190,8 @@ impl Input {
                 key: 'n',
             });
             let no = items.len() - 1;
-            match menu::choose(text::WRITE_QUESTION, &items, no) {
+            let start = if opens_on_yes { 0 } else { no };
+            match menu::choose(text::WRITE_QUESTION, &items, start, no) {
                 Some(menu::Choice::Picked(0)) => return Approval::Yes,
                 Some(menu::Choice::Picked(index)) if index < no => {
                     diff::print(&std::mem::take(&mut rest));

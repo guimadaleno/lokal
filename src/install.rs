@@ -64,7 +64,7 @@ pub fn uninstall() -> bool {
             key: 'r',
         },
     ];
-    match menu::choose(text::REMOVE_FILES_QUESTION, &items, 0) {
+    match menu::choose(text::REMOVE_FILES_QUESTION, &items, 0, 0) {
         Some(menu::Choice::Picked(1)) => remove(&files),
         Some(_) => eprintln!("{}", style::gray(&text::kept_files(&folders_of(&files)))),
         None => {

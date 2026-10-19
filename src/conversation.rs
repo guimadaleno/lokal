@@ -268,7 +268,8 @@ impl Conversation {
                 // goes to the next.
                 let calls_left = reply.tool_calls.len() - index;
                 let room = self.room_for_output().map(|room| room / calls_left);
-                let outcome = tools::run(call, input, room);
+                let scratch = self.facts.scratch.as_deref().map(Path::new);
+                let outcome = tools::run(call, input, room, scratch);
                 // A blank line after each step, so its output doesn't run into what follows.
                 eprintln!();
                 match outcome {
