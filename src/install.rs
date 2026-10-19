@@ -1,16 +1,18 @@
 //! `lokal --install`: the executable puts itself in ~/.local/bin. That's for
 //! one person and needs no root, which is also what lets it update itself
 //! there. There's no installer program and no second file to download.
+//! `lokal --uninstall` takes it away again.
 
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 
-use crate::{config, text};
+use crate::{config, menu, style, text};
 
 pub fn install() -> Result<String, String> {
     let running = env::current_exe().map_err(|error| text::cant_install(&error.to_string()))?;
-    let folder = config::home().join(".local/bin");
+    let folder = bin_folder();
     let target = folder.join("lokal");
     if is_same_file(&running, &target) {
         return Ok(text::already_installed(&config::shown(&target)));
@@ -22,6 +24,94 @@ pub fn install() -> Result<String, String> {
         message.push_str(text::NOT_ON_PATH);
     }
     Ok(message)
+}
+
+/// Removes the installed executable, then asks before the person's own
+/// files, starting on keeping them. False when the executable couldn't go.
+pub fn uninstall() -> bool {
+    let target = bin_folder().join("lokal");
+    let shown = config::shown(&target);
+    match fs::remove_file(&target) {
+        Ok(()) => eprintln!("{}", text::uninstalled(&shown)),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            eprintln!("{}", style::gray(&text::not_installed(&shown)));
+        }
+        Err(error) => {
+            eprintln!("{}", style::red(&text::cant_uninstall(&error.to_string())));
+            return false;
+        }
+    }
+    let files: Vec<PathBuf> = config::own_files()
+        .into_iter()
+        .filter(|file| file.exists())
+        .collect();
+    if files.is_empty() {
+        return true;
+    }
+    eprintln!();
+    eprintln!("{}", text::YOUR_FILES);
+    for file in &files {
+        eprintln!("  {}", style::gray(&config::shown(file)));
+    }
+    eprintln!();
+    let items = [
+        menu::Item {
+            label: text::KEEP_THEM,
+            key: 'k',
+        },
+        menu::Item {
+            label: text::REMOVE_THEM,
+            key: 'r',
+        },
+    ];
+    match menu::choose(text::REMOVE_FILES_QUESTION, &items, 0) {
+        Some(menu::Choice::Picked(1)) => remove(&files),
+        Some(_) => eprintln!("{}", style::gray(&text::kept_files(&folders_of(&files)))),
+        None => {
+            eprintln!("{}", style::gray(text::NOT_ASKED));
+            eprintln!("{}", style::gray(&text::kept_files(&folders_of(&files))));
+        }
+    }
+    true
+}
+
+/// The files, then their folders where nothing else is left in them.
+fn remove(files: &[PathBuf]) {
+    let failed: Vec<String> = files
+        .iter()
+        .filter(|file| fs::remove_file(file).is_err())
+        .map(|file| config::shown(file))
+        .collect();
+    if failed.is_empty() {
+        eprintln!("{}", style::gray(text::REMOVED_FILES));
+    } else {
+        eprintln!("{}", style::red(&text::cant_remove(&failed)));
+    }
+    for folder in config::own_folders() {
+        // Only an empty folder goes: anything else in it isn't Lokal's.
+        if fs::remove_dir(&folder).is_err() && folder.exists() && failed.is_empty() {
+            eprintln!(
+                "{}",
+                style::gray(&text::folder_stays(&config::shown(&folder)))
+            );
+        }
+    }
+}
+
+/// The folders the files are in, each once, as the person would write them.
+fn folders_of(files: &[PathBuf]) -> Vec<String> {
+    let mut folders: Vec<String> = Vec::new();
+    for folder in files.iter().filter_map(|file| file.parent()) {
+        let folder = config::shown(folder);
+        if !folders.contains(&folder) {
+            folders.push(folder);
+        }
+    }
+    folders
+}
+
+fn bin_folder() -> PathBuf {
+    config::home().join(".local/bin")
 }
 
 /// Written beside the target and renamed over it, so a Lokal that's running

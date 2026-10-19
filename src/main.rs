@@ -82,6 +82,13 @@ fn main() -> ExitCode {
                     }
                 };
             }
+            "--uninstall" => {
+                return if install::uninstall() {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                };
+            }
             option if option.starts_with('-') => {
                 eprintln!("{}", text::unknown_option(option));
                 return ExitCode::from(2);

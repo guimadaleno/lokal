@@ -77,6 +77,10 @@ dependencies.
     own, closed to others, since `/tmp` is everyone's and a folder someone
     else made would let them read or swap what's written in it. Writing
     there asks first, like anywhere else.
+  - **`lokal --uninstall` removes the executable, then asks before the
+    person's files,** starting on keeping them (`src/install.rs`). It
+    touches only what `config::own_files` names, and a folder only once
+    it's empty: anything else in it isn't Lokal's.
 
 ## Conventions here
 
@@ -131,7 +135,7 @@ dependencies.
 | `prompt.rs`, `system.rs` | The system prompt and the machine facts in it |
 | `memory.rs` | The project's notes: LOKAL.md and AGENTS.md, from the git root down |
 | `recon.rs` | `/recon`: what the machine and the project have, gathered by Lokal itself |
-| `update.rs`, `install.rs` | Updating itself; `lokal --install` |
+| `update.rs`, `install.rs` | Updating itself; `lokal --install` and `--uninstall` |
 | `release.rs` | guimadaleno/release's client, **copied unchanged** |
 | `report.rs` | guimadaleno/issues' client, **copied unchanged** |
 | `feedback.rs` | `/feedback`: the form, the preview, the POST through curl |
@@ -357,7 +361,6 @@ Tracked as issues:
 - **an `ask` tool** (#7);
 - **a highlight for deletes outside the working folder**, to weigh (#10);
 - **an aarch64 build** (#11);
-- **`lokal --uninstall`** (#12);
 - **a test against a real server** (#13);
 - **a file bigger than the context read in parts, with Lokal noting what
   matters in each** (#16). Asking the model to keep notes was tried three

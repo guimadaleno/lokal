@@ -15,6 +15,7 @@ Usage:
   lokal -r           pick up the last conversation
   lokal -r <request> add to the last conversation
   lokal --install    put this copy in ~/.local/bin, where it keeps itself up to date
+  lokal --uninstall  remove it from ~/.local/bin, and your files if you say so
 
 Settings live in ~/.config/lokal/config (server = 192.0.2.10:1234, model = name, updates = off).";
 
@@ -127,6 +128,37 @@ pub fn already_installed(path: &str) -> String {
 
 pub fn cant_install(error: &str) -> String {
     format!("Couldn't install: {error}")
+}
+
+pub fn uninstalled(path: &str) -> String {
+    format!("Removed {path}.")
+}
+
+pub fn not_installed(path: &str) -> String {
+    format!("There's no Lokal at {path} to remove.")
+}
+
+pub fn cant_uninstall(error: &str) -> String {
+    format!("Couldn't remove Lokal: {error}")
+}
+
+pub const YOUR_FILES: &str = "Lokal kept these for you:";
+pub const REMOVE_FILES_QUESTION: &str = "Remove them too?";
+pub const KEEP_THEM: &str = "Keep them";
+pub const REMOVE_THEM: &str = "Remove them";
+pub const REMOVED_FILES: &str = "Removed them.";
+pub const NOT_ASKED: &str = "There's no terminal to ask you on, so they stay.";
+
+pub fn kept_files(folders: &[String]) -> String {
+    format!("Kept them, in {}.", folders.join(" and "))
+}
+
+pub fn cant_remove(paths: &[String]) -> String {
+    format!("Couldn't remove {}.", paths.join(", "))
+}
+
+pub fn folder_stays(folder: &str) -> String {
+    format!("{folder} stays: it holds files Lokal didn't make.")
 }
 
 pub const THINKING: &str = "thinking";

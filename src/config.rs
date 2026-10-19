@@ -91,6 +91,24 @@ pub fn last_update_check_path() -> PathBuf {
     state_dir().join("last-update-check")
 }
 
+/// Every file Lokal keeps for the person, user.md under both its names:
+/// what `lokal --uninstall` offers to remove, and nothing else.
+pub fn own_files() -> Vec<PathBuf> {
+    vec![
+        settings_path(),
+        config_dir().join("user.md"),
+        config_dir().join("about-me.md"),
+        approvals_path(),
+        last_conversation_path(),
+        last_update_check_path(),
+    ]
+}
+
+/// The folders those files live in.
+pub fn own_folders() -> [PathBuf; 2] {
+    [config_dir(), state_dir()]
+}
+
 pub fn write(path: &Path, contents: &str) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
