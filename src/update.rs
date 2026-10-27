@@ -1,7 +1,7 @@
 //! Keeping an installed Lokal up to date from download.guimadaleno.com, the
 //! way every app here updates: a signed latest.json, checked at most once a
 //! day in the background, taking effect at the next start. Every failure is
-//! silent and leaves everything as it was. guimadaleno/release's README is
+//! silent and leaves everything as it was. guimadaleno/base/release's README is
 //! the authority on the format and the rules; release.rs is its client.
 
 use std::fs::{self, OpenOptions};

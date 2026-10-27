@@ -90,7 +90,7 @@ dependencies.
   carries nothing that identifies the machine, and `updates = off` switches it
   off.
 - **Send a report the person hasn't seen whole.** `/feedback` goes to
-  guimadaleno/issues only when the person writes it, sees all of it, and
+  guimadaleno/base/issues only when the person writes it, sees all of it, and
   picks Send. The menu starts on Don't send. It sends kinds, never names:
   no server address, no model. **The conversation is never part of it,**
   since it can hold files and secrets the model read.
@@ -164,8 +164,8 @@ dependencies.
 | `memory.rs` | The project's notes: LOKAL.md and AGENTS.md, from the git root down |
 | `recon.rs` | `/recon`: what the machine and the project have, gathered by Lokal itself |
 | `update.rs`, `install.rs` | Updating itself; `lokal --install` and `--uninstall` |
-| `release.rs` | guimadaleno/release's client, **copied unchanged** |
-| `report.rs` | guimadaleno/issues' client, **copied unchanged** |
+| `release.rs` | guimadaleno/base/release's client, **copied unchanged** |
+| `report.rs` | guimadaleno/base/issues' client, **copied unchanged** |
 | `feedback.rs` | `/feedback`: the form, the preview, the POST through curl |
 | `approvals.rs` | Commands approved for a project |
 | `reasoning.rs` | The small window the reasoning shows in while the model thinks |
@@ -179,8 +179,8 @@ dependencies.
 
 - **`src/release.rs` and `tests/release/`, `src/report.rs` and
   `tests/report/` are copies, changed only at their source:**
-  `guimadaleno/release` (`client/release.rs`, `testdata/`) and
-  `guimadaleno/issues` (`client/report.rs`, `testdata/`). That's why both
+  `guimadaleno/base/release` (`client/release.rs`, `testdata/`) and
+  `guimadaleno/base/issues` (`client/report.rs`, `testdata/`). That's why both
   modules are declared with `#[rustfmt::skip]` and `#[allow(clippy::all)]`:
   an edit here makes the copies disagree.
 - **Only the release workflow's build updates itself.** `update.rs` is
@@ -318,7 +318,7 @@ cargo clippy --all-targets
 
 - **A release is a `v<version>` tag.** `.github/workflows/release.yml`
   builds it and publishes it to `download.guimadaleno.com/lokal/` with
-  `guimadaleno/release`'s action. Read that repository's README before
+  `guimadaleno/base/release`'s action. Read its README before
   touching `update.rs`, `install.rs`, the workflow or the key.
 - **Every tag reaches every installed copy, unasked,** so a tag is pushed
   only when the user says so.
@@ -412,7 +412,7 @@ Decided, and kept here so they aren't undone:
   `curl -fsSLo lokal https://download.guimadaleno.com/lokal/<version>/lokal && chmod +x lokal && ./lokal --install`.
   A `curl … | sh` script would be a second artifact outside the signed
   release: swapped on the server, it runs anything, and no signature
-  notices. It would also be the installer program guimadaleno/release
+  notices. It would also be the installer program guimadaleno/base/release
   refuses. The page shows the file's SHA-256, from `SHA256SUMS`.
 - **Package managers** (Homebrew, AUR, `.deb`) only when people ask. Each is
   one more channel to keep, and each updates on its own. `update.rs`

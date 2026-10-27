@@ -1,11 +1,11 @@
 //! A report an app sends to issues.guimadaleno.com: what it may hold, how
 //! its text is cleaned, what is sent and what the answer means.
 //!
-//! This file is guimadaleno/issues' `client/report.rs`, copied into each app
-//! unchanged; README.md there is the protocol and the rules. It is pure: the
-//! form, showing the person what will be sent and the HTTPS POST are the
-//! app's. What it decides is whether a report can be sent at all, the bytes
-//! that are, and what the app tells the person afterwards.
+//! This file is guimadaleno/base's `issues/client/report.rs`, copied into each
+//! app unchanged; `issues/README.md` there is the protocol and the rules. It
+//! is pure: the form, showing the person what will be sent and the HTTPS POST
+//! are the app's. What it decides is whether a report can be sent at all, the
+//! bytes that are, and what the app tells the person afterwards.
 
 use serde::Serialize;
 
@@ -265,7 +265,7 @@ pub fn answer(status: u16, body: &[u8]) -> Answer {
     }
 }
 
-/// The vectors in guimadaleno/issues' testdata/, which an app copies to
+/// The vectors in guimadaleno/base's issues/testdata/, which an app copies to
 /// `tests/report/`. Every copy of this file reaches the same verdicts, and
 /// so does the service.
 #[cfg(test)]

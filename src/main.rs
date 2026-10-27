@@ -18,12 +18,12 @@ mod menu;
 mod prompt;
 mod reasoning;
 mod recon;
-// guimadaleno/release's client/release.rs, copied unchanged: no formatting or
+// guimadaleno/base/release's client/release.rs, copied unchanged: no formatting or
 // lint fixes may touch its bytes.
 #[rustfmt::skip]
 #[allow(clippy::all)]
 mod release;
-// guimadaleno/issues' client/report.rs, copied unchanged, like release.rs.
+// guimadaleno/base/issues' client/report.rs, copied unchanged, like release.rs.
 #[rustfmt::skip]
 #[allow(clippy::all)]
 mod report;

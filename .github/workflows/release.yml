@@ -1,6 +1,6 @@
 # Cutting a tag builds Lokal and publishes it to download.guimadaleno.com
 # with the signed manifest every installed Lokal updates from. The
-# publishing is guimadaleno/release's action, the same for every app;
+# publishing is guimadaleno/base/release's action, the same for every app;
 # README.md there is the authority on the format, the keys and the rules.
 #
 # Every `v*` tag is a release: it reaches every installed copy, unasked.
@@ -67,7 +67,7 @@ jobs:
             CHANGELOG.md | sed '/./,$!d' > out/notes/en.txt
 
       - name: Publish to download.guimadaleno.com
-        uses: guimadaleno/release/publish@v1.2.0
+        uses: guimadaleno/base/release/publish@release-v1.2.0
         with:
           app: lokal
           version: ${{ steps.release.outputs.version }}
