@@ -178,6 +178,10 @@ dependencies.
   person's own lines and Lokal acting; code in an answer is a soft
   blue-gray. A full-width background was tried on the prompt line and
   glitched, so don't bring it back.
+  - **Mail a session sends reads like a mention:** `@name` in the accent
+    and in italics, and the mail under it faint and italic
+    (`style::mention`, `style::faint_italic`). It's the only italic
+    anywhere.
   - **Two things pulse, gently** (`style::pulse_*`, in truecolor, since the
     256-color steps are too coarse to ease): the label while the model
     works, slowly, and the marker on the option an approval is on, quicker.

@@ -38,6 +38,17 @@ pub fn accent(text: &str) -> String {
     paint("38;5;173", text)
 }
 
+/// Mail sent to another session reads like a mention: `@name` in the
+/// accent and in italics.
+pub fn mention(text: &str) -> String {
+    paint("3;38;5;173", text)
+}
+
+/// The mail itself, under its mention: faint, in italics.
+pub fn faint_italic(text: &str) -> String {
+    paint("3;38;5;239", text)
+}
+
 /// The faint label while the model works, breathing slowly a little brighter.
 pub fn pulse_faint(text: &str, since: Instant) -> String {
     pulse(

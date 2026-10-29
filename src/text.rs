@@ -109,7 +109,6 @@ pub const STEP_CREATE: &str = "create";
 pub const STEP_EDIT: &str = "edit";
 pub const STEP_REMEMBER: &str = "remember";
 pub const STEP_SESSIONS: &str = "sessions";
-pub const STEP_MAIL: &str = "mail";
 pub const ALREADY_REMEMBERED: &str = "Already there, so nothing changes.";
 pub const NO_SESSIONS: &str = "no others open";
 pub const WORKING: &str = "working";

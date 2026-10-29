@@ -549,10 +549,10 @@ fn mail(args: &Value, peers: &Peers) -> Result<Outcome, String> {
     if to == peers.name() {
         return Err("that's this session's own name; list_sessions lists the others.".into());
     }
-    eprintln!("{} {to}", style::accent(text::STEP_MAIL));
+    eprintln!("{}", style::mention(&format!("@{to}")));
     let width = style::terminal_width().unwrap_or(80);
     for line in peers::indented(message, 2, width).lines() {
-        eprintln!("{}", style::gray(line));
+        eprintln!("{}", style::faint_italic(line));
     }
     const NO_WAITING: &str = "Any answer comes as mail: end your turn rather than wait for it.";
     match peers.send(to, message, now, false) {
