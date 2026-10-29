@@ -5,7 +5,7 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
-## Unreleased
+## 0.6.0 — 2026-10-29
 
 - Lokal sessions open on the same computer can now mail each other, so
   you can split work among them. One model hands another a task and gets
@@ -25,6 +25,19 @@ copy and the page show as its notes.
   what that costs on every request.
 - In a question like "Run it?", a key such as Y now moves to its option,
   and Enter picks it, so a stray key never answers for you.
+- Questions about everyday commands and changes to your project's files
+  now start on Yes, so Enter approves them. Anything riskier still starts
+  on No, and Esc is always No.
+- You see how fast the model writes: as it works, and at the > after.
+- The dot that shows Lokal is working no longer stops for seconds while
+  the model thinks quickly.
+- In a repository whose own git settings would run another program, git
+  commands now ask first, even ones that only read.
+- lokal --uninstall removes Lokal, and asks before removing your settings
+  and notes.
+- remember no longer saves a note twice, and can update one you already
+  have.
+- about-me.md is now user.md. Lokal moves yours over the first time.
 
 ## 0.5.0 — 2026-10-17
 
