@@ -23,8 +23,7 @@ pub struct Config {
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub enum Mail {
-    /// A mail starts a turn on its own, once the person has asked the
-    /// session something.
+    /// A mail starts a turn on its own.
     #[default]
     Auto,
     /// A mail waits for Enter.

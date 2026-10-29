@@ -72,6 +72,8 @@ pub struct Session {
     pub branch: String,
     /// It's working on a turn.
     pub busy: bool,
+    /// It's asking its person whether a step may run.
+    pub asking: bool,
     /// The person's last request there, cut short.
     pub request: String,
     /// The files it changed, the latest last.
@@ -93,10 +95,13 @@ pub enum Then {
     Now,
     /// A turn starts on it when the session is free.
     AfterTurn,
-    /// It waits for the person there.
+    /// It waits for Enter there: `mail = ask`.
     User,
-    /// It waits for the person there: mail started as many turns in a row
-    /// as it may.
+    /// It waits for the person's next request there: they stopped the last
+    /// turn mail started.
+    Held,
+    /// It waits for the person's next request there: mail started as many
+    /// turns in a row as it may.
     Limit,
     /// It goes along with the session's next turn.
     Later,
@@ -108,6 +113,7 @@ impl Then {
             Then::Now => "now",
             Then::AfterTurn => "after_turn",
             Then::User => "user",
+            Then::Held => "held",
             Then::Limit => "limit",
             Then::Later => "later",
         }
@@ -118,6 +124,7 @@ impl Then {
             Then::Now,
             Then::AfterTurn,
             Then::User,
+            Then::Held,
             Then::Limit,
             Then::Later,
         ]
@@ -132,14 +139,18 @@ struct State {
     waiting: Vec<Message>,
     /// A turn is running.
     busy: bool,
+    /// An approval question is open.
+    asking: bool,
     /// The person is at the `>`: mail prints above it at once.
     at_prompt: bool,
     /// Mail printed at this prompt already, with a blank line after it.
     printed: bool,
     /// The `>` line isn't empty: mail doesn't take it away.
     typing: bool,
-    /// Mail waits for the person: until they first ask the session
-    /// something, and after they stop a turn mail started.
+    /// Mail waits for the person's next request: they stopped a turn mail
+    /// started, or said no in one. Otherwise a mail would start the next
+    /// turn at once, and two models could go on with nobody able to stop
+    /// them.
     held: bool,
     /// Turns mail started since the person last asked something.
     turns: usize,
@@ -164,7 +175,7 @@ impl State {
                 return Then::Later;
             }
             if self.held {
-                return Then::User;
+                return Then::Held;
             }
             if self.turns >= self.turns_limit {
                 return Then::Limit;
@@ -192,7 +203,10 @@ impl State {
             }
             Then::Later => Some(text::MAIL_LATER.to_string()),
             Then::Limit => Some(text::mail_limit(self.turns_limit)),
-            Then::User | Then::AfterTurn => Some(text::MAIL_KEYS.to_string()),
+            Then::Held => Some(text::MAIL_HELD.to_string()),
+            // At the `>`, only while the person types: it goes once they're done.
+            Then::AfterTurn => Some(text::MAIL_AFTER_YOU.to_string()),
+            Then::User => Some(text::MAIL_KEYS.to_string()),
         }
     }
 }
@@ -214,10 +228,11 @@ impl Inbox {
             turns_limit,
             waiting: Vec::new(),
             busy: false,
+            asking: false,
             at_prompt: false,
             printed: false,
             typing: false,
-            held: true,
+            held: false,
             turns: 0,
             woken: false,
             told_taken_up: false,
@@ -268,6 +283,11 @@ impl Inbox {
 
     pub fn set_typing(&self, typing: bool) {
         self.lock().typing = typing;
+    }
+
+    /// An approval question opened or closed, for the others to see.
+    pub fn set_asking(&self, asking: bool) {
+        self.lock().asking = asking;
     }
 
     /// Mail that ended the `>`, shown before its turn starts.
@@ -337,8 +357,8 @@ impl Inbox {
         }
     }
 
-    /// The person stopped a turn or said no in one: mail waits for them
-    /// until they ask something.
+    /// The person stopped a turn mail started, or said no in one: mail waits
+    /// for their next request.
     pub fn hold(&self) {
         self.lock().held = true;
     }
@@ -434,6 +454,7 @@ impl Shared {
             "root": self.root.display().to_string(),
             "branch": branch,
             "busy": state.busy,
+            "asking": state.asking,
             "request": state.request,
             "files": state.files,
         })
@@ -570,9 +591,11 @@ impl Peers {
         })
     }
 
-    /// What changed among the sessions in this repository since the last
-    /// turn, on screen and for the model; None when nothing did.
-    pub fn news(&self) -> Option<(String, String)> {
+    /// What changed among the sessions working where this one does since
+    /// the last turn, as a note for the model; None when nothing did. It
+    /// doesn't show: these are Lokal's own facts, not another model's
+    /// words, and /sessions shows the same.
+    pub fn news(&self) -> Option<String> {
         let root = self.shared.root.display().to_string();
         let here: Vec<Session> = self
             .others()
@@ -583,22 +606,19 @@ impl Peers {
         let mut lines = Vec::new();
         for session in &here {
             match known.iter().find(|(name, _)| *name == session.name) {
-                None => lines.push(text::session_here(
-                    &session.name,
-                    &session.branch,
-                    session.busy,
-                    &session.request,
-                    &session.files,
-                )),
+                None => lines.push(here_too(session)),
                 Some((_, branch)) if *branch != session.branch => {
-                    lines.push(text::session_moved(&session.name, &session.branch));
+                    lines.push(format!(
+                        "{} is on branch {} now.",
+                        session.name, session.branch
+                    ));
                 }
                 Some(_) => {}
             }
         }
         for (name, _) in known.iter() {
             if !here.iter().any(|session| session.name == *name) {
-                lines.push(text::session_left(name));
+                lines.push(format!("{name} closed."));
             }
         }
         *known = here
@@ -608,14 +628,11 @@ impl Peers {
         if lines.is_empty() {
             return None;
         }
-        let width = style::terminal_width().unwrap_or(80);
-        let screen: String = lines.iter().map(|line| notice_line(line, width)).collect();
-        let note = format!(
+        Some(format!(
             "(From Lokal, not the user: news of the user's other Lokal sessions working where you do. {} \
              Agree with them by mail on who works where before you both change the same files.)",
             lines.join(" ")
-        );
-        Some((screen, note))
+        ))
     }
 }
 
@@ -654,6 +671,44 @@ pub fn framed(messages: &[Message]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+/// Another session working where this one does, as the model first hears
+/// of it: "web-2 works in this repository too: branch main, working, last
+/// asked "fold the menu", changed src/menu.rs."
+fn here_too(session: &Session) -> String {
+    let mut parts = Vec::new();
+    if !session.branch.is_empty() {
+        parts.push(format!("branch {}", session.branch));
+    }
+    parts.push(session_state(session).to_string());
+    if !session.request.is_empty() {
+        parts.push(format!("last asked \"{}\"", session.request));
+    }
+    if !session.files.is_empty() {
+        parts.push(format!("changed {}", session.files.join(", ")));
+    }
+    // Without a branch, it isn't a repository.
+    let place = if session.branch.is_empty() {
+        "folder"
+    } else {
+        "repository"
+    };
+    format!(
+        "{} works in this {place} too: {}.",
+        session.name,
+        parts.join(", ")
+    )
+}
+
+/// What a session is doing, in a word or three: the same words /sessions
+/// shows the person.
+pub fn session_state(session: &Session) -> &'static str {
+    match (session.busy, session.asking) {
+        (true, true) => text::SESSION_ASKING,
+        (true, false) => text::WORKING,
+        (false, _) => text::SESSION_IDLE,
+    }
 }
 
 /// The senders' names, each once, in the order their mail came.
@@ -878,6 +933,7 @@ fn session_from(reply: &Value) -> Option<Session> {
         root: field("root", FOLDER_LIMIT),
         branch: field("branch", NAME_LIMIT),
         busy: reply["busy"] == true,
+        asking: reply["asking"] == true,
         request: field("request", REQUEST_LIMIT),
         files: reply["files"]
             .as_array()
@@ -1085,15 +1141,13 @@ mod tests {
     }
 
     #[test]
-    fn mail_starts_a_turn_only_when_the_person_has_asked_and_within_the_limit() {
+    fn mail_starts_a_turn_on_its_own_until_stopped_or_at_the_limit() {
         let base = base("fate");
         let (a, b) = (
             session(&base, "repo", Mail::Auto),
             session(&base, "web", Mail::Auto),
         );
-        // Nothing asked there yet.
-        assert_eq!(mail(&a, &b, "hi").ok(), Some(Then::User));
-        b.inbox().person_acted(Some("work"));
+        // Away from the `>`, it waits for it; at it, it starts at once.
         assert_eq!(mail(&a, &b, "hi").ok(), Some(Then::AfterTurn));
         set(&b, |state| state.at_prompt = true);
         assert_eq!(mail(&a, &b, "hi").ok(), Some(Then::Now));
@@ -1101,6 +1155,10 @@ mod tests {
             a.send(b.name(), "news", false, false).ok(),
             Some(Then::Later)
         );
+        // Stopped by the person, until they ask something.
+        b.inbox().hold();
+        assert_eq!(mail(&a, &b, "hi").ok(), Some(Then::Held));
+        b.inbox().person_acted(Some("work"));
         set(&b, |state| {
             state.turns = 3;
             state.waiting.clear();
@@ -1191,21 +1249,41 @@ mod tests {
         let elsewhere = session(&base, "web", Mail::Auto);
         let b = session(&base, "repo", Mail::Auto);
         b.inbox().person_acted(Some("fold the menu"));
-        let (_, note) = a.news().unwrap();
+        b.set_busy(true);
+        b.wrote(&base.join("repo/src/menu.rs"));
+        let note = a.news().unwrap();
         assert!(
-            note.contains("repo-3 works in this repository too"),
+            note.contains(
+                "repo-3 works in this repository too: branch main, working, last asked \
+                 \"fold the menu\", changed src/menu.rs."
+            ),
             "{note}"
         );
-        assert!(
-            note.contains("fold the menu") && !note.contains("web-2"),
-            "{note}"
-        );
+        assert!(!note.contains("web-2"), "{note}");
         assert!(a.news().is_none());
         fs::write(base.join("repo/.git/HEAD"), "ref: refs/heads/menu\n").unwrap();
-        assert!(a.news().unwrap().1.contains("repo-3 is on branch menu now"));
+        assert!(a.news().unwrap().contains("repo-3 is on branch menu now"));
         drop(b);
-        assert!(a.news().unwrap().1.contains("repo-3 closed"));
+        assert!(a.news().unwrap().contains("repo-3 closed"));
         drop((a, elsewhere));
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn outside_a_repository_another_session_is_in_this_folder() {
+        let base = base("folder");
+        let (a, b) = (
+            session(&base, "loose", Mail::Auto),
+            session(&base, "loose", Mail::Auto),
+        );
+        b.inbox().set_asking(true);
+        set(&b, |state| state.busy = true);
+        let note = a.news().unwrap();
+        assert!(
+            note.contains("loose-2 works in this folder too: waiting for a yes."),
+            "{note}"
+        );
+        drop((a, b));
         fs::remove_dir_all(base).unwrap();
     }
 

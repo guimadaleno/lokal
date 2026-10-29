@@ -83,17 +83,20 @@ dependencies.
   work can be split among them and they agree on who works where
   (`src/peers.rs`). Another model wrote the mail, and a file it read may
   have steered it.
-  - **`mail = auto`, the default, lets mail start a turn on its own,** once
-    the person has asked that session something. The `>` must sit on an
-    empty line. Mail waits while the person types or a turn runs, and
-    after they stop a turn mail started or say no in one, until they ask
-    something.
+  - **`mail = auto`, the default, lets mail start a turn on its own,** as
+    in Claude Code, in a session just opened too. The `>` must sit on an
+    empty line: mail waits while the person types or a turn runs.
     - `mail = ask` makes every mail wait for Enter on an empty line, and
       Esc drops it.
     - `mail = off` means no socket and no tools.
+  - **Esc stops the exchange, not only the turn:** after the person stops
+    a turn mail started, or says no in one, mail waits for their next
+    request there. Otherwise the next mail would start a turn at once,
+    and two models answering each other couldn't be stopped. Enter on an
+    empty line passes waiting mail on sooner.
   - **At most `mail_turns` (64) turns in a row start on mail,** counted
-    from the person's last request; past that, mail waits for Enter. The
-    sender's model hears so and tells its person. Without a bound, two
+    from the person's last request; past that, mail waits the same way.
+    The sender's model hears so and tells its person. Without a bound, two
     models answering each other would fill the GPU and the context.
   - **The prompt and the `mail` tool steer away from loops of politeness.**
     They say to answer what asks or needs something, a plain yes or no
@@ -109,8 +112,13 @@ dependencies.
     name and folder, never as the person's. The exception is mail the
     person wrote at the other session's `>` (`@name …`), which Lokal
     sends itself and frames as theirs.
-  - **Everything shows:** each mail whole, without control characters;
-    sending, as a step; and what the model hears of the other sessions.
+  - **What another model wrote always shows:** each mail whole, without
+    control characters, and sending as a step.
+    - Lokal's own facts about the other sessions go to the model without
+      showing, the way its facts about the machine do: names, folders,
+      branches, what each does.
+    - `/sessions` shows the same facts, as `/sysprompt` and `/info` show
+      the others.
   - **Only the person's own sessions talk:** a socket per session,
     `<n>.sock`, beside its scratch folder in the private
     `/tmp/lokal-<uid>`, with `n` the smallest number free.
@@ -273,12 +281,13 @@ dependencies.
     so the prompt cache holds.
 - **What the other sessions see of this one is Lokal's, never the
   model's** (`who`): its folder, the branch read from `.git/HEAD` (git
-  itself runs what a repository's settings name), whether it's working,
-  the person's last request cut short, and the files it changed.
+  itself runs what a repository's settings name), whether it's working or
+  waiting for a yes (`Input::choose`), the person's last request cut
+  short, and the files it changed.
   - **At each turn, the sessions in the same repository (or the same
     folder outside one) that came, went or moved branch** are told to the
-    model as a note in that turn's request, and shown. Not in the system
-    prompt: a change there would make LM Studio read the whole
+    model as a note in that turn's request, without showing. Not in the
+    system prompt: a change there would make LM Studio read the whole
     conversation again.
 - **The project's notes are the project's, and take a share of the
   context** (`memory.rs`): LOKAL.md, then AGENTS.md, in the git root and
@@ -467,15 +476,15 @@ Measured on a current laptop, under WSL.
 - **Mail between sessions with a real model:** tried with two sessions in
   one repository, in pseudo-terminals, and a scripted fake server. These
   all behaved:
-  - the news of the other session;
-  - a fresh session holding mail for Enter;
-  - mail answering mail on its own until `mail_turns` stopped it, and the
-    sender told to get its person;
+  - the model hearing of the other session, without it showing;
+  - a fresh session taking mail up on its own, and mail answering mail
+    until `mail_turns` stopped it, the sender told to get its person;
   - `@name` from the person, with typing under way at the other end;
-  - Esc on a turn mail started, and mail waiting after it;
+  - Esc on a turn mail started, mail waiting after it, and going on
+    after the next request;
   - a `now: false` mail going along with the next turn;
-  - `/info`, a one-shot without the tools, and `mail = off` without a
-    socket.
+  - `/sessions` with a session waiting for a yes, `/info`, a one-shot
+    without the tools, and `mail = off` without a socket.
 
   Still owed: the same with LM Studio, a model choosing `list_sessions`
   and `mail` on its own and keeping off loops, and the tools' cost from

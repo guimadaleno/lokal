@@ -506,10 +506,14 @@ fn list_sessions(peers: &Peers) -> Outcome {
             shown.push_str(&format!(" · {}", session.branch));
             line.push_str(&format!(", branch {}", session.branch));
         }
-        if session.busy {
-            shown.push_str(&format!(" · {}", text::WORKING));
-            line.push_str(", working on something now: mail waits until that's done");
-        }
+        shown.push_str(&format!(" · {}", peers::session_state(session)));
+        line.push_str(match (session.busy, session.asking) {
+            (true, true) => {
+                ", waiting for its user to approve a step: mail waits until its turn is done"
+            }
+            (true, false) => ", working on something now: mail waits until that's done",
+            (false, _) => ", free",
+        });
         if !session.request.is_empty() {
             line.push_str(&format!(
                 "; the user last asked it: \"{}\"",
@@ -568,6 +572,10 @@ fn mail(args: &Value, peers: &Peers) -> Result<Outcome, String> {
         Ok(Then::User) => Ok(Outcome::Done(format!(
             "Sent. It waits in {to}'s terminal for its user to pass it on, so an answer may take a \
              while or not come."
+        ))),
+        Ok(Then::Held) => Ok(Outcome::Done(format!(
+            "Sent, but {to}'s user stopped the last turn mail started there, so this one waits for \
+             their next request. An answer may take a while; tell your user if it matters."
         ))),
         Ok(Then::Limit) => Ok(Outcome::Done(format!(
             "Sent, but {to} has taken up as much mail on its own in a row as it may, so this one \

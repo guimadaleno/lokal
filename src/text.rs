@@ -37,6 +37,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "/sysprompt",
         "show what the model is told before your first message",
     ),
+    (
+        "/sessions",
+        "list your other Lokal sessions and what each is doing",
+    ),
     ("/feedback", "report a problem or an idea"),
     ("/help", "show commands and keys"),
     ("/about", "who made Lokal"),
@@ -64,8 +68,7 @@ pub const SETTINGS_TEMPLATE: &str = "\
 # updates = off
 
 # Mail between your Lokal sessions on this computer. auto: it starts a turn
-# on its own, once you've asked that session something. ask: it waits for
-# Enter. off: no mail.
+# on its own. ask: it waits for Enter. off: no mail.
 # mail = auto
 
 # How many turns in a row mail may start on its own before it waits for you:
@@ -112,9 +115,15 @@ pub const STEP_SESSIONS: &str = "sessions";
 pub const ALREADY_REMEMBERED: &str = "Already there, so nothing changes.";
 pub const NO_SESSIONS: &str = "no others open";
 pub const WORKING: &str = "working";
+pub const SESSION_ASKING: &str = "waiting for a yes";
+pub const SESSION_IDLE: &str = "idle at the >";
 pub const MAIL_KEYS: &str = "Enter passes it to the model, Esc drops it.";
 pub const MAIL_TAKEN_UP: &str = "The model takes it up on its own; Esc stops it.";
 pub const MAIL_LATER: &str = "It goes along with the next turn.";
+pub const MAIL_AFTER_YOU: &str =
+    "It goes to the model once you're done here; Enter on an empty line passes it now.";
+pub const MAIL_HELD: &str = "You stopped the last turn mail started, so this one waits for \
+    your next request here; Enter passes it on now.";
 
 /// Above a mail: "Mail from api-1, in ~/sites/api:".
 pub fn mail_from(name: &str, folder: &str) -> String {
@@ -129,7 +138,8 @@ pub fn mail_from_user(name: &str, folder: &str) -> String {
 /// Under a mail that waits since mail started as many turns as it may.
 pub fn mail_limit(turns: usize) -> String {
     format!(
-        "Mail started {turns} turns in a row on its own, the most it may, so this one waits for you. {MAIL_KEYS}"
+        "Mail started {turns} turns in a row on its own, the most it may, so this one waits for \
+         your next request here; Enter passes it on now."
     )
 }
 
@@ -179,42 +189,31 @@ pub fn mail_too_long(limit: usize) -> String {
     )
 }
 
-/// Another session in this repository, or this folder outside one, as it
-/// first shows: "web-2 works in this repository too: branch main, working,
-/// last asked "fold the menu", changed src/menu.rs."
-pub fn session_here(
-    name: &str,
-    branch: &str,
-    busy: bool,
-    request: &str,
-    files: &[String],
-) -> String {
+/// Under a session in /sessions: "last asked "fold the menu" · changed
+/// src/menu.rs".
+pub fn session_doing(request: &str, files: &[String]) -> String {
     let mut parts = Vec::new();
-    if !branch.is_empty() {
-        parts.push(format!("branch {branch}"));
-    }
-    parts.push(if busy { WORKING } else { "waiting" }.to_string());
     if !request.is_empty() {
         parts.push(format!("last asked \"{request}\""));
     }
     if !files.is_empty() {
         parts.push(format!("changed {}", files.join(", ")));
     }
-    // Without a branch, it isn't a repository.
-    let place = if branch.is_empty() {
-        "folder"
+    parts.join(" · ")
+}
+
+/// /sessions with no other session open.
+pub fn no_other_sessions(name: &str) -> String {
+    format!("No other Lokal session is open. This one is {name}.")
+}
+
+/// /sessions where this session doesn't listen.
+pub fn sessions_unreachable(mail_off: bool) -> &'static str {
+    if mail_off {
+        "Mail is off in your settings, so the sessions don't see each other."
     } else {
-        "repository"
-    };
-    format!("{name} works in this {place} too: {}.", parts.join(", "))
-}
-
-pub fn session_moved(name: &str, branch: &str) -> String {
-    format!("{name} is on branch {branch} now.")
-}
-
-pub fn session_left(name: &str) -> String {
-    format!("{name} closed.")
+        "Other sessions can't reach this one: no private folder could be made for it."
+    }
 }
 
 /// "a", "a and b", "a, b and c"
@@ -704,15 +703,12 @@ mod tests {
     }
 
     #[test]
-    fn another_session_outside_a_repository_is_in_this_folder() {
+    fn a_session_shows_what_it_was_asked_and_what_it_changed() {
         assert_eq!(
-            session_here("home-2", "", false, "", &[]),
-            "home-2 works in this folder too: waiting."
+            session_doing("fold it", &["a.rs".into(), "b.rs".into()]),
+            "last asked \"fold it\" · changed a.rs, b.rs"
         );
-        assert_eq!(
-            session_here("api-2", "main", true, "fold it", &["a.rs".into()]),
-            "api-2 works in this repository too: branch main, working, last asked \"fold it\", changed a.rs."
-        );
+        assert_eq!(session_doing("", &[]), "");
     }
 
     #[test]

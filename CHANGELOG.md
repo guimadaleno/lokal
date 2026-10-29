@@ -12,9 +12,11 @@ copy and the page show as its notes.
   the answer back, and two sessions in the same repository hear of each
   other and agree on who works where.
 - Mail shows above the > and the other session's model takes it up on its
-  own, once you've asked that session something, up to 64 turns in a row.
-  Anything that changes a file or runs a command still asks you first, and
-  Esc stops it like any other turn.
+  own, up to 64 turns in a row. Anything that changes a file or runs a
+  command still asks you first. Esc stops it, and mail then waits for your
+  next request in that session.
+- /sessions lists your other sessions: where each works, on which branch,
+  what you last asked it, and whether it's working or waiting for a yes.
 - Prefer to pass each mail on yourself? Put mail = ask in /config: Enter
   passes it on, Esc drops it. mail = off turns mail off.
 - Start a line with @name to mail that session yourself. /info shows each

@@ -221,7 +221,7 @@ impl Input {
             .collect();
         let no = items.len() - 1;
         let start = if opens_on_yes { 0 } else { no };
-        match menu::choose(text::RUN_QUESTION, &items, start, no) {
+        match self.choose(text::RUN_QUESTION, &items, start, no) {
             Some(menu::Choice::Picked(index)) => options.swap_remove(index).2,
             Some(menu::Choice::Interrupted) => Approval::Stop,
             None => Approval::Unavailable,
@@ -256,7 +256,7 @@ impl Input {
             });
             let no = items.len() - 1;
             let start = if opens_on_yes { 0 } else { no };
-            match menu::choose(text::WRITE_QUESTION, &items, start, no) {
+            match self.choose(text::WRITE_QUESTION, &items, start, no) {
                 Some(menu::Choice::Picked(0)) => return Approval::Yes,
                 Some(menu::Choice::Picked(index)) if index < no => {
                     diff::print(&std::mem::take(&mut rest));
@@ -266,6 +266,25 @@ impl Input {
                 None => return Approval::Unavailable,
             }
         }
+    }
+
+    /// An approval question; the other sessions see this one waits for a
+    /// yes meanwhile.
+    fn choose(
+        &self,
+        question: &str,
+        items: &[menu::Item],
+        start: usize,
+        safe: usize,
+    ) -> Option<menu::Choice> {
+        if let Some(inbox) = &self.inbox {
+            inbox.set_asking(true);
+        }
+        let choice = menu::choose(question, items, start, safe);
+        if let Some(inbox) = &self.inbox {
+            inbox.set_asking(false);
+        }
+        choice
     }
 
     /// Why a command may run without asking again, if it may.
@@ -606,7 +625,7 @@ mod tests {
         let hint = command_hint("/", 1, None).unwrap();
         assert_eq!(
             hint.display,
-            "   /new  /prefs  /memory  /config  /info  /recon  /update  /reasoning  /sysprompt  /feedback  /help  /about  /exit"
+            "   /new  /prefs  /memory  /config  /info  /recon  /update  /reasoning  /sysprompt  /sessions  /feedback  /help  /about  /exit"
         );
         assert_eq!(hint.completion, None);
     }

@@ -246,14 +246,16 @@ fn talk(
             peers.inbox().person_acted(Some(line));
         }
         let request = with_news(conversation, line);
-        turn(conversation, input, &request);
+        turn(conversation, input, &request, false);
     }
 }
 
-/// One turn on `request`. When the person stepped in, mail waits for them
-/// until they ask something.
-fn turn(conversation: &mut Conversation, input: &mut Input, request: &str) {
+/// One turn on `request`. When the person stops a turn on mail, or says no
+/// in one, mail waits for their next request: two models answering each
+/// other would otherwise start the next turn at once.
+fn turn(conversation: &mut Conversation, input: &mut Input, request: &str, on_mail: bool) {
     if conversation.send(request, input)
+        && on_mail
         && let Some(peers) = conversation.peers()
     {
         peers.inbox().hold();
@@ -261,8 +263,9 @@ fn turn(conversation: &mut Conversation, input: &mut Input, request: &str) {
     print_separator(input);
 }
 
-/// The request with what came meanwhile: mail that needs no answer, and
-/// news of the sessions working in this repository, shown as it goes along.
+/// The request with what came meanwhile: mail that needs no answer, shown
+/// as it arrived, and news of the sessions working where this one does,
+/// which doesn't show (`Peers::news`).
 fn with_news(conversation: &Conversation, request: &str) -> String {
     let Some(peers) = conversation.peers() else {
         return request.to_string();
@@ -273,8 +276,7 @@ fn with_news(conversation: &Conversation, request: &str) -> String {
         request.push_str("\n\n");
         request.push_str(&peers::framed(&later));
     }
-    if let Some((shown, note)) = peers.news() {
-        eprintln!("{shown}");
+    if let Some(note) = peers.news() {
         request.push_str("\n\n");
         request.push_str(&note);
     }
@@ -294,7 +296,7 @@ fn take_up_mail(conversation: &mut Conversation, input: &mut Input) {
     }
     inbox.turn_on_mail(&messages);
     let request = with_news(conversation, &peers::framed(&messages));
-    turn(conversation, input, &request);
+    turn(conversation, input, &request, true);
 }
 
 /// `@name …` at the `>`, for an open session: Lokal mails it what follows,
@@ -336,7 +338,7 @@ fn pass_on_messages(conversation: &mut Conversation, input: &mut Input) {
     let passed = text::passed_on(messages.len(), &peers::senders(&messages));
     eprintln!("\n{}", notice(&passed));
     let request = with_news(conversation, &peers::framed(&messages));
-    turn(conversation, input, &request);
+    turn(conversation, input, &request, true);
 }
 
 /// Esc on an empty line: the mail on screen goes, and the model never
@@ -426,6 +428,11 @@ fn run_command(
             let (prompt, tools, tokens) = conversation.system_prompt();
             eprintln!("\n{}\n", prompt.trim_end());
             eprintln!("{}\n", style::gray(&text::sysprompt_cost(tokens, &tools)));
+        }
+        "/sessions" => {
+            eprintln!();
+            print_sessions(conversation, session);
+            eprintln!();
         }
         "/info" => {
             eprintln!();
@@ -598,6 +605,47 @@ fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
         ),
     ));
     print_rows(&rows);
+}
+
+/// The other sessions open, each with its folder, branch, what it's doing
+/// and what it was asked: the facts the model hears of the ones working
+/// where it does, without them showing then.
+fn print_sessions(conversation: &Conversation, session: &Session) {
+    let Some(peers) = conversation.peers() else {
+        let off = session.mail == config::Mail::Off;
+        eprintln!("  {}", style::gray(text::sessions_unreachable(off)));
+        return;
+    };
+    let sessions = peers.others();
+    if sessions.is_empty() {
+        eprintln!("  {}", style::gray(&text::no_other_sessions(peers.name())));
+        return;
+    }
+    // The names in a column, and the rest after them, going on under itself.
+    let names = sessions
+        .iter()
+        .map(|other| other.name.chars().count())
+        .max()
+        .unwrap_or(0);
+    let room = style::terminal_width()
+        .map_or(usize::MAX, |width| width.saturating_sub(names + 5))
+        .max(20);
+    for other in &sessions {
+        let mut about = config::shown(Path::new(&other.folder));
+        if !other.branch.is_empty() {
+            about.push_str(&format!(" · {}", other.branch));
+        }
+        about.push_str(&format!(" · {}", peers::session_state(other)));
+        let mut lines = peers::broken(&about, room);
+        let doing = text::session_doing(&other.request, &other.files);
+        if !doing.is_empty() {
+            lines.extend(peers::broken(&doing, room));
+        }
+        for (index, line) in lines.iter().enumerate() {
+            let name = if index == 0 { other.name.as_str() } else { "" };
+            eprintln!("  {name:<names$}  {}", style::gray(line));
+        }
+    }
 }
 
 /// Labels in one column, values in the next. A value too long for the
