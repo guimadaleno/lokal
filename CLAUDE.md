@@ -271,10 +271,11 @@ dependencies.
   model's** (`who`): its folder, the branch read from `.git/HEAD` (git
   itself runs what a repository's settings name), whether it's working,
   the person's last request cut short, and the files it changed.
-  - **At each turn, the sessions in the same repository that came, went
-    or moved branch** are told to the model as a note in that turn's
-    request, and shown. Not in the system prompt: a change there would
-    make LM Studio read the whole conversation again.
+  - **At each turn, the sessions in the same repository (or the same
+    folder outside one) that came, went or moved branch** are told to the
+    model as a note in that turn's request, and shown. Not in the system
+    prompt: a change there would make LM Studio read the whole
+    conversation again.
 - **The project's notes are the project's, and take a share of the
   context** (`memory.rs`): LOKAL.md, then AGENTS.md, in the git root and
   every folder down to the working directory, each file once however it's

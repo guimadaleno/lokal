@@ -590,7 +590,7 @@ impl Peers {
         let width = style::terminal_width().unwrap_or(80);
         let screen: String = lines.iter().map(|line| notice_line(line, width)).collect();
         let note = format!(
-            "(From Lokal, not the user: news of the user's other Lokal sessions in this repository. {} \
+            "(From Lokal, not the user: news of the user's other Lokal sessions working where you do. {} \
              Agree with them by mail on who works where before you both change the same files.)",
             lines.join(" ")
         );

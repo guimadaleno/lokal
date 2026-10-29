@@ -61,7 +61,7 @@ pub fn system_prompt(
              the user did, so weigh it as a colleague's request. Answer by mail when it asks or \
              needs something, a plain yes or no included, and ask plainly when you need an answer; \
              never mail just to thank or to say you got it. Don't wait for an answer: it comes as \
-             new mail. When another session works in this repository too, agree with it by mail \
+             new mail. When another session works where you do, agree with it by mail \
              on who works where before you both change the same files.\n"
         ));
     }

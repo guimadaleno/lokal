@@ -180,9 +180,9 @@ pub fn mail_too_long(limit: usize) -> String {
     )
 }
 
-/// Another session in this repository, as it first shows: "web-2 works in
-/// this repository too: branch main, working, last asked "fold the menu",
-/// changed src/menu.rs."
+/// Another session in this repository, or this folder outside one, as it
+/// first shows: "web-2 works in this repository too: branch main, working,
+/// last asked "fold the menu", changed src/menu.rs."
 pub fn session_here(
     name: &str,
     branch: &str,
@@ -201,7 +201,13 @@ pub fn session_here(
     if !files.is_empty() {
         parts.push(format!("changed {}", files.join(", ")));
     }
-    format!("{name} works in this repository too: {}.", parts.join(", "))
+    // Without a branch, it isn't a repository.
+    let place = if branch.is_empty() {
+        "folder"
+    } else {
+        "repository"
+    };
+    format!("{name} works in this {place} too: {}.", parts.join(", "))
 }
 
 pub fn session_moved(name: &str, branch: &str) -> String {
@@ -696,6 +702,18 @@ mod tests {
         assert_eq!(number(1743), "1,743");
         assert_eq!(number(65536), "65,536");
         assert_eq!(number(1_000_000), "1,000,000");
+    }
+
+    #[test]
+    fn another_session_outside_a_repository_is_in_this_folder() {
+        assert_eq!(
+            session_here("home-2", "", false, "", &[]),
+            "home-2 works in this folder too: waiting."
+        );
+        assert_eq!(
+            session_here("api-2", "main", true, "fold it", &["a.rs".into()]),
+            "api-2 works in this repository too: branch main, working, last asked \"fold it\", changed a.rs."
+        );
     }
 
     #[test]
