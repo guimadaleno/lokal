@@ -681,7 +681,14 @@ fn here_too(session: &Session) -> String {
     if !session.branch.is_empty() {
         parts.push(format!("branch {}", session.branch));
     }
-    parts.push(session_state(session).to_string());
+    parts.push(
+        match (session.busy, session.asking) {
+            (true, true) => "waiting for its user to approve a step",
+            (true, false) => "working",
+            (false, _) => "idle",
+        }
+        .to_string(),
+    );
     if !session.request.is_empty() {
         parts.push(format!("last asked \"{}\"", session.request));
     }
@@ -709,17 +716,6 @@ pub fn session_state(session: &Session) -> &'static str {
         (true, false) => text::WORKING,
         (false, _) => text::SESSION_IDLE,
     }
-}
-
-/// The senders' names, each once, in the order their mail came.
-pub fn senders(messages: &[Message]) -> Vec<String> {
-    let mut names: Vec<String> = Vec::new();
-    for message in messages {
-        if !names.contains(&message.from) {
-            names.push(message.from.clone());
-        }
-    }
-    names
 }
 
 /// `text` indented, each line that's too long for the terminal broken at a
@@ -783,11 +779,10 @@ pub fn broken(line: &str, room: usize) -> Vec<String> {
 /// and `footer`, what becomes of it.
 fn notice(message: &Message, footer: Option<&str>) -> String {
     let width = style::terminal_width().unwrap_or(80);
-    let folder = config::shown(Path::new(&message.folder));
     let from = if message.by_user {
-        text::mail_from_user(&message.from, &folder)
+        text::MAIL_FROM_YOU.to_string()
     } else {
-        text::mail_from(&message.from, &folder)
+        text::mail_from(&message.from)
     };
     let mut notice = notice_line(&from, width);
     notice.push_str(&indented(&message.text, 4, width));
@@ -1280,7 +1275,9 @@ mod tests {
         set(&b, |state| state.busy = true);
         let note = a.news().unwrap();
         assert!(
-            note.contains("loose-2 works in this folder too: waiting for a yes."),
+            note.contains(
+                "loose-2 works in this folder too: waiting for its user to approve a step."
+            ),
             "{note}"
         );
         drop((a, b));
@@ -1355,7 +1352,6 @@ mod tests {
         ));
         assert!(framed.contains("To answer where they are, mail web-2.]\nTests pass."));
         assert!(framed.ends_with("not the user. It needs no answer.]\nTests pass."));
-        assert_eq!(senders(&messages), ["api-1", "web-2"]);
     }
 
     #[test]

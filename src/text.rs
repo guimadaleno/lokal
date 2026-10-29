@@ -115,8 +115,8 @@ pub const STEP_SESSIONS: &str = "sessions";
 pub const ALREADY_REMEMBERED: &str = "Already there, so nothing changes.";
 pub const NO_SESSIONS: &str = "no others open";
 pub const WORKING: &str = "working";
-pub const SESSION_ASKING: &str = "waiting for a yes";
-pub const SESSION_IDLE: &str = "idle at the >";
+pub const SESSION_ASKING: &str = "needs you";
+pub const SESSION_IDLE: &str = "idle";
 pub const MAIL_KEYS: &str = "Enter passes it to the model, Esc drops it.";
 pub const MAIL_TAKEN_UP: &str = "The model takes it up on its own; Esc stops it.";
 pub const MAIL_LATER: &str = "It goes along with the next turn.";
@@ -125,15 +125,13 @@ pub const MAIL_AFTER_YOU: &str =
 pub const MAIL_HELD: &str = "You stopped the last turn mail started, so this one waits for \
     your next request here; Enter passes it on now.";
 
-/// Above a mail: "Mail from api-1, in ~/sites/api:".
-pub fn mail_from(name: &str, folder: &str) -> String {
-    format!("Mail from {name}, in {folder}:")
+/// Above a mail: "api-1:".
+pub fn mail_from(name: &str) -> String {
+    format!("{name}:")
 }
 
 /// Above a mail the person wrote at another session's `>`.
-pub fn mail_from_user(name: &str, folder: &str) -> String {
-    format!("Mail from you, written in {name} ({folder}):")
-}
+pub const MAIL_FROM_YOU: &str = "You:";
 
 /// Under a mail that waits since mail started as many turns as it may.
 pub fn mail_limit(turns: usize) -> String {
@@ -146,47 +144,23 @@ pub fn mail_limit(turns: usize) -> String {
 /// At the right of the `>`, while mail waits.
 pub fn mail_waiting(count: usize) -> String {
     match count {
-        1 => "1 mail waits".into(),
-        count => format!("{count} mails wait"),
+        1 => "1 mail".into(),
+        count => format!("{count} mails"),
     }
 }
 
-pub fn passed_on(count: usize, senders: &[String]) -> String {
-    match count {
-        1 => format!("Passed the mail from {} on to the model.", listed(senders)),
-        count => format!(
-            "Passed {count} mails on to the model, from {}.",
-            listed(senders)
-        ),
-    }
-}
+/// Esc on an empty line, for mail on screen: otherwise nothing would say
+/// it went.
+pub const DROPPED: &str = "Dropped.";
 
-pub fn dropped(count: usize, senders: &[String]) -> String {
-    match count {
-        1 => format!("Dropped the mail from {}.", listed(senders)),
-        count => format!("Dropped {count} mails, from {}.", listed(senders)),
-    }
-}
-
-/// After `@name …` at the `>`: what becomes of the mail there.
-pub fn mailed(to: &str, then: crate::peers::Then) -> String {
-    use crate::peers::Then;
-    match then {
-        Then::Now => format!("Mailed {to}: its model takes it up now."),
-        Then::AfterTurn => format!("Mailed {to}: its model takes it up once it's free."),
-        _ => format!("Mailed {to}: it waits there for Enter."),
-    }
-}
-
+/// After `@name …` at the `>`, when it didn't go: otherwise the person
+/// would think it had.
 pub fn mail_full(to: &str) -> String {
-    format!("Not sent: {to} has as much mail waiting as it takes.")
+    format!("Not sent: {to} is full.")
 }
 
 pub fn mail_too_long(limit: usize) -> String {
-    format!(
-        "Not sent: a mail takes at most {} characters.",
-        number(limit as u64)
-    )
+    format!("Not sent: over {} characters.", number(limit as u64))
 }
 
 /// Under a session in /sessions: "last asked "fold the menu" · changed
@@ -213,15 +187,6 @@ pub fn sessions_unreachable(mail_off: bool) -> &'static str {
         "Mail is off in your settings, so the sessions don't see each other."
     } else {
         "Other sessions can't reach this one: no private folder could be made for it."
-    }
-}
-
-/// "a", "a and b", "a, b and c"
-fn listed(names: &[String]) -> String {
-    match names {
-        [] => String::new(),
-        [only] => only.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
 

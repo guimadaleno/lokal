@@ -313,14 +313,18 @@ fn mail_from_person(line: &str, conversation: &Conversation) -> bool {
     if text.is_empty() || to == peers.name() {
         return false;
     }
-    let said = match peers.send(to, text, true, true) {
+    // Sent, the line itself says so; not sent, it's said, or the person
+    // would think it went.
+    let failed = match peers.send(to, text, true, true) {
         Err(peers::Undelivered::NoSuch) => return false,
-        Ok(then) => text::mailed(to, then),
-        Err(peers::Undelivered::Full) => text::mail_full(to),
-        Err(peers::Undelivered::TooLong) => text::mail_too_long(peers::MESSAGE_LIMIT),
+        Ok(_) => None,
+        Err(peers::Undelivered::Full) => Some(text::mail_full(to)),
+        Err(peers::Undelivered::TooLong) => Some(text::mail_too_long(peers::MESSAGE_LIMIT)),
     };
     peers.inbox().person_acted(None);
-    eprintln!("\n{}", notice(&said));
+    if let Some(failed) = failed {
+        eprintln!("{}", style::gray(&failed));
+    }
     true
 }
 
@@ -335,8 +339,8 @@ fn pass_on_messages(conversation: &mut Conversation, input: &mut Input) {
         return;
     }
     peers.inbox().person_acted(None);
-    let passed = text::passed_on(messages.len(), &peers::senders(&messages));
-    eprintln!("\n{}", notice(&passed));
+    // A blank line between the `>` and what follows, as after a request.
+    eprintln!();
     let request = with_news(conversation, &peers::framed(&messages));
     turn(conversation, input, &request, true);
 }
@@ -347,16 +351,9 @@ fn drop_messages(conversation: &Conversation) {
     let Some(peers) = conversation.peers() else {
         return;
     };
-    let messages = peers.inbox().take();
-    if !messages.is_empty() {
-        let dropped = text::dropped(messages.len(), &peers::senders(&messages));
-        eprintln!("\n{}", notice(&dropped));
+    if !peers.inbox().take().is_empty() {
+        eprintln!("{}", style::gray(text::DROPPED));
     }
-}
-
-/// A line about mail and the other sessions, as mail's arrival shows.
-fn notice(line: &str) -> String {
-    peers::notice_line(line, style::terminal_width().unwrap_or(80))
 }
 
 /// A faint line between turns, as wide as the terminal is right now. Lines
