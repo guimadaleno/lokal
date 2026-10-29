@@ -474,23 +474,6 @@ Measured on a current laptop, under WSL.
   `usage.completion_tokens`: tried with a fake server that sends none.
 - **"Couldn't find a model server":** written, but not seen, since that needs
   LM Studio stopped.
-- **Mail between sessions with a real model:** tried with two sessions in
-  one repository, in pseudo-terminals, and a scripted fake server. These
-  all behaved:
-  - the model hearing of the other session, without it showing;
-  - a fresh session taking mail up on its own, and mail answering mail
-    until `mail_turns` stopped it, the sender told to get its person;
-  - `@name` from the person, with typing under way at the other end;
-  - Esc on a turn mail started, mail waiting after it, and going on
-    after the next request;
-  - a `now: false` mail going along with the next turn;
-  - `/sessions` with a session waiting for a yes, `/info`, a one-shot
-    without the tools, and `mail = off` without a socket.
-
-  Still owed: the same with LM Studio, a model choosing `list_sessions`
-  and `mail` on its own and keeping off loops, and the tools' cost from
-  `usage.prompt_tokens`.
-
 ## Later, not decided
 
 Tracked as issues:
