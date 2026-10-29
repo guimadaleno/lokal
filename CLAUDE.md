@@ -36,8 +36,9 @@ dependencies.
 - **Approve on a guess where a slip costs much.** A question opens on Yes,
   so Enter alone approves, only for what Lokal's own rule sees as day to day
   (`allowlist::opens_on_yes`, `tools::write_opens_on_yes`), never the
-  model's judgement. Esc is always No, so a stray key never approves. Saying
-  no ends the turn, so the person says what to do instead.
+  model's judgement. Esc is always No, and a key or a number only moves to
+  its option, for Enter to pick, so a stray key never approves. Saying no
+  ends the turn, so the person says what to do instead.
   - **On No:** anything the rule can't read whole; commands that reach past
     the person (sudo), run code Lokal can't see (a shell, xargs, `curl | sh`,
     a Windows program), delete or overwrite (rm, mv, dd, `git push`, `reset`,

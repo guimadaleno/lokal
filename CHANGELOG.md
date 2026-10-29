@@ -23,6 +23,8 @@ copy and the page show as its notes.
   session's name.
 - /sysprompt shows what the model is told before your first message, and
   what that costs on every request.
+- In a question like "Run it?", a key such as Y now moves to its option,
+  and Enter picks it, so a stray key never answers for you.
 
 ## 0.5.0 — 2026-10-17
 

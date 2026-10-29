@@ -1,6 +1,6 @@
-//! A choice among a few options on the terminal, with the arrow keys and
-//! Enter, or a key per option. Approvals use it, so Esc always picks the
-//! safe option, wherever the choice started.
+//! A choice among a few options on the terminal: the arrow keys, or a key
+//! per option, move to one, and Enter picks it. Approvals use it, so Esc
+//! always picks the safe option, wherever the choice started.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -14,7 +14,7 @@ const PULSE_FRAME: i32 = 60;
 
 pub struct Item<'a> {
     pub label: &'a str,
-    /// Picks the option at once, as does its number.
+    /// Moves to the option, as does its number; Enter then picks it.
     pub key: char,
 }
 
@@ -65,7 +65,11 @@ pub fn choose(question: &str, items: &[Item], start: usize, safe: usize) -> Opti
             Key::Enter => Some(selected),
             Key::Escape => Some(safe),
             Key::Interrupt => break Choice::Interrupted,
-            Key::Char(key) => pick_by_key(items, key),
+            // Moves there; only Enter picks, so a stray key never answers.
+            Key::Char(key) => {
+                selected = option_by_key(items, key).unwrap_or(selected);
+                None
+            }
             Key::Other => None,
         };
         match picked {
@@ -87,7 +91,7 @@ pub fn choose(question: &str, items: &[Item], start: usize, safe: usize) -> Opti
     Some(choice)
 }
 
-fn pick_by_key(items: &[Item], key: char) -> Option<usize> {
+fn option_by_key(items: &[Item], key: char) -> Option<usize> {
     let key = key.to_ascii_lowercase();
     if let Some(digit) = key.to_digit(10) {
         let index = (digit as usize).checked_sub(1)?;
@@ -237,7 +241,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keys_and_numbers_pick_options() {
+    fn keys_and_numbers_find_options() {
         let items = [
             Item {
                 label: "Yes",
@@ -252,11 +256,11 @@ mod tests {
                 key: 'n',
             },
         ];
-        assert_eq!(pick_by_key(&items, 'y'), Some(0));
-        assert_eq!(pick_by_key(&items, 'N'), Some(2));
-        assert_eq!(pick_by_key(&items, '2'), Some(1));
-        assert_eq!(pick_by_key(&items, '4'), None);
-        assert_eq!(pick_by_key(&items, '0'), None);
-        assert_eq!(pick_by_key(&items, 'x'), None);
+        assert_eq!(option_by_key(&items, 'y'), Some(0));
+        assert_eq!(option_by_key(&items, 'N'), Some(2));
+        assert_eq!(option_by_key(&items, '2'), Some(1));
+        assert_eq!(option_by_key(&items, '4'), None);
+        assert_eq!(option_by_key(&items, '0'), None);
+        assert_eq!(option_by_key(&items, 'x'), None);
     }
 }
