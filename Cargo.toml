@@ -15,7 +15,7 @@ ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
 libc = "0.2.190"
 # The `>` prompt: line editing, history, Tab completion and inline hints.
 # custom-bindings: Ctrl+C acts on what's typed (clear it, or quit on a second press).
-rustyline = { version = "18.0.1", default-features = false, features = ["custom-bindings"] }
+rustyline = { version = "19.0.0", default-features = false, features = ["custom-bindings"] }
 # release.rs reads latest.json into structs of its own.
 serde = { version = "1", features = ["derive"] }
 # The chat API, the saved conversation and latest.json are JSON.
