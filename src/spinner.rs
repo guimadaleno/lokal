@@ -29,9 +29,14 @@ impl Spinner {
         self.tick_with("");
     }
 
+    /// Whether the next frame is due, so a label needn't be worked out before.
+    pub fn due(&self) -> bool {
+        self.drawn_at.is_none_or(|at| at.elapsed() >= FRAME_TIME)
+    }
+
     /// The same, with a few words after the pulse.
     pub fn tick_with(&mut self, label: &str) {
-        if !style::enabled() || self.drawn_at.is_some_and(|at| at.elapsed() < FRAME_TIME) {
+        if !style::enabled() || !self.due() {
             return;
         }
         let hide_cursor = if self.drawn_at.is_none() {

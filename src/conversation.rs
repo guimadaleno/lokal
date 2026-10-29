@@ -395,11 +395,6 @@ impl Conversation {
                 first_piece.get_or_insert_with(Instant::now);
             }
             match event {
-                None if !mid_line => spinner.tick_with(&working_label(
-                    started,
-                    writing.as_ref(),
-                    &progress(generated, first_piece),
-                )),
                 None => {}
                 Some(Event::Reasoning(text)) => {
                     if self.show_reasoning && !mid_line {
@@ -447,6 +442,14 @@ impl Conversation {
                     }
                     return result.map_err(Failure::Error);
                 }
+            }
+            // After every piece too, not only in a pause between them: hidden
+            // reasoning or a file being written can stream with no pause for
+            // seconds, and the spinner would freeze.
+            if !mid_line && spinner.due() {
+                let label =
+                    working_label(started, writing.as_ref(), &progress(generated, first_piece));
+                spinner.tick_with(&label);
             }
         }
     }
