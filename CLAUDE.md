@@ -474,6 +474,7 @@ Measured on a current laptop, under WSL.
   `usage.completion_tokens`: tried with a fake server that sends none.
 - **"Couldn't find a model server":** written, but not seen, since that needs
   LM Studio stopped.
+
 ## Later, not decided
 
 Tracked as issues:
