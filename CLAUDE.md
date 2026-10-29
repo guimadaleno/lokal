@@ -508,7 +508,9 @@ Tracked as issues:
 - **a vision model seeing an image through `read_file`** (#17);
 - **the model reloaded with enough context when LM Studio gave it the 8K
   default, with a `context` setting**, and `server.rs` moved to `/api/v1`
-  with it (#19).
+  with it (#19);
+- **`! command` at the `>`, run as the person's own, its output going to
+  the model** (#32).
 
 Decided, and kept here so they aren't undone:
 
