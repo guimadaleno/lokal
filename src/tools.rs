@@ -1,5 +1,6 @@
 //! The tools the model can call: run a command, read a file, write a file,
-//! edit a file. Anything that changes something asks first.
+//! edit a file, and, in a conversation, list the person's other sessions and
+//! send one a message. Anything that changes something asks first.
 
 use std::env;
 use std::fs;
@@ -10,6 +11,7 @@ use serde_json::{Value, json};
 
 use crate::chat::ToolCall;
 use crate::input::{Approval, Input};
+use crate::peers::{self, Peers, Undelivered};
 use crate::shell::{self, Run};
 use crate::{allowlist, config, diff, gitconfig, style, text};
 
@@ -37,8 +39,10 @@ pub enum Outcome {
     Stopped,
 }
 
-pub fn definitions() -> Value {
-    json!([
+/// The tools, with the ones for other sessions when this one listens: the
+/// same for the whole session, so the server's prompt cache holds.
+pub fn definitions(sessions: bool) -> Value {
+    let mut tools = vec![
         tool(
             "run_command",
             "Run a bash command. Returns its output (stdout and stderr together) and, if it failed, its exit code.",
@@ -93,7 +97,29 @@ pub fn definitions() -> Value {
             }),
             &["note"],
         ),
-    ])
+    ];
+    if sessions {
+        tools.push(tool(
+            "list_sessions",
+            "List the user's other Lokal sessions open on this computer: each one's name and working directory.",
+            json!({}),
+            &[],
+        ));
+        tools.push(tool(
+            "send_message",
+            &format!(
+                "Send a message to another of the user's Lokal sessions. Its user sees it first and \
+                 decides whether its model gets it. At most {} characters.",
+                text::number(peers::MESSAGE_LIMIT as u64)
+            ),
+            json!({
+                "to": {"type": "string", "description": "The session's name, from list_sessions."},
+                "text": {"type": "string"}
+            }),
+            &["to", "text"],
+        ));
+    }
+    Value::Array(tools)
 }
 
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
@@ -108,21 +134,25 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
 }
 
 /// Runs one tool call. `room` is how many characters its output may take,
-/// when the context's size is known; `scratch` is the session's folder.
+/// when the context's size is known; `scratch` is the session's folder, and
+/// `peers` the other sessions, when this one listens.
 pub fn run(
     call: &ToolCall,
     input: &mut Input,
     room: Option<usize>,
     scratch: Option<&Path>,
+    peers: Option<&Peers>,
 ) -> Outcome {
     let result = match serde_json::from_str::<Value>(&call.arguments) {
-        Ok(args) => match call.name.as_str() {
-            "run_command" => run_command(&args, input, room),
-            "read_file" => read_file(&args, room),
-            "write_file" => write_file(&args, input, scratch),
-            "edit_file" => edit_file(&args, input, scratch),
-            "remember" => remember(&args, input),
-            other => Err(format!("there's no tool called {other}.")),
+        Ok(args) => match (call.name.as_str(), peers) {
+            ("run_command", _) => run_command(&args, input, room),
+            ("read_file", _) => read_file(&args, room),
+            ("write_file", _) => write_file(&args, input, scratch),
+            ("edit_file", _) => edit_file(&args, input, scratch),
+            ("remember", _) => remember(&args, input),
+            ("list_sessions", Some(peers)) => Ok(list_sessions(peers)),
+            ("send_message", Some(peers)) => send_message(&args, peers),
+            (other, _) => Err(format!("there's no tool called {other}.")),
         },
         // Not repeated back: they can be a whole file.
         Err(error) => Err(format!("the arguments aren't valid JSON ({error}).")),
@@ -429,6 +459,90 @@ fn same_note(line: &str, note: &str) -> bool {
             .to_lowercase()
     }
     plain(line) == plain(note)
+}
+
+/// The other sessions open, on screen and for the model.
+fn list_sessions(peers: &Peers) -> Outcome {
+    eprintln!("{}", style::accent(text::STEP_SESSIONS));
+    let sessions = peers.others();
+    if sessions.is_empty() {
+        eprintln!("  {}", style::gray(text::NO_SESSIONS));
+        return Outcome::Done("No other Lokal session is open.".into());
+    }
+    // The names in a column, and the folders after them, a long one going
+    // on under itself.
+    let names = sessions
+        .iter()
+        .map(|s| s.name.chars().count())
+        .max()
+        .unwrap_or(0);
+    let lead = 2 + names + 2;
+    let room = style::terminal_width()
+        .unwrap_or(80)
+        .saturating_sub(lead + 1)
+        .max(20);
+    let mut result = String::new();
+    for session in &sessions {
+        let mut shown = config::shown(Path::new(&session.folder));
+        let mut line = format!("- {}, in {}", session.name, session.folder);
+        if session.busy {
+            shown.push_str(&format!(" · {}", text::WORKING));
+            line.push_str(", working on something now: a message waits until that's done");
+        }
+        for (index, part) in peers::broken(&shown, room).iter().enumerate() {
+            let name = if index == 0 {
+                session.name.as_str()
+            } else {
+                ""
+            };
+            eprintln!("  {}", style::gray(&format!("{name:<names$}  {part}")));
+        }
+        result.push_str(&line);
+        result.push('\n');
+    }
+    Outcome::Done(result)
+}
+
+/// Sends a message unasked, shown as a step: the person on the other side
+/// sees it before that model does, and decides whether it gets it.
+fn send_message(args: &Value, peers: &Peers) -> Result<Outcome, String> {
+    let to = text_arg(args, "to")?.trim();
+    let message = text_arg(args, "text")?.trim();
+    if message.is_empty() {
+        return Err("the text is empty.".into());
+    }
+    if message.chars().count() > peers::MESSAGE_LIMIT {
+        return Err(too_long());
+    }
+    if to == peers.name() {
+        return Err("that's this session's own name; list_sessions lists the others.".into());
+    }
+    eprintln!("{} {to}", style::accent(text::STEP_SEND));
+    let width = style::terminal_width().unwrap_or(80);
+    for line in peers::indented(message, 2, width).lines() {
+        eprintln!("{}", style::gray(line));
+    }
+    match peers.send(to, message) {
+        Ok(()) => Ok(Outcome::Done(format!(
+            "Sent. It shows in {to}'s terminal, and its user decides whether its model gets it. \
+             Don't wait for a reply: one comes as a new message, if the user there passes it on."
+        ))),
+        Err(Undelivered::NoSuch) => Err(format!(
+            "there's no session called {to} open; list_sessions lists them."
+        )),
+        Err(Undelivered::Full) => Err(format!(
+            "{to} has {} messages waiting already, as many as it takes. Tell the user, or try again later.",
+            peers::WAITING_LIMIT
+        )),
+        Err(Undelivered::TooLong) => Err(too_long()),
+    }
+}
+
+fn too_long() -> String {
+    format!(
+        "a message takes at most {} characters: shorten it.",
+        text::number(peers::MESSAGE_LIMIT as u64)
+    )
 }
 
 /// Shows the change as a diff and writes it if the person agrees. The

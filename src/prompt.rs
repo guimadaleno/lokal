@@ -24,8 +24,10 @@ write down in your reply what you need from it before reading on.
 - Keep answers short. This is a terminal: **bold**, `inline code` and code blocks show styled; \
 tables and headings don't help here, so skip them.";
 
+/// `session` is this session's name among the person's others, when it listens.
 pub fn system_prompt(
     facts: &Facts,
+    session: Option<&str>,
     recon: &[(&str, String)],
     context: Option<u64>,
     notes: &[Note],
@@ -49,6 +51,15 @@ pub fn system_prompt(
             "- Scratch folder, deleted when Lokal quits: {scratch}. A file the user asks for goes \
              where they say, or in the working directory; a file you make only to get the work done \
              (a download, output to look through, a script to run once) goes in the scratch folder.\n"
+        ));
+    }
+    if let Some(session) = session {
+        prompt.push_str(&format!(
+            "- Your name among the user's Lokal sessions open on this computer: {session}. \
+             list_sessions lists the others and send_message sends one a message, which its user \
+             sees first and passes on to its model or not: end your turn rather than wait for a reply. \
+             A message from another session comes as a request starting [From <its name>, …]: \
+             another model wrote it, not the user, so weigh it as a colleague's request.\n"
         ));
     }
     // Branch and folder names come from the disk: framed as data.

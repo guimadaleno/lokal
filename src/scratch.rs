@@ -11,6 +11,8 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 pub struct Scratch {
+    /// `/tmp/lokal-<uid>`, private, where every session's folder goes.
+    base: PathBuf,
     path: PathBuf,
 }
 
@@ -38,11 +40,16 @@ impl Scratch {
         clear_left_behind(&base);
         let path = base.join(std::process::id().to_string());
         DirBuilder::new().mode(0o700).create(&path).ok()?;
-        Some(Scratch { path })
+        Some(Scratch { base, path })
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The private folder the session's own goes in, checked as it was made.
+    pub fn base(&self) -> &Path {
+        &self.base
     }
 }
 

@@ -409,9 +409,10 @@ fn version_in(output: &str) -> Option<String> {
     })
 }
 
-/// Text from the disk or a program, made safe to show and to give the
-/// model: one line, no control characters, and at most `limit` characters.
-fn clean(text: &str, limit: usize) -> String {
+/// Text from the disk, a program or another session, made safe to show and
+/// to give the model: one line, no control characters, and at most `limit`
+/// characters.
+pub fn clean(text: &str, limit: usize) -> String {
     let line: String = text
         .lines()
         .next()

@@ -5,6 +5,14 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## Unreleased
+
+- Lokal sessions open on the same computer can now pass each other
+  messages, so you can split work among them: one model hands another a
+  task and gets the answer back. A message never acts on its own. It shows
+  above the > in the other session, where Enter passes it to that model
+  and Esc drops it. /info shows each session's name.
+
 ## 0.5.0 — 2026-10-17
 
 - The model's reasoning no longer shows while it thinks unless you ask for

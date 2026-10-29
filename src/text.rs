@@ -41,6 +41,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
 pub const HELP_KEYS: &str = "\
 Tab completes a command. Ctrl+C or Esc stops whatever's running; at the >,
 Ctrl+C clears what you typed, and twice on an empty line it quits.
+A message from another Lokal session shows above the >: Enter on an empty
+line passes it to the model, and Esc drops it.
 lokal -r picks up the last conversation.";
 
 pub const SETTINGS_TEMPLATE: &str = "\
@@ -92,7 +94,54 @@ pub const STEP_READ: &str = "read";
 pub const STEP_CREATE: &str = "create";
 pub const STEP_EDIT: &str = "edit";
 pub const STEP_REMEMBER: &str = "remember";
+pub const STEP_SESSIONS: &str = "sessions";
+pub const STEP_SEND: &str = "send";
 pub const ALREADY_REMEMBERED: &str = "Already there, so nothing changes.";
+pub const NO_SESSIONS: &str = "no others open";
+pub const WORKING: &str = "working";
+pub const MESSAGE_KEYS: &str = "Enter passes it to the model, Esc drops it.";
+
+/// Above a message from another session: "From api-3f2a, in ~/sites/api:".
+pub fn message_from(name: &str, folder: &str) -> String {
+    format!("From {name}, in {folder}:")
+}
+
+/// At the right of the `>`, while messages from other sessions wait.
+pub fn messages_waiting(count: usize) -> String {
+    match count {
+        1 => "1 message waits".into(),
+        count => format!("{count} messages wait"),
+    }
+}
+
+pub fn passed_on(count: usize, senders: &[String]) -> String {
+    match count {
+        1 => format!(
+            "Passed the message from {} on to the model.",
+            listed(senders)
+        ),
+        count => format!(
+            "Passed {count} messages on to the model, from {}.",
+            listed(senders)
+        ),
+    }
+}
+
+pub fn dropped(count: usize, senders: &[String]) -> String {
+    match count {
+        1 => format!("Dropped the message from {}.", listed(senders)),
+        count => format!("Dropped {count} messages, from {}.", listed(senders)),
+    }
+}
+
+/// "a", "a and b", "a, b and c"
+fn listed(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [only] => only.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
 
 pub const NO_HTTPS: &str =
     "Lokal only speaks plain HTTP to the server, so `server` can't be an https:// address.";
@@ -236,6 +285,7 @@ pub const INFO_ABOUT_ME: &str = "about me";
 pub const INFO_SETTINGS: &str = "settings";
 pub const INFO_PROJECT: &str = "project";
 pub const INFO_SCRATCH: &str = "scratch";
+pub const INFO_SESSION: &str = "session";
 pub const INFO_NOTES: &str = "notes";
 pub const NO_NOTES: &str = "none yet (/memory starts a LOKAL.md)";
 pub const NOTES_CHANGED: &str =
@@ -289,6 +339,15 @@ pub fn scratch_folder(path: Option<&str>) -> String {
     match path {
         Some(path) => format!("{path} · temporary files, deleted when Lokal quits"),
         None => "none · no private temporary folder could be made".into(),
+    }
+}
+
+/// This session's name among the others, and the others open.
+pub fn session_names(name: Option<&str>, others: &[String]) -> String {
+    match (name, others) {
+        (None, _) => "none · other sessions can't reach this one".into(),
+        (Some(name), []) => format!("{name} · {NO_SESSIONS}"),
+        (Some(name), others) => format!("{name} · others open: {}", others.join(", ")),
     }
 }
 

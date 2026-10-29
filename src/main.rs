@@ -15,6 +15,7 @@ mod keys;
 mod markdown;
 mod memory;
 mod menu;
+mod peers;
 mod prompt;
 mod reasoning;
 mod recon;
@@ -133,7 +134,16 @@ fn main() -> ExitCode {
     facts.scratch = scratch
         .as_ref()
         .map(|scratch| scratch.path().display().to_string());
-    let mut conversation = Conversation::new(server, facts);
+    // The person's other sessions, in a conversation at a terminal only:
+    // there, someone sees a message arrive and decides on it.
+    let peers = scratch
+        .as_ref()
+        .filter(|_| request.is_empty())
+        .and_then(|scratch| peers::Peers::start(scratch.base(), &folder, input.printer()?));
+    if let Some(peers) = &peers {
+        input.receive(peers.inbox());
+    }
+    let mut conversation = Conversation::new(server, facts, peers);
     if request.is_empty() && !conversation.notes().is_empty() {
         print_notes(&conversation);
     }
@@ -189,9 +199,18 @@ fn talk(
     {
         return;
     }
-    while let Line::Text(line) = input.request(conversation.status()) {
+    loop {
+        let line = match input.request(conversation.status()) {
+            Line::Text(line) => line,
+            Line::DropMessages => {
+                drop_messages(conversation);
+                continue;
+            }
+            Line::Quit => break,
+        };
         let line = line.trim();
         if line.is_empty() {
+            pass_on_messages(conversation, input);
             continue;
         }
         if is_command(line) {
@@ -205,6 +224,40 @@ fn talk(
         conversation.send(line, input);
         print_separator(input);
     }
+}
+
+/// Enter on an empty line: the messages from other sessions on screen go to
+/// the model, framed as another session's, as the turn's request.
+fn pass_on_messages(conversation: &mut Conversation, input: &mut Input) {
+    let Some(peers) = conversation.peers() else {
+        return;
+    };
+    let messages = peers.inbox().take();
+    if messages.is_empty() {
+        return;
+    }
+    let passed = text::passed_on(messages.len(), &peers::senders(&messages));
+    eprintln!("\n{}", notice(&passed));
+    conversation.send(&peers::framed(&messages), input);
+    print_separator(input);
+}
+
+/// Esc on an empty line: the messages from other sessions on screen go,
+/// and the model never hears of them.
+fn drop_messages(conversation: &Conversation) {
+    let Some(peers) = conversation.peers() else {
+        return;
+    };
+    let messages = peers.inbox().take();
+    if !messages.is_empty() {
+        let dropped = text::dropped(messages.len(), &peers::senders(&messages));
+        eprintln!("\n{}", notice(&dropped));
+    }
+}
+
+/// A line about messages from other sessions, as their arrival shows.
+fn notice(line: &str) -> String {
+    peers::notice_line(line, style::terminal_width().unwrap_or(80))
 }
 
 /// A faint line between turns, as wide as the terminal is right now. Lines
@@ -421,6 +474,20 @@ fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
     rows.push((
         text::INFO_SCRATCH,
         text::scratch_folder(conversation.scratch()),
+    ));
+    let peers = conversation.peers();
+    let others: Vec<String> = peers
+        .map(|peers| {
+            peers
+                .others()
+                .into_iter()
+                .map(|session| session.name)
+                .collect()
+        })
+        .unwrap_or_default();
+    rows.push((
+        text::INFO_SESSION,
+        text::session_names(peers.map(peers::Peers::name), &others),
     ));
     print_rows(&rows);
 }

@@ -1,8 +1,10 @@
 //! Reading from the person: the `>` prompt, with slash-command hints and
-//! completion, the status of the last turn and Ctrl+C twice to quit; and the
-//! yes/no questions before anything changes.
+//! completion, the status of the last turn, Ctrl+C twice to quit, and the
+//! messages from other sessions above it; and the yes/no questions before
+//! anything changes.
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::os::fd::AsRawFd;
@@ -16,16 +18,24 @@ use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{
     Behavior, Cmd, CompletionType, ConditionalEventHandler, Config, Context, Editor, Event,
-    EventContext, EventHandler, KeyEvent, Movement, RepeatCount,
+    EventContext, EventHandler, ExternalPrinter, KeyCode, KeyEvent, Modifiers, Movement,
+    RepeatCount,
 };
 
 use crate::approvals::ProjectApprovals;
+use crate::peers::Inbox;
 use crate::{config, diff, menu, style, text};
 
 const PROMPT: &str = "> ";
+/// How long after Esc another key makes it part of one, like an arrow
+/// key's. Without it, rustyline waits for the next key, and a lone Esc does
+/// nothing until then.
+const ESC_WAIT_MS: u16 = 50;
 
 pub enum Line {
     Text(String),
+    /// Esc on an empty line, with messages from other sessions waiting.
+    DropMessages,
     /// Ctrl+C twice, or Ctrl+D, on an empty line.
     Quit,
 }
@@ -54,6 +64,8 @@ pub struct Input {
     approved: HashSet<String>,
     /// The same, kept for the project.
     project: ProjectApprovals,
+    /// Messages from the person's other sessions, when this one listens.
+    inbox: Option<Inbox>,
 }
 
 impl Input {
@@ -71,6 +83,7 @@ impl Input {
                 quit_armed,
                 approved: HashSet::new(),
                 project,
+                inbox: None,
             };
         }
         let config = Config::builder()
@@ -78,12 +91,15 @@ impl Input {
             .completion_show_all_if_ambiguous(true)
             // Ask on the terminal even when stdin or stdout are redirected.
             .behavior(Behavior::PreferTerm)
+            .keyseq_timeout(Some(ESC_WAIT_MS))
             .build();
         let editor = Editor::with_config(config).ok().map(|mut editor| {
             editor.set_helper(Some(Helper {
                 status: None,
                 quit_armed: quit_armed.clone(),
                 accented: false,
+                inbox: None,
+                command_hint: Cell::new(false),
             }));
             editor
         });
@@ -92,7 +108,23 @@ impl Input {
             quit_armed,
             approved: HashSet::new(),
             project,
+            inbox: None,
         }
+    }
+
+    /// What prints a message above the `>` while the person types, from
+    /// another thread. None without a terminal.
+    pub fn printer(&mut self) -> Option<Box<dyn ExternalPrinter + Send>> {
+        let printer = self.editor.as_mut()?.create_external_printer().ok()?;
+        Some(Box::new(printer))
+    }
+
+    /// Messages from other sessions show at the `>` from now on.
+    pub fn receive(&mut self, inbox: Inbox) {
+        if let Some(helper) = self.editor.as_mut().and_then(Editor::helper_mut) {
+            helper.inbox = Some(inbox.clone());
+        }
+        self.inbox = Some(inbox);
     }
 
     /// The terminal's width right now, if there's a terminal.
@@ -119,11 +151,26 @@ impl Input {
             KeyEvent::ctrl('C'),
             EventHandler::Conditional(Box::new(ctrl_c)),
         );
+        let esc = KeyEvent(KeyCode::Esc, Modifiers::NONE);
+        let dropping = Arc::new(AtomicBool::new(false));
+        if let Some(inbox) = &self.inbox {
+            let drop = DropOnEsc {
+                inbox: inbox.clone(),
+                pressed: dropping.clone(),
+            };
+            editor.bind_sequence(esc, EventHandler::Conditional(Box::new(drop)));
+            inbox.enter_prompt();
+        }
         let line = editor.readline(PROMPT);
+        if let Some(inbox) = &self.inbox {
+            inbox.leave_prompt();
+            editor.unbind_sequence(esc);
+        }
         editor.unbind_sequence(KeyEvent::ctrl('C'));
         // A reminder left over must not show at the next question.
         self.quit_armed.store(false, Ordering::SeqCst);
         match line {
+            Ok(_) if dropping.load(Ordering::SeqCst) => Line::DropMessages,
             Ok(line) => {
                 if !line.trim().is_empty() {
                     let _ = editor.add_history_entry(line.as_str());
@@ -295,15 +342,56 @@ impl ConditionalEventHandler for QuitOnSecondCtrlC {
     }
 }
 
+/// Esc on an empty line, while messages from other sessions wait: ends the
+/// line, so `request` says they're to be dropped. Otherwise Esc does what it
+/// always did.
+struct DropOnEsc {
+    inbox: Inbox,
+    pressed: Arc<AtomicBool>,
+}
+
+impl ConditionalEventHandler for DropOnEsc {
+    fn handle(
+        &self,
+        _event: &Event,
+        _count: RepeatCount,
+        _positive: bool,
+        context: &EventContext,
+    ) -> Option<Cmd> {
+        if !context.line().is_empty() || self.inbox.count() == 0 {
+            return None;
+        }
+        self.pressed.store(true, Ordering::SeqCst);
+        Some(Cmd::AcceptLine)
+    }
+}
+
 struct Helper {
     status: Option<String>,
     quit_armed: Arc<AtomicBool>,
     /// The `>` line is in the accent color, so the person's messages stand
     /// out in the conversation. Questions aren't.
     accented: bool,
+    inbox: Option<Inbox>,
+    /// The hint showing is a command's, in gray, rather than the reminder or the status.
+    command_hint: Cell<bool>,
 }
 
 impl Helper {
+    /// What shows at the right edge: the messages waiting, at the `>` only,
+    /// where Enter and Esc act on them; then the status.
+    fn status(&self) -> Option<String> {
+        let waiting = self
+            .inbox
+            .as_ref()
+            .filter(|_| self.accented)
+            .map(Inbox::count)
+            .filter(|count| *count > 0)
+            .map(text::messages_waiting);
+        let parts: Vec<String> = waiting.into_iter().chain(self.status.clone()).collect();
+        (!parts.is_empty()).then(|| parts.join(" · "))
+    }
+
     /// The reminder after a first Ctrl+C, and the status at the right edge.
     fn line_hint(&self, line: &str) -> Option<Hint> {
         let armed = line.is_empty() && self.quit_armed.load(Ordering::SeqCst);
@@ -312,7 +400,7 @@ impl Helper {
         } else {
             String::new()
         };
-        if let Some(status) = &self.status {
+        if let Some(status) = &self.status() {
             let used = PROMPT.len()
                 + line.chars().count()
                 + display.chars().count()
@@ -329,15 +417,6 @@ impl Helper {
             display,
             completion: None,
         })
-    }
-
-    /// The reminder and the status are the dimmest things on screen.
-    fn is_faint(&self, hint: &str) -> bool {
-        hint.starts_with(text::QUIT_AGAIN)
-            || self
-                .status
-                .as_ref()
-                .is_some_and(|status| hint.ends_with(status.as_str()))
     }
 }
 
@@ -408,6 +487,9 @@ impl Hinter for Helper {
         if !line.is_empty() {
             self.quit_armed.store(false, Ordering::SeqCst);
         }
+        // Kept for the hint's color: a message arriving redraws the hint
+        // shown, though what it would say has changed.
+        self.command_hint.set(line.starts_with('/'));
         if line.starts_with('/') {
             command_hint(line, pos, style::terminal_width())
         } else {
@@ -437,11 +519,12 @@ impl Highlighter for Helper {
         }
     }
 
+    /// The reminder and the status are the dimmest things on screen.
     fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
-        if self.is_faint(hint) {
-            Cow::Owned(style::faint(hint))
-        } else {
+        if self.command_hint.get() {
             Cow::Owned(style::gray(hint))
+        } else {
+            Cow::Owned(style::faint(hint))
         }
     }
 

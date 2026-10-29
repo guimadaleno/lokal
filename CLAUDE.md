@@ -78,6 +78,30 @@ dependencies.
   never says yes; without a terminal, nothing beyond reading runs. Keys
   pressed before an approval question was on screen are discarded, because
   a "y" typed early would approve a command nobody has seen.
+- **Let a message from another session start a turn.** The person's Lokal
+  sessions on one machine find each other and pass messages, so work can
+  be split among them (`src/peers.rs`). Another model wrote the message,
+  and a file it read may have steered it.
+  - **It shows whole above the `>`,** without control characters, and
+    reaches the model only when the person presses Enter on an empty line;
+    Esc drops it. Enter takes only what has been on screen half a second:
+    one arriving as it's pressed may not be drawn yet. During a turn,
+    messages wait for it to end.
+  - **The model gets it as another session's words,** framed with the
+    sender's name and folder, never as the person's. Whatever it then does
+    is asked about as always.
+  - **Sending runs unasked, shown as a step:** the person on the other side
+    sees the message before that model does.
+  - **Only the person's own sessions talk:** a socket per session,
+    `<pid>.sock`, beside its scratch folder in the private
+    `/tmp/lokal-<uid>`, and the kernel says who connected (`SO_PEERCRED`):
+    the same user, and the pid the sender's name carries.
+  - **Conversations at a terminal only,** where someone sees a message
+    arrive: a one-shot request neither listens nor gets the tools.
+  - **Bounded:** at most 2,000 characters a message and 5 waiting in a
+    session; the sender's model is told to shorten it, or that it's full.
+    The socket is all it puts on disk, and it goes when the session quits,
+    or at the next start if the session was killed.
 - **Keep the model's reasoning.** It shows only when the person asks:
   `/reasoning` turns on, for the session, a small window where its last few
   lines show faint while it thinks, and which clears itself when the answer
@@ -140,6 +164,9 @@ dependencies.
   Output starts after one, only when there is output, so a silent command
   leaves no double gap. Each step ends with one, and a faint line closes
   each turn. The reasoning window keeps one between itself and the spinner.
+  A message from another session, and the line saying it went on or was
+  dropped, get one around them: a faint `·`, gray, indented, and the
+  message itself plain.
 - **Markdown is styled on the screen only.** The conversation keeps what
   the model wrote, and a piped answer stays plain Markdown. A style ends
   with its line, so a stray marker can't paint the rest of the screen.
@@ -170,6 +197,7 @@ dependencies.
 | `approvals.rs` | Commands approved for a project |
 | `reasoning.rs` | The small window the reasoning shows in while the model thinks |
 | `scratch.rs` | The session's folder for temporary files |
+| `peers.rs` | The person's other sessions: listening, listing them, sending, the messages waiting |
 | `config.rs` | The settings file, user.md, the state files |
 | `spinner.rs`, `style.rs`, `interrupt.rs`, `text.rs` | Spinner, colors, Ctrl+C flag, every word on screen |
 | `site/` | The page at guimadaleno.com/lokal/, published by `.github/workflows/site.yml` |
@@ -196,6 +224,18 @@ dependencies.
   a lone Esc stops the turn, and other keys are dropped rather than echoed
   over the output. The reader ends before anything asks the person
   something, so no key reaches a question it wasn't typed for.
+- **A message from another session prints only while the person is at the
+  `>`,** through rustyline's `ExternalPrinter`. Outside readline that
+  printer writes straight to the terminal, into a turn's output or an open
+  editor; there, messages wait for the next prompt.
+  - **rustyline 19 at least:** 18, with a printer, waited on the terminal
+    with keys it had already read, so a paste or fast typing stalled until
+    the next key.
+  - **The status at the right says a message waits from the next key or
+    prompt:** a message arriving redraws the hint as it was.
+  - **The two tools and the prompt's line cost about 270 tokens a
+    request,** estimated from their length; they're the same all session,
+    so the prompt cache holds.
 - **The project's notes are the project's, and take a share of the
   context** (`memory.rs`): LOKAL.md, then AGENTS.md, in the git root and
   every folder down to the working directory, each file once however it's
@@ -346,7 +386,7 @@ cargo clippy --all-targets
 
 | What | Measured |
 |---|---|
-| Release binary (static, stripped) | 2.0 MB |
+| Release binary (static, stripped) | 2.1 MB |
 | Start to the prompt, server found | ~40 ms |
 | Memory at the prompt | ~3 MB |
 
@@ -380,6 +420,12 @@ Measured on a current laptop, under WSL.
   `usage.completion_tokens`: tried with a fake server that sends none.
 - **"Couldn't find a model server":** written, but not seen, since that needs
   LM Studio stopped.
+- **Messages between sessions with a real model:** tried with two sessions
+  in pseudo-terminals and a scripted fake server: a task handed off with
+  typing under way, the reply passed on, Esc, a message during a turn, a
+  one-shot without the tools. Still owed: the same with LM Studio, a model
+  choosing `list_sessions` and `send_message` on its own, and the tools'
+  cost from `usage.prompt_tokens`.
 
 ## Later, not decided
 

@@ -12,6 +12,7 @@ use crate::chat::{self, Event, Reply};
 use crate::input::Input;
 use crate::markdown::Markdown;
 use crate::memory::{self, Note};
+use crate::peers::Peers;
 use crate::server::Server;
 use crate::spinner::Spinner;
 use crate::system::Facts;
@@ -63,6 +64,8 @@ pub struct Conversation {
     /// `/reasoning`: the model's reasoning on screen, faint, for this
     /// session. Off until asked for.
     show_reasoning: bool,
+    /// The person's other sessions, in a conversation at a terminal.
+    peers: Option<Peers>,
 }
 
 enum Failure {
@@ -71,7 +74,7 @@ enum Failure {
 }
 
 impl Conversation {
-    pub fn new(server: Server, facts: Facts) -> Self {
+    pub fn new(server: Server, facts: Facts, peers: Option<Peers>) -> Self {
         let mut conversation = Conversation {
             server,
             facts,
@@ -83,6 +86,7 @@ impl Conversation {
             model_time: None,
             speed: None,
             show_reasoning: false,
+            peers,
         };
         conversation.notes = conversation.read_notes();
         conversation.refresh_system_prompt();
@@ -97,10 +101,15 @@ impl Conversation {
         &self.notes
     }
 
+    pub fn peers(&self) -> Option<&Peers> {
+        self.peers.as_ref()
+    }
+
     /// Picks user.md up again after it changed.
     pub fn refresh_system_prompt(&mut self) {
         self.system = prompt::system_prompt(
             &self.facts,
+            self.peers.as_ref().map(Peers::name),
             &self.recon,
             self.server.context,
             &self.notes,
@@ -170,6 +179,10 @@ impl Conversation {
     /// answers, the person stops it, or something fails.
     pub fn send(&mut self, request: &str, input: &mut Input) {
         interrupt::clear();
+        // Other sessions hear it's working: their messages wait for the turn to end.
+        if let Some(peers) = &self.peers {
+            peers.set_busy(true);
+        }
         // Notes edited since the last turn count from this one on.
         if self.refresh_notes() {
             eprintln!("{}\n", style::gray(text::NOTES_CHANGED));
@@ -259,6 +272,9 @@ impl Conversation {
         self.model_time = Some(model_time);
         self.speed = speed(generated, generating);
         self.save();
+        if let Some(peers) = &self.peers {
+            peers.set_busy(false);
+        }
     }
 
     /// Runs the tools the model asked for. False if the person stopped them.
@@ -281,7 +297,7 @@ impl Conversation {
                 let calls_left = reply.tool_calls.len() - index;
                 let room = self.room_for_output().map(|room| room / calls_left);
                 let scratch = self.facts.scratch.as_deref().map(Path::new);
-                let outcome = tools::run(call, input, room, scratch);
+                let outcome = tools::run(call, input, room, scratch, self.peers.as_ref());
                 // A blank line after each step, so its output doesn't run into what follows.
                 eprintln!();
                 match outcome {
@@ -420,7 +436,7 @@ impl Conversation {
         let mut body = json!({
             "model": self.server.model,
             "messages": messages,
-            "tools": tools::definitions(),
+            "tools": tools::definitions(self.peers.is_some()),
             "stream": true,
             "stream_options": {"include_usage": true}
         });
@@ -481,7 +497,7 @@ impl Conversation {
     /// high side.
     fn estimate(&self, messages: &[Value]) -> u64 {
         let characters = self.system.len()
-            + tools::definitions().to_string().len()
+            + tools::definitions(self.peers.is_some()).to_string().len()
             + serde_json::to_string(messages).map_or(0, |json| json.len());
         (characters / CHARS_PER_TOKEN) as u64
     }
@@ -729,6 +745,7 @@ mod tests {
             model_time: None,
             speed: None,
             show_reasoning: false,
+            peers: None,
         }
     }
 
