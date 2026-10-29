@@ -105,6 +105,19 @@ impl Conversation {
         self.peers.as_ref()
     }
 
+    /// The system prompt as the next request sends it, the names of the
+    /// tools that go with it, and what the two cost: what the model is told
+    /// before the conversation.
+    pub fn system_prompt(&self) -> (&str, Vec<String>, u64) {
+        let names = tools::definitions(self.peers.is_some())
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|tool| tool["function"]["name"].as_str().map(String::from))
+            .collect();
+        (&self.system, names, self.estimate(&[]))
+    }
+
     /// Picks user.md up again after it changed.
     pub fn refresh_system_prompt(&mut self) {
         self.system = prompt::system_prompt(

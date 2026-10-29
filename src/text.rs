@@ -33,6 +33,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     ("/update", "check for a newer Lokal now"),
     ("/reasoning", "show or hide the model's reasoning"),
+    (
+        "/sysprompt",
+        "show what the model is told before your first message",
+    ),
     ("/feedback", "report a problem or an idea"),
     ("/help", "show commands and keys"),
     ("/about", "who made Lokal"),
@@ -557,6 +561,15 @@ pub fn tokens_of(used: u64, context: u64) -> String {
 /// "24 tok/s": how fast the model generated on the last turn.
 pub fn speed(tokens_per_second: u64) -> String {
     format!("{tokens_per_second} tok/s")
+}
+
+/// Under /sysprompt: what it and the tools cost, on every request.
+pub fn sysprompt_cost(tokens: u64, tools: &[String]) -> String {
+    format!(
+        "That, with the tools ({}), is {} on every request.",
+        tools.join(", "),
+        about_tokens(tokens)
+    )
 }
 
 /// "~1k tokens"

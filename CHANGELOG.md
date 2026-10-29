@@ -19,6 +19,8 @@ copy and the page show as its notes.
   passes it on, Esc drops it. mail = off turns mail off.
 - Start a line with @name to mail that session yourself. /info shows each
   session's name.
+- /sysprompt shows what the model is told before your first message, and
+  what that costs on every request.
 
 ## 0.5.0 — 2026-10-17
 

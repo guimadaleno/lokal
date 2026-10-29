@@ -606,7 +606,7 @@ mod tests {
         let hint = command_hint("/", 1, None).unwrap();
         assert_eq!(
             hint.display,
-            "   /new  /prefs  /memory  /config  /info  /recon  /update  /reasoning  /feedback  /help  /about  /exit"
+            "   /new  /prefs  /memory  /config  /info  /recon  /update  /reasoning  /sysprompt  /feedback  /help  /about  /exit"
         );
         assert_eq!(hint.completion, None);
     }

@@ -421,6 +421,12 @@ fn run_command(
             }
         }
         "/config" => edit_settings(),
+        "/sysprompt" => {
+            // Plain and whole, just as the model gets it.
+            let (prompt, tools, tokens) = conversation.system_prompt();
+            eprintln!("\n{}\n", prompt.trim_end());
+            eprintln!("{}\n", style::gray(&text::sysprompt_cost(tokens, &tools)));
+        }
         "/info" => {
             eprintln!();
             print_info(conversation, input, session);
