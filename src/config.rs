@@ -15,6 +15,22 @@ pub struct Config {
     /// `updates = off`: the daily update check is the one thing Lokal sends
     /// on its own, so it can be switched off.
     pub updates_off: bool,
+    /// Mail between the person's sessions on this machine (`peers.rs`).
+    pub mail: Mail,
+    /// How many turns in a row mail may start on its own.
+    pub mail_turns: Option<usize>,
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
+pub enum Mail {
+    /// A mail starts a turn on its own, once the person has asked the
+    /// session something.
+    #[default]
+    Auto,
+    /// A mail waits for Enter.
+    Ask,
+    /// No mail: no socket, no tools.
+    Off,
 }
 
 pub fn load() -> Result<Config, String> {
@@ -43,6 +59,18 @@ fn parse(contents: &str, path: &str) -> Result<Config, String> {
                 Some("on") => config.updates_off = false,
                 Some("off") => config.updates_off = true,
                 _ => return Err(text::bad_updates_setting(path, index + 1)),
+            },
+            "mail" => {
+                config.mail = match value.as_deref() {
+                    Some("auto") => Mail::Auto,
+                    Some("ask") => Mail::Ask,
+                    Some("off") => Mail::Off,
+                    _ => return Err(text::bad_mail_setting(path, index + 1)),
+                }
+            }
+            "mail_turns" => match value.as_deref().map(str::parse) {
+                Some(Ok(turns)) => config.mail_turns = Some(turns),
+                _ => return Err(text::bad_mail_turns_setting(path, index + 1)),
             },
             other => return Err(text::unknown_setting(path, index + 1, other)),
         }
@@ -198,6 +226,17 @@ mod tests {
         assert!(config.updates_off);
         assert!(!parse("", "config").unwrap().updates_off);
         assert!(parse("updates = maybe", "config").is_err());
+    }
+
+    #[test]
+    fn mail_is_on_its_own_unless_the_settings_say() {
+        let config = parse("", "config").unwrap();
+        assert_eq!((config.mail, config.mail_turns), (Mail::Auto, None));
+        let config = parse("mail = ask\nmail_turns = 8", "config").unwrap();
+        assert_eq!((config.mail, config.mail_turns), (Mail::Ask, Some(8)));
+        assert_eq!(parse("mail = off", "config").unwrap().mail, Mail::Off);
+        assert!(parse("mail = sometimes", "config").is_err());
+        assert!(parse("mail_turns = lots", "config").is_err());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! The tools the model can call: run a command, read a file, write a file,
 //! edit a file, and, in a conversation, list the person's other sessions and
-//! send one a message. Anything that changes something asks first.
+//! mail one. Anything that changes something asks first.
 
 use std::env;
 use std::fs;
@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::chat::ToolCall;
 use crate::input::{Approval, Input};
-use crate::peers::{self, Peers, Undelivered};
+use crate::peers::{self, Peers, Then, Undelivered};
 use crate::shell::{self, Run};
 use crate::{allowlist, config, diff, gitconfig, style, text};
 
@@ -101,22 +101,28 @@ pub fn definitions(sessions: bool) -> Value {
     if sessions {
         tools.push(tool(
             "list_sessions",
-            "List the user's other Lokal sessions open on this computer: each one's name and working directory.",
+            "List the user's other Lokal sessions open on this computer: each one's name, folder, \
+             branch and what it's doing.",
             json!({}),
             &[],
         ));
         tools.push(tool(
-            "send_message",
+            "mail",
             &format!(
-                "Send a message to another of the user's Lokal sessions. Its user sees it first and \
-                 decides whether its model gets it. At most {} characters.",
+                "Send a message to another of the user's Lokal sessions. Only what it needs: a \
+                 question, an answer, a decision; never just thanks. At most {} characters.",
                 text::number(peers::MESSAGE_LIMIT as u64)
             ),
             json!({
                 "to": {"type": "string", "description": "The session's name, from list_sessions."},
-                "text": {"type": "string"}
+                "text": {"type": "string"},
+                "now": {
+                    "type": "boolean",
+                    "description": "true when it should take this up right away: a question, a request, \
+                        an answer it waits for. false when it can wait for its next turn: news, thanks."
+                }
             }),
-            &["to", "text"],
+            &["to", "text", "now"],
         ));
     }
     Value::Array(tools)
@@ -147,11 +153,11 @@ pub fn run(
         Ok(args) => match (call.name.as_str(), peers) {
             ("run_command", _) => run_command(&args, input, room),
             ("read_file", _) => read_file(&args, room),
-            ("write_file", _) => write_file(&args, input, scratch),
-            ("edit_file", _) => edit_file(&args, input, scratch),
+            ("write_file", _) => write_file(&args, input, scratch, peers),
+            ("edit_file", _) => edit_file(&args, input, scratch, peers),
             ("remember", _) => remember(&args, input),
             ("list_sessions", Some(peers)) => Ok(list_sessions(peers)),
-            ("send_message", Some(peers)) => send_message(&args, peers),
+            ("mail", Some(peers)) => mail(&args, peers),
             (other, _) => Err(format!("there's no tool called {other}.")),
         },
         // Not repeated back: they can be a whole file.
@@ -320,7 +326,12 @@ fn read_part(
     ))
 }
 
-fn write_file(args: &Value, input: &mut Input, scratch: Option<&Path>) -> Result<Outcome, String> {
+fn write_file(
+    args: &Value,
+    input: &mut Input,
+    scratch: Option<&Path>,
+    peers: Option<&Peers>,
+) -> Result<Outcome, String> {
     let path = writable_path(args)?;
     let content = text_arg(args, "content")?;
     let old = match fs::read_to_string(&path) {
@@ -341,10 +352,16 @@ fn write_file(args: &Value, input: &mut Input, scratch: Option<&Path>) -> Result
         content,
         input,
         on_yes,
+        peers,
     )
 }
 
-fn edit_file(args: &Value, input: &mut Input, scratch: Option<&Path>) -> Result<Outcome, String> {
+fn edit_file(
+    args: &Value,
+    input: &mut Input,
+    scratch: Option<&Path>,
+    peers: Option<&Peers>,
+) -> Result<Outcome, String> {
     let path = writable_path(args)?;
     let old_text = text_arg(args, "old_text")?;
     let new_text = text_arg(args, "new_text")?;
@@ -370,7 +387,7 @@ fn edit_file(args: &Value, input: &mut Input, scratch: Option<&Path>) -> Result<
     }
     let new = old.replacen(old_text, new_text, 1);
     let on_yes = write_opens_on_yes(&path, scratch);
-    propose(&path, text::STEP_EDIT, &old, &new, input, on_yes)
+    propose(&path, text::STEP_EDIT, &old, &new, input, on_yes, peers)
 }
 
 /// The one way the model changes user.md: a line the person asked it to
@@ -403,7 +420,7 @@ fn remember(args: &Value, input: &mut Input) -> Result<Outcome, String> {
         ));
     };
     // On No: it changes what every conversation starts with.
-    propose(&path, text::STEP_REMEMBER, &old, &new, input, false)
+    propose(&path, text::STEP_REMEMBER, &old, &new, input, false, None)
 }
 
 /// user.md with `note` added at its end, or in place of the line `replaces`
@@ -485,9 +502,22 @@ fn list_sessions(peers: &Peers) -> Outcome {
     for session in &sessions {
         let mut shown = config::shown(Path::new(&session.folder));
         let mut line = format!("- {}, in {}", session.name, session.folder);
+        if !session.branch.is_empty() {
+            shown.push_str(&format!(" · {}", session.branch));
+            line.push_str(&format!(", branch {}", session.branch));
+        }
         if session.busy {
             shown.push_str(&format!(" · {}", text::WORKING));
-            line.push_str(", working on something now: a message waits until that's done");
+            line.push_str(", working on something now: mail waits until that's done");
+        }
+        if !session.request.is_empty() {
+            line.push_str(&format!(
+                "; the user last asked it: \"{}\"",
+                session.request
+            ));
+        }
+        if !session.files.is_empty() {
+            line.push_str(&format!("; it changed {}", session.files.join(", ")));
         }
         for (index, part) in peers::broken(&shown, room).iter().enumerate() {
             let name = if index == 0 {
@@ -503,11 +533,13 @@ fn list_sessions(peers: &Peers) -> Outcome {
     Outcome::Done(result)
 }
 
-/// Sends a message unasked, shown as a step: the person on the other side
-/// sees it before that model does, and decides whether it gets it.
-fn send_message(args: &Value, peers: &Peers) -> Result<Outcome, String> {
-    let to = text_arg(args, "to")?.trim();
+/// Sends a mail unasked, shown as a step, whole: the person sees what this
+/// model tells the other.
+fn mail(args: &Value, peers: &Peers) -> Result<Outcome, String> {
+    let to = text_arg(args, "to")?.trim().trim_start_matches('@');
     let message = text_arg(args, "text")?.trim();
+    // Left out, it's taken up at once: an answer it waits for mustn't stall.
+    let now = args["now"].as_bool().unwrap_or(true);
     if message.is_empty() {
         return Err("the text is empty.".into());
     }
@@ -517,21 +549,35 @@ fn send_message(args: &Value, peers: &Peers) -> Result<Outcome, String> {
     if to == peers.name() {
         return Err("that's this session's own name; list_sessions lists the others.".into());
     }
-    eprintln!("{} {to}", style::accent(text::STEP_SEND));
+    eprintln!("{} {to}", style::accent(text::STEP_MAIL));
     let width = style::terminal_width().unwrap_or(80);
     for line in peers::indented(message, 2, width).lines() {
         eprintln!("{}", style::gray(line));
     }
-    match peers.send(to, message) {
-        Ok(()) => Ok(Outcome::Done(format!(
-            "Sent. It shows in {to}'s terminal, and its user decides whether its model gets it. \
-             Don't wait for a reply: one comes as a new message, if the user there passes it on."
+    const NO_WAITING: &str = "Any answer comes as mail: end your turn rather than wait for it.";
+    match peers.send(to, message, now, false) {
+        Ok(Then::Now) => Ok(Outcome::Done(format!(
+            "Sent. {to}'s model takes it up now. {NO_WAITING}"
+        ))),
+        Ok(Then::AfterTurn) => Ok(Outcome::Done(format!(
+            "Sent. {to} is busy; its model takes it up once it's free. {NO_WAITING}"
+        ))),
+        Ok(Then::Later) => Ok(Outcome::Done(format!(
+            "Sent. {to}'s model reads it with its next turn."
+        ))),
+        Ok(Then::User) => Ok(Outcome::Done(format!(
+            "Sent. It waits in {to}'s terminal for its user to pass it on, so an answer may take a \
+             while or not come."
+        ))),
+        Ok(Then::Limit) => Ok(Outcome::Done(format!(
+            "Sent, but {to} has taken up as much mail on its own in a row as it may, so this one \
+             waits there for its user. Tell your user, so they can step in."
         ))),
         Err(Undelivered::NoSuch) => Err(format!(
             "there's no session called {to} open; list_sessions lists them."
         )),
         Err(Undelivered::Full) => Err(format!(
-            "{to} has {} messages waiting already, as many as it takes. Tell the user, or try again later.",
+            "{to} has {} mails waiting already, as many as it takes. Tell the user, or try again later.",
             peers::WAITING_LIMIT
         )),
         Err(Undelivered::TooLong) => Err(too_long()),
@@ -540,13 +586,14 @@ fn send_message(args: &Value, peers: &Peers) -> Result<Outcome, String> {
 
 fn too_long() -> String {
     format!(
-        "a message takes at most {} characters: shorten it.",
+        "a mail takes at most {} characters: shorten it.",
         text::number(peers::MESSAGE_LIMIT as u64)
     )
 }
 
 /// Shows the change as a diff and writes it if the person agrees. The
-/// question opens on Yes only when `opens_on_yes`.
+/// question opens on Yes only when `opens_on_yes`. The other sessions,
+/// when given, hear which file changed.
 fn propose(
     path: &Path,
     step: &str,
@@ -554,6 +601,7 @@ fn propose(
     new: &str,
     input: &mut Input,
     opens_on_yes: bool,
+    peers: Option<&Peers>,
 ) -> Result<Outcome, String> {
     if old == new && step == text::STEP_EDIT {
         return Ok(Outcome::Done(
@@ -566,6 +614,9 @@ fn propose(
         return Ok(outcome);
     }
     config::write(path, new).map_err(|error| format!("can't write {}: {error}", path.display()))?;
+    if let Some(peers) = peers {
+        peers.wrote(path);
+    }
     Ok(Outcome::Done(format!("Wrote {}.", path.display())))
 }
 

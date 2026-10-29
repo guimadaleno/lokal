@@ -1,6 +1,6 @@
 //! Reading from the person: the `>` prompt, with slash-command hints and
 //! completion, the status of the last turn, Ctrl+C twice to quit, and the
-//! messages from other sessions above it; and the yes/no questions before
+//! mail from other sessions above it; and the yes/no questions before
 //! anything changes.
 
 use std::borrow::Cow;
@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use rustyline::completion::Completer;
+use rustyline::error::ReadlineError;
 use rustyline::highlight::{CmdKind, Highlighter};
 use rustyline::hint::Hinter;
 use rustyline::history::DefaultHistory;
@@ -23,7 +24,7 @@ use rustyline::{
 };
 
 use crate::approvals::ProjectApprovals;
-use crate::peers::Inbox;
+use crate::peers::{Directory, Inbox};
 use crate::{config, diff, menu, style, text};
 
 const PROMPT: &str = "> ";
@@ -34,7 +35,9 @@ const ESC_WAIT_MS: u16 = 50;
 
 pub enum Line {
     Text(String),
-    /// Esc on an empty line, with messages from other sessions waiting.
+    /// A turn starts on mail.
+    Mail,
+    /// Esc on an empty line, with mail waiting.
     DropMessages,
     /// Ctrl+C twice, or Ctrl+D, on an empty line.
     Quit,
@@ -64,7 +67,7 @@ pub struct Input {
     approved: HashSet<String>,
     /// The same, kept for the project.
     project: ProjectApprovals,
-    /// Messages from the person's other sessions, when this one listens.
+    /// Mail from the person's other sessions, when this one listens.
     inbox: Option<Inbox>,
 }
 
@@ -99,6 +102,7 @@ impl Input {
                 quit_armed: quit_armed.clone(),
                 accented: false,
                 inbox: None,
+                sessions: None,
                 command_hint: Cell::new(false),
             }));
             editor
@@ -112,17 +116,19 @@ impl Input {
         }
     }
 
-    /// What prints a message above the `>` while the person types, from
+    /// What prints a mail above the `>` while the person types, from
     /// another thread. None without a terminal.
     pub fn printer(&mut self) -> Option<Box<dyn ExternalPrinter + Send>> {
         let printer = self.editor.as_mut()?.create_external_printer().ok()?;
         Some(Box::new(printer))
     }
 
-    /// Messages from other sessions show at the `>` from now on.
-    pub fn receive(&mut self, inbox: Inbox) {
+    /// Mail shows at the `>` from now on, and Tab completes the other
+    /// sessions' names after an `@`.
+    pub fn receive(&mut self, inbox: Inbox, sessions: Directory) {
         if let Some(helper) = self.editor.as_mut().and_then(Editor::helper_mut) {
             helper.inbox = Some(inbox.clone());
+            helper.sessions = Some(sessions);
         }
         self.inbox = Some(inbox);
     }
@@ -135,10 +141,15 @@ impl Input {
 
     /// Reads a request at the `>` prompt. `status` (the model's time and
     /// the share of the context in use) shows at the far right of the line.
+    /// Mail that starts a turn returns `Line::Mail`, whether it waited for
+    /// the `>` or ended it.
     pub fn request(&mut self, status: Option<String>) -> Line {
         let Some(editor) = &mut self.editor else {
             return Line::Quit;
         };
+        if self.inbox.as_ref().is_some_and(Inbox::enter_prompt) {
+            return Line::Mail;
+        }
         if let Some(helper) = editor.helper_mut() {
             helper.status = status;
             helper.accented = true;
@@ -159,17 +170,24 @@ impl Input {
                 pressed: dropping.clone(),
             };
             editor.bind_sequence(esc, EventHandler::Conditional(Box::new(drop)));
-            inbox.enter_prompt();
         }
         let line = editor.readline(PROMPT);
-        if let Some(inbox) = &self.inbox {
-            inbox.leave_prompt();
+        let woken = self.inbox.as_ref().is_some_and(Inbox::leave_prompt);
+        if self.inbox.is_some() {
             editor.unbind_sequence(esc);
         }
         editor.unbind_sequence(KeyEvent::ctrl('C'));
         // A reminder left over must not show at the next question.
         self.quit_armed.store(false, Ordering::SeqCst);
         match line {
+            Err(ReadlineError::Interrupted) if woken => {
+                // Mail ended an empty line, which rustyline leaves with the
+                // status on it: it goes, and the mail shows in its place.
+                if style::enabled() {
+                    eprint!("\x1b[1A\r\x1b[2K");
+                }
+                Line::Mail
+            }
             Ok(_) if dropping.load(Ordering::SeqCst) => Line::DropMessages,
             Ok(line) => {
                 if !line.trim().is_empty() {
@@ -342,7 +360,7 @@ impl ConditionalEventHandler for QuitOnSecondCtrlC {
     }
 }
 
-/// Esc on an empty line, while messages from other sessions wait: ends the
+/// Esc on an empty line, while mail from other sessions waits: ends the
 /// line, so `request` says they're to be dropped. Otherwise Esc does what it
 /// always did.
 struct DropOnEsc {
@@ -373,13 +391,15 @@ struct Helper {
     /// out in the conversation. Questions aren't.
     accented: bool,
     inbox: Option<Inbox>,
+    /// The other sessions, whose names Tab completes after an `@`.
+    sessions: Option<Directory>,
     /// The hint showing is a command's, in gray, rather than the reminder or the status.
     command_hint: Cell<bool>,
 }
 
 impl Helper {
-    /// What shows at the right edge: the messages waiting, at the `>` only,
-    /// where Enter and Esc act on them; then the status.
+    /// What shows at the right edge: the mail waiting, at the `>` only,
+    /// where Enter and Esc act on it; then the status.
     fn status(&self) -> Option<String> {
         let waiting = self
             .inbox
@@ -387,7 +407,7 @@ impl Helper {
             .filter(|_| self.accented)
             .map(Inbox::count)
             .filter(|count| *count > 0)
-            .map(text::messages_waiting);
+            .map(text::mail_waiting);
         let parts: Vec<String> = waiting.into_iter().chain(self.status.clone()).collect();
         (!parts.is_empty()).then(|| parts.join(" · "))
     }
@@ -487,8 +507,12 @@ impl Hinter for Helper {
         if !line.is_empty() {
             self.quit_armed.store(false, Ordering::SeqCst);
         }
-        // Kept for the hint's color: a message arriving redraws the hint
-        // shown, though what it would say has changed.
+        // Mail doesn't take away a line the person is writing.
+        if let Some(inbox) = self.inbox.as_ref().filter(|_| self.accented) {
+            inbox.set_typing(!line.is_empty());
+        }
+        // Kept for the hint's color: mail arriving redraws the hint shown,
+        // though what it would say has changed.
         self.command_hint.set(line.starts_with('/'));
         if line.starts_with('/') {
             command_hint(line, pos, style::terminal_width())
@@ -544,12 +568,25 @@ impl Completer for Helper {
         _context: &Context<'_>,
     ) -> rustyline::Result<(usize, Vec<String>)> {
         let typed = &line[..pos];
-        if !typed.starts_with('/') || typed.contains(' ') {
+        if typed.contains(' ') {
             return Ok((0, Vec::new()));
         }
-        let names = text::COMMANDS
-            .iter()
-            .map(|(name, _)| name.to_string())
+        let names = if typed.starts_with('/') {
+            text::COMMANDS
+                .iter()
+                .map(|(name, _)| name.to_string())
+                .collect()
+        } else if let Some(sessions) = self.sessions.as_ref().filter(|_| typed.starts_with('@')) {
+            sessions
+                .names()
+                .into_iter()
+                .map(|name| format!("@{name}"))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let names = names
+            .into_iter()
             .filter(|name| name.starts_with(typed))
             .collect();
         Ok((0, names))

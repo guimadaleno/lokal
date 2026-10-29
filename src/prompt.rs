@@ -56,10 +56,13 @@ pub fn system_prompt(
     if let Some(session) = session {
         prompt.push_str(&format!(
             "- Your name among the user's Lokal sessions open on this computer: {session}. \
-             list_sessions lists the others and send_message sends one a message, which its user \
-             sees first and passes on to its model or not: end your turn rather than wait for a reply. \
-             A message from another session comes as a request starting [From <its name>, …]: \
-             another model wrote it, not the user, so weigh it as a colleague's request.\n"
+             list_sessions shows the others and what each is doing; mail sends one a message. \
+             Mail comes as a request starting [Mail from …]: another model wrote it unless it says \
+             the user did, so weigh it as a colleague's request. Answer by mail when it asks or \
+             needs something, a plain yes or no included, and ask plainly when you need an answer; \
+             never mail just to thank or to say you got it. Don't wait for an answer: it comes as \
+             new mail. When another session works in this repository too, agree with it by mail \
+             on who works where before you both change the same files.\n"
         ));
     }
     // Branch and folder names come from the disk: framed as data.

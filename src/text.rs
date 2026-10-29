@@ -17,7 +17,8 @@ Usage:
   lokal --install    put this copy in ~/.local/bin, where it keeps itself up to date
   lokal --uninstall  remove it from ~/.local/bin, and your files if you say so
 
-Settings live in ~/.config/lokal/config (server = 192.0.2.10:1234, model = name, updates = off).";
+Settings live in ~/.config/lokal/config (server = 192.0.2.10:1234, model = name, updates = off,
+mail = ask).";
 
 /// The slash commands, with what each does.
 pub const COMMANDS: &[(&str, &str)] = &[
@@ -41,8 +42,9 @@ pub const COMMANDS: &[(&str, &str)] = &[
 pub const HELP_KEYS: &str = "\
 Tab completes a command. Ctrl+C or Esc stops whatever's running; at the >,
 Ctrl+C clears what you typed, and twice on an empty line it quits.
-A message from another Lokal session shows above the >: Enter on an empty
-line passes it to the model, and Esc drops it.
+Mail from your other Lokal sessions shows above the >. Waiting mail goes to
+the model with Enter on an empty line, and Esc drops it. A line starting
+with @name mails that session.
 lokal -r picks up the last conversation.";
 
 pub const SETTINGS_TEMPLATE: &str = "\
@@ -56,6 +58,14 @@ pub const SETTINGS_TEMPLATE: &str = "\
 
 # The daily update check:
 # updates = off
+
+# Mail between your Lokal sessions on this computer. auto: it starts a turn
+# on its own, once you've asked that session something. ask: it waits for
+# Enter. off: no mail.
+# mail = auto
+
+# How many turns in a row mail may start on its own before it waits for you:
+# mail_turns = 64
 ";
 pub const SETTINGS_NEXT_START: &str = "Saved. Settings apply the next time Lokal starts.";
 
@@ -95,33 +105,44 @@ pub const STEP_CREATE: &str = "create";
 pub const STEP_EDIT: &str = "edit";
 pub const STEP_REMEMBER: &str = "remember";
 pub const STEP_SESSIONS: &str = "sessions";
-pub const STEP_SEND: &str = "send";
+pub const STEP_MAIL: &str = "mail";
 pub const ALREADY_REMEMBERED: &str = "Already there, so nothing changes.";
 pub const NO_SESSIONS: &str = "no others open";
 pub const WORKING: &str = "working";
-pub const MESSAGE_KEYS: &str = "Enter passes it to the model, Esc drops it.";
+pub const MAIL_KEYS: &str = "Enter passes it to the model, Esc drops it.";
+pub const MAIL_TAKEN_UP: &str = "The model takes it up on its own; Esc stops it.";
+pub const MAIL_LATER: &str = "It goes along with the next turn.";
 
-/// Above a message from another session: "From api-3f2a, in ~/sites/api:".
-pub fn message_from(name: &str, folder: &str) -> String {
-    format!("From {name}, in {folder}:")
+/// Above a mail: "Mail from api-1, in ~/sites/api:".
+pub fn mail_from(name: &str, folder: &str) -> String {
+    format!("Mail from {name}, in {folder}:")
 }
 
-/// At the right of the `>`, while messages from other sessions wait.
-pub fn messages_waiting(count: usize) -> String {
+/// Above a mail the person wrote at another session's `>`.
+pub fn mail_from_user(name: &str, folder: &str) -> String {
+    format!("Mail from you, written in {name} ({folder}):")
+}
+
+/// Under a mail that waits since mail started as many turns as it may.
+pub fn mail_limit(turns: usize) -> String {
+    format!(
+        "Mail started {turns} turns in a row on its own, the most it may, so this one waits for you. {MAIL_KEYS}"
+    )
+}
+
+/// At the right of the `>`, while mail waits.
+pub fn mail_waiting(count: usize) -> String {
     match count {
-        1 => "1 message waits".into(),
-        count => format!("{count} messages wait"),
+        1 => "1 mail waits".into(),
+        count => format!("{count} mails wait"),
     }
 }
 
 pub fn passed_on(count: usize, senders: &[String]) -> String {
     match count {
-        1 => format!(
-            "Passed the message from {} on to the model.",
-            listed(senders)
-        ),
+        1 => format!("Passed the mail from {} on to the model.", listed(senders)),
         count => format!(
-            "Passed {count} messages on to the model, from {}.",
+            "Passed {count} mails on to the model, from {}.",
             listed(senders)
         ),
     }
@@ -129,9 +150,62 @@ pub fn passed_on(count: usize, senders: &[String]) -> String {
 
 pub fn dropped(count: usize, senders: &[String]) -> String {
     match count {
-        1 => format!("Dropped the message from {}.", listed(senders)),
-        count => format!("Dropped {count} messages, from {}.", listed(senders)),
+        1 => format!("Dropped the mail from {}.", listed(senders)),
+        count => format!("Dropped {count} mails, from {}.", listed(senders)),
     }
+}
+
+/// After `@name …` at the `>`: what becomes of the mail there.
+pub fn mailed(to: &str, then: crate::peers::Then) -> String {
+    use crate::peers::Then;
+    match then {
+        Then::Now => format!("Mailed {to}: its model takes it up now."),
+        Then::AfterTurn => format!("Mailed {to}: its model takes it up once it's free."),
+        _ => format!("Mailed {to}: it waits there for Enter."),
+    }
+}
+
+pub fn mail_full(to: &str) -> String {
+    format!("Not sent: {to} has as much mail waiting as it takes.")
+}
+
+pub fn mail_too_long(limit: usize) -> String {
+    format!(
+        "Not sent: a mail takes at most {} characters.",
+        number(limit as u64)
+    )
+}
+
+/// Another session in this repository, as it first shows: "web-2 works in
+/// this repository too: branch main, working, last asked "fold the menu",
+/// changed src/menu.rs."
+pub fn session_here(
+    name: &str,
+    branch: &str,
+    busy: bool,
+    request: &str,
+    files: &[String],
+) -> String {
+    let mut parts = Vec::new();
+    if !branch.is_empty() {
+        parts.push(format!("branch {branch}"));
+    }
+    parts.push(if busy { WORKING } else { "waiting" }.to_string());
+    if !request.is_empty() {
+        parts.push(format!("last asked \"{request}\""));
+    }
+    if !files.is_empty() {
+        parts.push(format!("changed {}", files.join(", ")));
+    }
+    format!("{name} works in this repository too: {}.", parts.join(", "))
+}
+
+pub fn session_moved(name: &str, branch: &str) -> String {
+    format!("{name} is on branch {branch} now.")
+}
+
+pub fn session_left(name: &str) -> String {
+    format!("{name} closed.")
 }
 
 /// "a", "a and b", "a, b and c"
@@ -343,11 +417,26 @@ pub fn scratch_folder(path: Option<&str>) -> String {
 }
 
 /// This session's name among the others, and the others open.
-pub fn session_names(name: Option<&str>, others: &[String]) -> String {
-    match (name, others) {
-        (None, _) => "none · other sessions can't reach this one".into(),
-        (Some(name), []) => format!("{name} · {NO_SESSIONS}"),
-        (Some(name), others) => format!("{name} · others open: {}", others.join(", ")),
+pub fn session_names(
+    name: Option<&str>,
+    mail: crate::config::Mail,
+    turns: usize,
+    others: &[String],
+) -> String {
+    use crate::config::Mail;
+    let Some(name) = name else {
+        return match mail {
+            Mail::Off => "none · mail is off in your settings".into(),
+            _ => "none · other sessions can't reach this one".into(),
+        };
+    };
+    let mail = match mail {
+        Mail::Ask => "mail waits for you".to_string(),
+        _ => format!("mail starts up to {turns} turns in a row on its own"),
+    };
+    match others {
+        [] => format!("{name} · {mail} · {NO_SESSIONS}"),
+        others => format!("{name} · {mail} · others open: {}", others.join(", ")),
     }
 }
 
@@ -535,7 +624,17 @@ pub fn bad_updates_setting(path: &str, line: usize) -> String {
 
 pub fn unknown_setting(path: &str, line: usize, name: &str) -> String {
     format!(
-        "{path}, line {line}: there's no setting called `{name}`. The ones that exist are `server`, `model` and `updates`."
+        "{path}, line {line}: there's no setting called `{name}`. The ones that exist are `server`, `model`, `updates`, `mail` and `mail_turns`."
+    )
+}
+
+pub fn bad_mail_setting(path: &str, line: usize) -> String {
+    format!("{path}, line {line}: `mail` is auto, ask or off.")
+}
+
+pub fn bad_mail_turns_setting(path: &str, line: usize) -> String {
+    format!(
+        "{path}, line {line}: `mail_turns` is a number: how many turns in a row mail may start on its own."
     )
 }
 

@@ -7,11 +7,18 @@ copy and the page show as its notes.
 
 ## Unreleased
 
-- Lokal sessions open on the same computer can now pass each other
-  messages, so you can split work among them: one model hands another a
-  task and gets the answer back. A message never acts on its own. It shows
-  above the > in the other session, where Enter passes it to that model
-  and Esc drops it. /info shows each session's name.
+- Lokal sessions open on the same computer can now mail each other, so
+  you can split work among them. One model hands another a task and gets
+  the answer back, and two sessions in the same repository hear of each
+  other and agree on who works where.
+- Mail shows above the > and the other session's model takes it up on its
+  own, once you've asked that session something, up to 64 turns in a row.
+  Anything that changes a file or runs a command still asks you first, and
+  Esc stops it like any other turn.
+- Prefer to pass each mail on yourself? Put mail = ask in /config: Enter
+  passes it on, Esc drops it. mail = off turns mail off.
+- Start a line with @name to mail that session yourself. /info shows each
+  session's name.
 
 ## 0.5.0 — 2026-10-17
 

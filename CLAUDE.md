@@ -78,27 +78,51 @@ dependencies.
   never says yes; without a terminal, nothing beyond reading runs. Keys
   pressed before an approval question was on screen are discarded, because
   a "y" typed early would approve a command nobody has seen.
-- **Let a message from another session start a turn.** The person's Lokal
-  sessions on one machine find each other and pass messages, so work can
-  be split among them (`src/peers.rs`). Another model wrote the message,
-  and a file it read may have steered it.
-  - **It shows whole above the `>`,** without control characters, and
-    reaches the model only when the person presses Enter on an empty line;
-    Esc drops it. Enter takes only what has been on screen half a second:
-    one arriving as it's pressed may not be drawn yet. During a turn,
-    messages wait for it to end.
-  - **The model gets it as another session's words,** framed with the
-    sender's name and folder, never as the person's. Whatever it then does
-    is asked about as always.
-  - **Sending runs unasked, shown as a step:** the person on the other side
-    sees the message before that model does.
+- **Let mail from another session act for the person, or run without
+  bounds.** The person's Lokal sessions on one machine mail each other, so
+  work can be split among them and they agree on who works where
+  (`src/peers.rs`). Another model wrote the mail, and a file it read may
+  have steered it.
+  - **`mail = auto`, the default, lets mail start a turn on its own,** once
+    the person has asked that session something. The `>` must sit on an
+    empty line. Mail waits while the person types or a turn runs, and
+    after they stop a turn mail started or say no in one, until they ask
+    something.
+    - `mail = ask` makes every mail wait for Enter on an empty line, and
+      Esc drops it.
+    - `mail = off` means no socket and no tools.
+  - **At most `mail_turns` (64) turns in a row start on mail,** counted
+    from the person's last request; past that, mail waits for Enter. The
+    sender's model hears so and tells its person. Without a bound, two
+    models answering each other would fill the GPU and the context.
+  - **The prompt and the `mail` tool steer away from loops of politeness.**
+    They say to answer what asks or needs something, a plain yes or no
+    included, but never mail only to thank or to say it was received.
+    - A mail marked `now: false` (news, thanks) starts no turn: it goes
+      along with the next one.
+    - The bound is still the guard, since a prompt is only a nudge, and a
+      steered model ignores it.
+  - **Mail never approves anything:** every step that isn't read-only
+    asks the person at that terminal, as always. A turn mail started stops
+    with Esc or Ctrl+C like any other.
+  - **The model gets mail as another session's words,** framed with its
+    name and folder, never as the person's. The exception is mail the
+    person wrote at the other session's `>` (`@name …`), which Lokal
+    sends itself and frames as theirs.
+  - **Everything shows:** each mail whole, without control characters;
+    sending, as a step; and what the model hears of the other sessions.
   - **Only the person's own sessions talk:** a socket per session,
-    `<pid>.sock`, beside its scratch folder in the private
-    `/tmp/lokal-<uid>`, and the kernel says who connected (`SO_PEERCRED`):
-    the same user, and the pid the sender's name carries.
-  - **Conversations at a terminal only,** where someone sees a message
-    arrive: a one-shot request neither listens nor gets the tools.
-  - **Bounded:** at most 2,000 characters a message and 5 waiting in a
+    `<n>.sock`, beside its scratch folder in the private
+    `/tmp/lokal-<uid>`, with `n` the smallest number free.
+    - The kernel says who connected (`SO_PEERCRED`): the same user, and
+      the very process whose socket the sender's name points to, which is
+      asked back who it is.
+    - Nothing that runs unasked can open a socket, so a model can't pass
+      its own words off as a session's, or as the person's.
+  - **Conversations at a terminal only,** where someone sees mail arrive
+    and can stop what it starts: a one-shot request neither listens nor
+    gets the tools.
+  - **Bounded:** at most 2,000 characters a mail and 5 waiting in a
     session; the sender's model is told to shorten it, or that it's full.
     The socket is all it puts on disk, and it goes when the session quits,
     or at the next start if the session was killed.
@@ -164,9 +188,8 @@ dependencies.
   Output starts after one, only when there is output, so a silent command
   leaves no double gap. Each step ends with one, and a faint line closes
   each turn. The reasoning window keeps one between itself and the spinner.
-  A message from another session, and the line saying it went on or was
-  dropped, get one around them: a faint `·`, gray, indented, and the
-  message itself plain.
+  Mail, and the lines about it and the other sessions, get one around
+  them: a faint `·`, gray, indented, and the mail itself plain.
 - **Markdown is styled on the screen only.** The conversation keeps what
   the model wrote, and a piped answer stays plain Markdown. A style ends
   with its line, so a stray marker can't paint the rest of the screen.
@@ -197,7 +220,7 @@ dependencies.
 | `approvals.rs` | Commands approved for a project |
 | `reasoning.rs` | The small window the reasoning shows in while the model thinks |
 | `scratch.rs` | The session's folder for temporary files |
-| `peers.rs` | The person's other sessions: listening, listing them, sending, the messages waiting |
+| `peers.rs` | Mail between the person's sessions: listening, listing them, sending, what waits, what each is doing |
 | `config.rs` | The settings file, user.md, the state files |
 | `spinner.rs`, `style.rs`, `interrupt.rs`, `text.rs` | Spinner, colors, Ctrl+C flag, every word on screen |
 | `site/` | The page at guimadaleno.com/lokal/, published by `.github/workflows/site.yml` |
@@ -224,18 +247,34 @@ dependencies.
   a lone Esc stops the turn, and other keys are dropped rather than echoed
   over the output. The reader ends before anything asks the person
   something, so no key reaches a question it wasn't typed for.
-- **A message from another session prints only while the person is at the
-  `>`,** through rustyline's `ExternalPrinter`. Outside readline that
-  printer writes straight to the terminal, into a turn's output or an open
-  editor; there, messages wait for the next prompt.
+- **Mail prints only while the person is at the `>`,** through rustyline's
+  `ExternalPrinter`. Outside readline that printer writes straight to the
+  terminal, into a turn's output or an open editor; there, mail waits for
+  the next prompt.
   - **rustyline 19 at least:** 18, with a printer, waited on the terminal
     with keys it had already read, so a paste or fast typing stalled until
     the next key.
-  - **The status at the right says a message waits from the next key or
-    prompt:** a message arriving redraws the hint as it was.
-  - **The two tools and the prompt's line cost about 270 tokens a
+  - **Mail ends an idle `>` with a SIGINT to Lokal itself:** readline
+    returns `Interrupted` on one, and nothing else ends it from another
+    thread.
+    - It's sent while the inbox is held, so the person can't leave the `>`
+      in between, and it's handled on the sending thread before `kill`
+      returns.
+    - Had they left a moment before, Lokal's own handler raises its flag
+      instead, and the next turn clears that first.
+  - **The status at the right says mail waits from the next key or
+    prompt:** mail arriving redraws the hint as it was.
+  - **The two tools and the prompt's line cost about 380 tokens a
     request,** estimated from their length; they're the same all session,
     so the prompt cache holds.
+- **What the other sessions see of this one is Lokal's, never the
+  model's** (`who`): its folder, the branch read from `.git/HEAD` (git
+  itself runs what a repository's settings name), whether it's working,
+  the person's last request cut short, and the files it changed.
+  - **At each turn, the sessions in the same repository that came, went
+    or moved branch** are told to the model as a note in that turn's
+    request, and shown. Not in the system prompt: a change there would
+    make LM Studio read the whole conversation again.
 - **The project's notes are the project's, and take a share of the
   context** (`memory.rs`): LOKAL.md, then AGENTS.md, in the git root and
   every folder down to the working directory, each file once however it's
@@ -420,12 +459,22 @@ Measured on a current laptop, under WSL.
   `usage.completion_tokens`: tried with a fake server that sends none.
 - **"Couldn't find a model server":** written, but not seen, since that needs
   LM Studio stopped.
-- **Messages between sessions with a real model:** tried with two sessions
-  in pseudo-terminals and a scripted fake server: a task handed off with
-  typing under way, the reply passed on, Esc, a message during a turn, a
-  one-shot without the tools. Still owed: the same with LM Studio, a model
-  choosing `list_sessions` and `send_message` on its own, and the tools'
-  cost from `usage.prompt_tokens`.
+- **Mail between sessions with a real model:** tried with two sessions in
+  one repository, in pseudo-terminals, and a scripted fake server. These
+  all behaved:
+  - the news of the other session;
+  - a fresh session holding mail for Enter;
+  - mail answering mail on its own until `mail_turns` stopped it, and the
+    sender told to get its person;
+  - `@name` from the person, with typing under way at the other end;
+  - Esc on a turn mail started, and mail waiting after it;
+  - a `now: false` mail going along with the next turn;
+  - `/info`, a one-shot without the tools, and `mail = off` without a
+    socket.
+
+  Still owed: the same with LM Studio, a model choosing `list_sessions`
+  and `mail` on its own and keeping off loops, and the tools' cost from
+  `usage.prompt_tokens`.
 
 ## Later, not decided
 

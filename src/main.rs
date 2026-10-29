@@ -135,13 +135,23 @@ fn main() -> ExitCode {
         .as_ref()
         .map(|scratch| scratch.path().display().to_string());
     // The person's other sessions, in a conversation at a terminal only:
-    // there, someone sees a message arrive and decides on it.
+    // there, someone sees mail arrive and can stop what it starts.
+    let mail_turns = config.mail_turns.unwrap_or(peers::TURNS);
     let peers = scratch
         .as_ref()
-        .filter(|_| request.is_empty())
-        .and_then(|scratch| peers::Peers::start(scratch.base(), &folder, input.printer()?));
+        .filter(|_| request.is_empty() && config.mail != config::Mail::Off)
+        .and_then(|scratch| {
+            let printer = input.printer()?;
+            peers::Peers::start(
+                scratch.base(),
+                &folder,
+                config.mail,
+                mail_turns,
+                Some(printer),
+            )
+        });
     if let Some(peers) = &peers {
-        input.receive(peers.inbox());
+        input.receive(peers.inbox(), peers.directory());
     }
     let mut conversation = Conversation::new(server, facts, peers);
     if request.is_empty() && !conversation.notes().is_empty() {
@@ -158,6 +168,8 @@ fn main() -> ExitCode {
         let mut session = Session {
             started,
             updates_off: config.updates_off,
+            mail: config.mail,
+            mail_turns,
             feedback_draft: None,
         };
         talk(&mut conversation, &mut input, &mut session, first_command);
@@ -183,6 +195,8 @@ fn print_header(server: &server::Server) {
 struct Session {
     started: Instant,
     updates_off: bool,
+    mail: config::Mail,
+    mail_turns: usize,
     /// What /feedback was given and couldn't send yet.
     feedback_draft: Option<feedback::Draft>,
 }
@@ -202,6 +216,10 @@ fn talk(
     loop {
         let line = match input.request(conversation.status()) {
             Line::Text(line) => line,
+            Line::Mail => {
+                take_up_mail(conversation, input);
+                continue;
+            }
             Line::DropMessages => {
                 drop_messages(conversation);
                 continue;
@@ -219,15 +237,93 @@ fn talk(
             }
             continue;
         }
+        if mail_from_person(line, conversation) {
+            continue;
+        }
         // A blank line between the request and what follows, to breathe.
         eprintln!();
-        conversation.send(line, input);
-        print_separator(input);
+        if let Some(peers) = conversation.peers() {
+            peers.inbox().person_acted(Some(line));
+        }
+        let request = with_news(conversation, line);
+        turn(conversation, input, &request);
     }
 }
 
-/// Enter on an empty line: the messages from other sessions on screen go to
-/// the model, framed as another session's, as the turn's request.
+/// One turn on `request`. When the person stepped in, mail waits for them
+/// until they ask something.
+fn turn(conversation: &mut Conversation, input: &mut Input, request: &str) {
+    if conversation.send(request, input)
+        && let Some(peers) = conversation.peers()
+    {
+        peers.inbox().hold();
+    }
+    print_separator(input);
+}
+
+/// The request with what came meanwhile: mail that needs no answer, and
+/// news of the sessions working in this repository, shown as it goes along.
+fn with_news(conversation: &Conversation, request: &str) -> String {
+    let Some(peers) = conversation.peers() else {
+        return request.to_string();
+    };
+    let mut request = request.to_string();
+    let later = peers.inbox().take_later();
+    if !later.is_empty() {
+        request.push_str("\n\n");
+        request.push_str(&peers::framed(&later));
+    }
+    if let Some((shown, note)) = peers.news() {
+        eprintln!("{shown}");
+        request.push_str("\n\n");
+        request.push_str(&note);
+    }
+    request
+}
+
+/// A turn on mail, started on its own.
+fn take_up_mail(conversation: &mut Conversation, input: &mut Input) {
+    let Some(peers) = conversation.peers() else {
+        return;
+    };
+    let inbox = peers.inbox();
+    inbox.show_arrived();
+    let messages = inbox.take_for_turn();
+    if messages.is_empty() {
+        return;
+    }
+    inbox.turn_on_mail(&messages);
+    let request = with_news(conversation, &peers::framed(&messages));
+    turn(conversation, input, &request);
+}
+
+/// `@name …` at the `>`, for an open session: Lokal mails it what follows,
+/// as the person's own words. False for anything else, which is a request.
+fn mail_from_person(line: &str, conversation: &Conversation) -> bool {
+    let Some(peers) = conversation.peers() else {
+        return false;
+    };
+    let Some(rest) = line.strip_prefix('@') else {
+        return false;
+    };
+    let (to, text) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+    let text = text.trim();
+    if text.is_empty() || to == peers.name() {
+        return false;
+    }
+    let said = match peers.send(to, text, true, true) {
+        Err(peers::Undelivered::NoSuch) => return false,
+        Ok(then) => text::mailed(to, then),
+        Err(peers::Undelivered::Full) => text::mail_full(to),
+        Err(peers::Undelivered::TooLong) => text::mail_too_long(peers::MESSAGE_LIMIT),
+    };
+    peers.inbox().person_acted(None);
+    eprintln!("\n{}", notice(&said));
+    true
+}
+
+/// Enter on an empty line: the mail on screen goes to the model, framed as
+/// another session's, as the turn's request.
 fn pass_on_messages(conversation: &mut Conversation, input: &mut Input) {
     let Some(peers) = conversation.peers() else {
         return;
@@ -236,14 +332,15 @@ fn pass_on_messages(conversation: &mut Conversation, input: &mut Input) {
     if messages.is_empty() {
         return;
     }
+    peers.inbox().person_acted(None);
     let passed = text::passed_on(messages.len(), &peers::senders(&messages));
     eprintln!("\n{}", notice(&passed));
-    conversation.send(&peers::framed(&messages), input);
-    print_separator(input);
+    let request = with_news(conversation, &peers::framed(&messages));
+    turn(conversation, input, &request);
 }
 
-/// Esc on an empty line: the messages from other sessions on screen go,
-/// and the model never hears of them.
+/// Esc on an empty line: the mail on screen goes, and the model never
+/// hears of it.
 fn drop_messages(conversation: &Conversation) {
     let Some(peers) = conversation.peers() else {
         return;
@@ -255,7 +352,7 @@ fn drop_messages(conversation: &Conversation) {
     }
 }
 
-/// A line about messages from other sessions, as their arrival shows.
+/// A line about mail and the other sessions, as mail's arrival shows.
 fn notice(line: &str) -> String {
     peers::notice_line(line, style::terminal_width().unwrap_or(80))
 }
@@ -487,7 +584,12 @@ fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
         .unwrap_or_default();
     rows.push((
         text::INFO_SESSION,
-        text::session_names(peers.map(peers::Peers::name), &others),
+        text::session_names(
+            peers.map(peers::Peers::name),
+            session.mail,
+            session.mail_turns,
+            &others,
+        ),
     ));
     print_rows(&rows);
 }

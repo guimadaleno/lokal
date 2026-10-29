@@ -176,10 +176,12 @@ impl Conversation {
     }
 
     /// Sends one request and works on it, tools and all, until the model
-    /// answers, the person stops it, or something fails.
-    pub fn send(&mut self, request: &str, input: &mut Input) {
+    /// answers, the person stops it, or something fails. True when the
+    /// person stepped in: stopped the turn or said no to a step.
+    pub fn send(&mut self, request: &str, input: &mut Input) -> bool {
         interrupt::clear();
-        // Other sessions hear it's working: their messages wait for the turn to end.
+        let mut stepped_in = false;
+        // Other sessions hear it's working: their mail waits for the turn to end.
         if let Some(peers) = &self.peers {
             peers.set_busy(true);
         }
@@ -201,6 +203,7 @@ impl Conversation {
             let reply = match reply {
                 Ok(reply) => reply,
                 Err(Failure::Stopped) => {
+                    stepped_in = true;
                     eprintln!("{}", style::gray(text::STOPPED));
                     // Otherwise the model takes the stopped request up again next turn.
                     self.messages
@@ -265,7 +268,11 @@ impl Conversation {
                 eprintln!("{}", style::gray(text::CUT_SHORT));
                 continue;
             }
-            if reply.tool_calls.is_empty() || !self.run_tools(&reply, input) {
+            if reply.tool_calls.is_empty() {
+                break;
+            }
+            if !self.run_tools(&reply, input) {
+                stepped_in = true;
                 break;
             }
         }
@@ -275,6 +282,7 @@ impl Conversation {
         if let Some(peers) = &self.peers {
             peers.set_busy(false);
         }
+        stepped_in
     }
 
     /// Runs the tools the model asked for. False if the person stopped them.
