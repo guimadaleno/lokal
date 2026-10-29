@@ -145,6 +145,9 @@ struct State {
     turns: usize,
     /// Mail ended the `>` to start a turn.
     woken: bool,
+    /// That the model takes mail up on its own was said once, so it isn't
+    /// again.
+    told_taken_up: bool,
     /// What the others see this session doing.
     request: String,
     files: Vec<String>,
@@ -178,6 +181,20 @@ impl State {
             fate => fate,
         }
     }
+
+    /// What a notice says under a mail: what becomes of it.
+    fn footer(&mut self, then: Then) -> Option<String> {
+        match then {
+            Then::Now if self.told_taken_up => None,
+            Then::Now => {
+                self.told_taken_up = true;
+                Some(text::MAIL_TAKEN_UP.to_string())
+            }
+            Then::Later => Some(text::MAIL_LATER.to_string()),
+            Then::Limit => Some(text::mail_limit(self.turns_limit)),
+            Then::User | Then::AfterTurn => Some(text::MAIL_KEYS.to_string()),
+        }
+    }
 }
 
 /// The mail waiting, shared by the listener and the `>` prompt.
@@ -203,6 +220,7 @@ impl Inbox {
             held: true,
             turns: 0,
             woken: false,
+            told_taken_up: false,
             request: String::new(),
             files: Vec::new(),
         })))
@@ -228,7 +246,8 @@ impl Inbox {
         for index in 0..state.waiting.len() {
             if state.waiting[index].shown.is_none() {
                 let then = state.then(&state.waiting[index]);
-                let notice = notice(&state.waiting[index], then, state.turns_limit);
+                let footer = state.footer(then);
+                let notice = notice(&state.waiting[index], footer.as_deref());
                 eprint!("{}", spaced(&notice, printed));
                 state.waiting[index].shown = Some(Instant::now());
                 printed = true;
@@ -253,13 +272,17 @@ impl Inbox {
 
     /// Mail that ended the `>`, shown before its turn starts.
     pub fn show_arrived(&self) {
-        let mut state = self.lock();
-        let limit = state.turns_limit;
+        let mut guard = self.lock();
+        let state = &mut *guard;
         let mut printed = false;
-        for message in state.waiting.iter_mut().filter(|m| m.shown.is_none()) {
-            eprint!("{}", spaced(&notice(message, Then::Now, limit), printed));
-            message.shown = Some(Instant::now());
-            printed = true;
+        for index in 0..state.waiting.len() {
+            if state.waiting[index].shown.is_none() {
+                let footer = state.footer(Then::Now);
+                let notice = notice(&state.waiting[index], footer.as_deref());
+                eprint!("{}", spaced(&notice, printed));
+                state.waiting[index].shown = Some(Instant::now());
+                printed = true;
+            }
         }
     }
 
@@ -348,10 +371,8 @@ impl Inbox {
             state.woken = true;
         } else if state.at_prompt {
             message.shown = Some(Instant::now());
-            print = Some(spaced(
-                &notice(&message, then, state.turns_limit),
-                state.printed,
-            ));
+            let footer = state.footer(then);
+            print = Some(spaced(&notice(&message, footer.as_deref()), state.printed));
             state.printed = true;
         }
         state.waiting.push(message);
@@ -704,8 +725,8 @@ pub fn broken(line: &str, room: usize) -> Vec<String> {
 }
 
 /// A mail as it shows: who sent it and from where, the mail as it came,
-/// and what becomes of it.
-fn notice(message: &Message, then: Then, turns_limit: usize) -> String {
+/// and `footer`, what becomes of it.
+fn notice(message: &Message, footer: Option<&str>) -> String {
     let width = style::terminal_width().unwrap_or(80);
     let folder = config::shown(Path::new(&message.folder));
     let from = if message.by_user {
@@ -715,13 +736,7 @@ fn notice(message: &Message, then: Then, turns_limit: usize) -> String {
     };
     let mut notice = notice_line(&from, width);
     notice.push_str(&indented(&message.text, 4, width));
-    let what = match then {
-        Then::Now => text::MAIL_TAKEN_UP.to_string(),
-        Then::Later => text::MAIL_LATER.to_string(),
-        Then::Limit => text::mail_limit(turns_limit),
-        Then::User | Then::AfterTurn => text::MAIL_KEYS.to_string(),
-    };
-    for line in indented(&what, 4, width).lines() {
+    for line in indented(footer.unwrap_or_default(), 4, width).lines() {
         notice.push_str(&format!("{}\n", style::faint(line)));
     }
     notice
@@ -1192,6 +1207,18 @@ mod tests {
         assert!(a.news().unwrap().1.contains("repo-3 closed"));
         drop((a, elsewhere));
         fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn that_the_model_takes_mail_up_on_its_own_is_said_once() {
+        let inbox = Inbox::new(Mail::Auto, 3);
+        let mut state = inbox.lock();
+        assert_eq!(
+            state.footer(Then::Now).as_deref(),
+            Some(text::MAIL_TAKEN_UP)
+        );
+        assert_eq!(state.footer(Then::Now), None);
+        assert_eq!(state.footer(Then::User).as_deref(), Some(text::MAIL_KEYS));
     }
 
     #[test]
