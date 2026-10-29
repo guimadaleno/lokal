@@ -494,7 +494,11 @@ Tracked as issues:
   default, with a `context` setting**, and `server.rs` moved to `/api/v1`
   with it (#19);
 - **`! command` at the `>`, run as the person's own, its output going to
-  the model** (#32).
+  the model** (#32);
+- **modes on Shift+Tab: manual, accept edits, and auto with the local
+  model as judge**, deciding only what opens on Yes, and never in a turn
+  mail started (#33). It loosens three refusals above when it's built,
+  and #2's box is what would bound the judge's mistakes.
 
 Decided, and kept here so they aren't undone:
 
