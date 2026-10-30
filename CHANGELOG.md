@@ -10,6 +10,9 @@ copy and the page show as its notes.
 - Start a line with ! to run a command yourself, like !git status. It runs
   without asking, since you typed it, and what it gives goes to the model
   with your next message.
+- Shift+Tab turns on accept edits: changes to the files in your project go
+  through without asking, right after you see what changes. Press it
+  again to be asked for everything. Each session starts asking.
 
 ## 0.6.0 — 2026-10-29
 

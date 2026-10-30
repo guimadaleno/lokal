@@ -15,6 +15,7 @@ mod keys;
 mod markdown;
 mod memory;
 mod menu;
+mod mode;
 mod peers;
 mod prompt;
 mod reasoning;

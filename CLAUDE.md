@@ -39,6 +39,23 @@ dependencies.
     (`src/diff.rs`), so a new file doesn't flood the conversation. "Show the
     rest", between Yes and No, prints them and asks again. Saying yes without
     them is the person's choice, made with the count in front of them.
+  - **Accept edits is the one exception, and the person picks it** with
+    Shift+Tab (`src/mode.rs`), at the `>` or while Lokal works, from the
+    next step on. Then a change whose question would open on Yes
+    (`tools::write_opens_on_yes`) is written once its diff shows, with a
+    faint line saying so, since that rule already calls it day to day.
+    - **Everything else asks as always:** a file outside the working and
+      scratch folders, anything hidden on the way, and `remember`.
+    - **A turn mail started stays manual,** since another model wrote that
+      mail, and it may have been steered.
+    - **Every session starts on manual,** with no setting to start
+      otherwise, so the mode is chosen with eyes open each time.
+    - **A long diff still shows only its start:** the person chose not to
+      be asked, and inside git, `git diff` shows the rest.
+    - **The mode shows at the right of the `>` and in the spinner's label**
+      while it isn't manual, so Shift+Tab is seen to take, also mid-turn.
+      In a turn mail started they show the mode chosen, not the one that
+      applies there.
 - **Approve on a guess where a slip costs much.** A question opens on Yes,
   so Enter alone approves, only for what Lokal's own rule sees as day to day
   (`allowlist::opens_on_yes`, `tools::write_opens_on_yes`), never the
@@ -53,7 +70,8 @@ dependencies.
     folders, or in a hidden file or folder on the way (.git, .env, CI); and
     `remember`, which changes what every conversation starts with.
   - **The rule only picks where the question starts,** never whether there is
-    one. A command it gets wrong opens on No, as every one did before.
+    one, except for a file change in accept edits, which the person picked
+    (above). A command it gets wrong opens on No, as every one did before.
   - **A working folder that is the home folder or / doesn't count:** it would
     hold every file.
 - **Approve more than the person saw.** "Don't ask again" covers that exact
@@ -229,6 +247,7 @@ dependencies.
 | `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it |
 | `input.rs` | The `>` prompt (hints, completion, Ctrl+C twice) and approvals |
 | `menu.rs` | The arrow-key choice the approvals use |
+| `mode.rs` | The mode Shift+Tab picks: manual or accept edits |
 | `prompt.rs`, `system.rs` | The system prompt and the machine facts in it |
 | `memory.rs` | The project's notes: LOKAL.md and AGENTS.md, from the git root down |
 | `recon.rs` | `/recon`: what the machine and the project have, gathered by Lokal itself |
@@ -263,8 +282,8 @@ dependencies.
   nothing can wait on the terminal (sudo fails at once instead of hanging),
   and Ctrl+C reaches a command only through Lokal.
 - **While Lokal works, it reads the keyboard itself** (`keys.rs`): Ctrl+C or
-  a lone Esc stops the turn, and other keys are dropped rather than echoed
-  over the output. The reader ends before anything asks the person
+  a lone Esc stops the turn, Shift+Tab (`ESC [ Z`) changes the mode, and
+  other keys are dropped rather than echoed over the output. The reader ends before anything asks the person
   something, so no key reaches a question it wasn't typed for.
 - **Mail prints only while the person is at the `>`,** through rustyline's
   `ExternalPrinter`. Outside readline that printer writes straight to the
@@ -503,10 +522,10 @@ Tracked as issues:
 - **the model reloaded with enough context when LM Studio gave it the 8K
   default, with a `context` setting**, and `server.rs` moved to `/api/v1`
   with it (#19);
-- **modes on Shift+Tab: manual, accept edits, and auto with the local
-  model as judge**, deciding only what opens on Yes, and never in a turn
-  mail started (#33). It loosens three refusals above when it's built,
-  and #2's box is what would bound the judge's mistakes.
+- **an auto mode on Shift+Tab, after accept edits, with the local model as
+  judge**, deciding only what opens on Yes, and never in a turn mail
+  started (#33). It loosens two more refusals above when it's built, and
+  #2's box is what would bound the judge's mistakes.
 
 Decided, and kept here so they aren't undone:
 

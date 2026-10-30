@@ -17,7 +17,7 @@ use crate::server::Server;
 use crate::spinner::Spinner;
 use crate::system::Facts;
 use crate::tools::{self, Outcome};
-use crate::{config, interrupt, keys, prompt, reasoning, style, text};
+use crate::{config, interrupt, keys, mode, prompt, reasoning, style, text};
 
 /// When the spinner starts saying what the model is doing.
 const LABEL_AFTER: Duration = Duration::from_secs(2);
@@ -333,7 +333,7 @@ impl Conversation {
             if reply.tool_calls.is_empty() {
                 break;
             }
-            if !self.run_tools(&reply, input) {
+            if !self.run_tools(&reply, input, on_mail) {
                 stepped_in = true;
                 break;
             }
@@ -347,10 +347,10 @@ impl Conversation {
         stepped_in
     }
 
-    /// Runs the tools the model asked for. False if the person stopped them.
-    /// Runs the tools the model asked for. False when the turn ends here:
-    /// the person stopped it or said no.
-    fn run_tools(&mut self, reply: &Reply, input: &mut Input) -> bool {
+    /// Runs the tools the model asked for, each in the mode chosen when it
+    /// starts. False when the turn ends here: the person stopped it or said
+    /// no.
+    fn run_tools(&mut self, reply: &Reply, input: &mut Input, on_mail: bool) -> bool {
         let mut stopped = false;
         let mut declined = false;
         for (index, call) in reply.tool_calls.iter().enumerate() {
@@ -367,7 +367,8 @@ impl Conversation {
                 let calls_left = reply.tool_calls.len() - index;
                 let room = self.room_for_output().map(|room| room / calls_left);
                 let scratch = self.facts.scratch.as_deref().map(Path::new);
-                let outcome = tools::run(call, input, room, scratch, self.peers.as_ref());
+                let mode = mode::for_step(on_mail);
+                let outcome = tools::run(call, input, mode, room, scratch, self.peers.as_ref());
                 // A blank line after each step, so its output doesn't run into what follows.
                 eprintln!();
                 match outcome {
@@ -454,6 +455,7 @@ impl Conversation {
                             started,
                             writing.as_ref(),
                             &progress(generated, first_piece),
+                            text::mode_name(mode::current()),
                         );
                         spinner.redraw(&label);
                     }
@@ -496,8 +498,12 @@ impl Conversation {
             // reasoning or a file being written can stream with no pause for
             // seconds, and the spinner would freeze.
             if !mid_line && spinner.due() {
-                let label =
-                    working_label(started, writing.as_ref(), &progress(generated, first_piece));
+                let label = working_label(
+                    started,
+                    writing.as_ref(),
+                    &progress(generated, first_piece),
+                    text::mode_name(mode::current()),
+                );
                 spinner.tick_with(&label);
             }
         }
@@ -707,19 +713,28 @@ struct ToolProgress {
 }
 
 /// What the spinner says while the model works, once it has taken a moment:
-/// a long silence looks like a hang otherwise. `progress` goes after the
-/// time, most important first.
-fn working_label(started: Instant, writing: Option<&ToolProgress>, progress: &[String]) -> String {
+/// a long silence looks like a hang otherwise. The mode, when it isn't
+/// manual, shows at once and first, so Shift+Tab is seen to take; then the
+/// time, and `progress`, most important first.
+fn working_label(
+    started: Instant,
+    writing: Option<&ToolProgress>,
+    progress: &[String],
+    mode: Option<&str>,
+) -> String {
     let elapsed = started.elapsed();
-    if elapsed < LABEL_AFTER {
+    if elapsed < LABEL_AFTER && mode.is_none() {
         return String::new();
     }
-    let mut parts = vec![text::duration(elapsed)];
-    // A server may hold a tool call's arguments back until they're complete:
-    // while nothing arrives to count, only the time, rather than a size, a
-    // token count and a speed that sit still.
-    if writing.is_none_or(|call| call.bytes > 0) {
-        parts.extend_from_slice(progress);
+    let mut parts: Vec<String> = mode.into_iter().map(String::from).collect();
+    if elapsed >= LABEL_AFTER {
+        parts.push(text::duration(elapsed));
+        // A server may hold a tool call's arguments back until they're
+        // complete: while nothing arrives to count, only the time, rather
+        // than a size, a token count and a speed that sit still.
+        if writing.is_none_or(|call| call.bytes > 0) {
+            parts.extend_from_slice(progress);
+        }
     }
     // On one line, or the spinner's redraw would leave the rest behind.
     let room = style::terminal_width().map_or(80, |width| width.saturating_sub(4));
@@ -1074,21 +1089,33 @@ mod tests {
     }
 
     #[test]
+    fn the_mode_shows_at_once_and_first() {
+        let progress = ["~2k of 33k tokens".to_string()];
+        assert_eq!(working_label(Instant::now(), None, &progress, None), "");
+        let at_once = working_label(Instant::now(), None, &progress, Some("accept edits"));
+        assert!(at_once.contains("thinking · accept edits") && !at_once.contains("tokens"));
+        let later = Instant::now() - Duration::from_secs(3);
+        let label = working_label(later, None, &progress, Some("accept edits"));
+        assert!(label.contains("thinking · accept edits · 3s · ~2k of 33k tokens"));
+    }
+
+    #[test]
     fn the_label_leaves_progress_out_while_arguments_are_held_back() {
         let started = Instant::now() - Duration::from_secs(3);
         let progress = ["~2k of 33k tokens".to_string(), "52 tok/s".to_string()];
         assert!(
-            working_label(started, None, &progress).contains("3s · ~2k of 33k tokens · 52 tok/s")
+            working_label(started, None, &progress, None)
+                .contains("3s · ~2k of 33k tokens · 52 tok/s")
         );
         let held = ToolProgress {
             name: "run_command".into(),
             path: None,
             bytes: 0,
         };
-        assert!(!working_label(started, Some(&held), &progress).contains("tokens"));
+        assert!(!working_label(started, Some(&held), &progress, None).contains("tokens"));
         // Where it doesn't fit on the line, the progress goes from its end.
         let long = ["~2k of 33k tokens".to_string(), "x".repeat(80)];
-        let label = working_label(started, None, &long);
+        let label = working_label(started, None, &long, None);
         assert!(label.contains("3s · ~2k of 33k tokens") && !label.contains('x'));
     }
 
@@ -1101,7 +1128,7 @@ mod tests {
             path: Some("/srv/some/deep/folder/a_rather_long_file_name_123.rs".into()),
             bytes: 2000,
         };
-        let label = working_label(started, Some(&writing), &progress);
+        let label = working_label(started, Some(&writing), &progress, None);
         assert!(label.contains("a_rather_long_file_name_123.rs"));
         assert!(label.contains("tokens") && !label.contains("tok/s"));
     }

@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use crate::chat::ToolCall;
 use crate::input::{Approval, Input};
+use crate::mode::Mode;
 use crate::peers::{self, Peers, Then, Undelivered};
 use crate::shell::{self, Run};
 use crate::{allowlist, config, diff, gitconfig, interrupt, style, text};
@@ -139,12 +140,13 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
     })
 }
 
-/// Runs one tool call. `room` is how many characters its output may take,
-/// when the context's size is known; `scratch` is the session's folder, and
-/// `peers` the other sessions, when this one listens.
+/// Runs one tool call in `mode`. `room` is how many characters its output
+/// may take, when the context's size is known; `scratch` is the session's
+/// folder, and `peers` the other sessions, when this one listens.
 pub fn run(
     call: &ToolCall,
     input: &mut Input,
+    mode: Mode,
     room: Option<usize>,
     scratch: Option<&Path>,
     peers: Option<&Peers>,
@@ -153,8 +155,8 @@ pub fn run(
         Ok(args) => match (call.name.as_str(), peers) {
             ("run_command", _) => run_command(&args, input, room),
             ("read_file", _) => read_file(&args, room),
-            ("write_file", _) => write_file(&args, input, scratch, peers),
-            ("edit_file", _) => edit_file(&args, input, scratch, peers),
+            ("write_file", _) => write_file(&args, input, mode, scratch, peers),
+            ("edit_file", _) => edit_file(&args, input, mode, scratch, peers),
             ("remember", _) => remember(&args, input),
             ("list_sessions", Some(peers)) => Ok(list_sessions(peers)),
             ("mail", Some(peers)) => mail(&args, peers),
@@ -354,6 +356,7 @@ fn read_part(
 fn write_file(
     args: &Value,
     input: &mut Input,
+    mode: Mode,
     scratch: Option<&Path>,
     peers: Option<&Peers>,
 ) -> Result<Outcome, String> {
@@ -369,14 +372,13 @@ fn write_file(
     } else {
         text::STEP_CREATE
     };
-    let on_yes = write_opens_on_yes(&path, scratch);
     propose(
         &path,
         step,
         old.as_deref().unwrap_or(""),
         content,
         input,
-        on_yes,
+        asking(write_opens_on_yes(&path, scratch), mode),
         peers,
     )
 }
@@ -384,6 +386,7 @@ fn write_file(
 fn edit_file(
     args: &Value,
     input: &mut Input,
+    mode: Mode,
     scratch: Option<&Path>,
     peers: Option<&Peers>,
 ) -> Result<Outcome, String> {
@@ -411,8 +414,8 @@ fn edit_file(
         }
     }
     let new = old.replacen(old_text, new_text, 1);
-    let on_yes = write_opens_on_yes(&path, scratch);
-    propose(&path, text::STEP_EDIT, &old, &new, input, on_yes, peers)
+    let asking = asking(write_opens_on_yes(&path, scratch), mode);
+    propose(&path, text::STEP_EDIT, &old, &new, input, asking, peers)
 }
 
 /// The one way the model changes user.md: a line the person asked it to
@@ -444,8 +447,16 @@ fn remember(args: &Value, input: &mut Input) -> Result<Outcome, String> {
             "It's already in user.md, so nothing changed.".into(),
         ));
     };
-    // On No: it changes what every conversation starts with.
-    propose(&path, text::STEP_REMEMBER, &old, &new, input, false, None)
+    // On No, in every mode: it changes what every conversation starts with.
+    propose(
+        &path,
+        text::STEP_REMEMBER,
+        &old,
+        &new,
+        input,
+        Asking::OnNo,
+        None,
+    )
 }
 
 /// user.md with `note` added at its end, or in place of the line `replaces`
@@ -624,16 +635,35 @@ fn too_long() -> String {
     )
 }
 
-/// Shows the change as a diff and writes it if the person agrees. The
-/// question opens on Yes only when `opens_on_yes`. The other sessions,
-/// when given, hear which file changed.
+/// Whether a file change asks, and where its question starts.
+#[derive(Clone, Copy, PartialEq)]
+enum Asking {
+    OnNo,
+    OnYes,
+    /// Where it would start on Yes, with edits accepted.
+    Not,
+}
+
+/// How a file change is put to the person in `mode`, from whether its
+/// question would open on Yes (`write_opens_on_yes`).
+fn asking(opens_on_yes: bool, mode: Mode) -> Asking {
+    match (opens_on_yes, mode) {
+        (false, _) => Asking::OnNo,
+        (true, Mode::Manual) => Asking::OnYes,
+        (true, Mode::AcceptEdits) => Asking::Not,
+    }
+}
+
+/// Shows the change as a diff and writes it if the person agrees, or
+/// without asking when `asking` says so. The other sessions, when given,
+/// hear which file changed.
 fn propose(
     path: &Path,
     step: &str,
     old: &str,
     new: &str,
     input: &mut Input,
-    opens_on_yes: bool,
+    asking: Asking,
     peers: Option<&Peers>,
 ) -> Result<Outcome, String> {
     if old == new && step == text::STEP_EDIT {
@@ -643,10 +673,15 @@ fn propose(
     }
     eprintln!("{} {}", style::accent(step), config::shown(path));
     let rest = diff::show(old, new);
-    if let Some(outcome) = refused(input.approve_write(rest, opens_on_yes)) {
+    if asking != Asking::Not
+        && let Some(outcome) = refused(input.approve_write(rest, asking == Asking::OnYes))
+    {
         return Ok(outcome);
     }
     config::write(path, new).map_err(|error| format!("can't write {}: {error}", path.display()))?;
+    if asking == Asking::Not {
+        eprintln!("  {}", style::faint(text::WRITTEN_UNASKED));
+    }
     if let Some(peers) = peers {
         peers.wrote(path);
     }
@@ -936,6 +971,14 @@ mod tests {
         ] {
             assert!(!is_everyday_place(Path::new(path), &folders), "{path}");
         }
+    }
+
+    #[test]
+    fn accept_edits_skips_only_the_questions_that_open_on_yes() {
+        assert!(asking(true, Mode::Manual) == Asking::OnYes);
+        assert!(asking(true, Mode::AcceptEdits) == Asking::Not);
+        assert!(asking(false, Mode::Manual) == Asking::OnNo);
+        assert!(asking(false, Mode::AcceptEdits) == Asking::OnNo);
     }
 
     #[test]

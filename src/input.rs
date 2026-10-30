@@ -1,7 +1,7 @@
 //! Reading from the person: the `>` prompt, with slash-command hints and
-//! completion, the status of the last turn, Ctrl+C twice to quit, and the
-//! mail from other sessions above it; and the yes/no questions before
-//! anything changes.
+//! completion, the status of the last turn, Shift+Tab for the mode, Ctrl+C
+//! twice to quit, and the mail from other sessions above it; and the yes/no
+//! questions before anything changes.
 
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -25,7 +25,7 @@ use rustyline::{
 
 use crate::approvals::ProjectApprovals;
 use crate::peers::{Directory, Inbox};
-use crate::{config, diff, menu, style, text};
+use crate::{config, diff, menu, mode, style, text};
 
 const PROMPT: &str = "> ";
 /// How long after Esc another key makes it part of one, like an arrow
@@ -162,6 +162,8 @@ impl Input {
             KeyEvent::ctrl('C'),
             EventHandler::Conditional(Box::new(ctrl_c)),
         );
+        let shift_tab = KeyEvent(KeyCode::BackTab, Modifiers::NONE);
+        editor.bind_sequence(shift_tab, EventHandler::Conditional(Box::new(NextMode)));
         let esc = KeyEvent(KeyCode::Esc, Modifiers::NONE);
         let dropping = Arc::new(AtomicBool::new(false));
         if let Some(inbox) = &self.inbox {
@@ -176,6 +178,7 @@ impl Input {
         if self.inbox.is_some() {
             editor.unbind_sequence(esc);
         }
+        editor.unbind_sequence(shift_tab);
         editor.unbind_sequence(KeyEvent::ctrl('C'));
         // A reminder left over must not show at the next question.
         self.quit_armed.store(false, Ordering::SeqCst);
@@ -379,6 +382,22 @@ impl ConditionalEventHandler for QuitOnSecondCtrlC {
     }
 }
 
+/// Shift+Tab at the `>`: the next mode, which shows at the right at once.
+struct NextMode;
+
+impl ConditionalEventHandler for NextMode {
+    fn handle(
+        &self,
+        _event: &Event,
+        _count: RepeatCount,
+        _positive: bool,
+        _context: &EventContext,
+    ) -> Option<Cmd> {
+        mode::next();
+        Some(Cmd::Repaint)
+    }
+}
+
 /// Esc on an empty line, while mail from other sessions waits: ends the
 /// line, so `request` says they're to be dropped. Otherwise Esc does what it
 /// always did.
@@ -418,7 +437,8 @@ struct Helper {
 
 impl Helper {
     /// What shows at the right edge: the mail waiting, at the `>` only,
-    /// where Enter and Esc act on it; then the status.
+    /// where Enter and Esc act on it, and the mode, where Shift+Tab changes
+    /// it; then the status.
     fn status(&self) -> Option<String> {
         let waiting = self
             .inbox
@@ -427,7 +447,14 @@ impl Helper {
             .map(Inbox::count)
             .filter(|count| *count > 0)
             .map(text::mail_waiting);
-        let parts: Vec<String> = waiting.into_iter().chain(self.status.clone()).collect();
+        let mode = text::mode_name(mode::current())
+            .filter(|_| self.accented)
+            .map(String::from);
+        let parts: Vec<String> = waiting
+            .into_iter()
+            .chain(mode)
+            .chain(self.status.clone())
+            .collect();
         (!parts.is_empty()).then(|| parts.join(" · "))
     }
 

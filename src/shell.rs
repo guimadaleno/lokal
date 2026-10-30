@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::spinner::Spinner;
-use crate::{interrupt, keys, style, text};
+use crate::{interrupt, keys, mode, style, text};
 
 /// How many lines of output show on screen; the model gets more.
 const SHOWN_LINES: usize = 12;
@@ -159,14 +159,22 @@ impl Screen {
         }
     }
 
-    /// The spinner, and once the command has taken a while, for how long:
-    /// a silent command looks like the model thinking otherwise.
+    /// The spinner, with the mode when it isn't manual, so Shift+Tab is seen
+    /// to take; and once the command has taken a while, for how long: a
+    /// silent command looks like the model thinking otherwise.
     fn tick(&mut self) {
         let running = self.started.elapsed();
-        if running < SHOW_TIME_AFTER {
+        let mut parts: Vec<String> = text::mode_name(mode::current())
+            .into_iter()
+            .map(String::from)
+            .collect();
+        if running >= SHOW_TIME_AFTER {
+            parts.push(text::duration(running));
+        }
+        if parts.is_empty() {
             self.spinner.tick();
         } else {
-            let label = format!(" {}", style::faint(&text::duration(running)));
+            let label = format!(" {}", style::faint(&parts.join(" · ")));
             self.spinner.tick_with(&label);
         }
     }

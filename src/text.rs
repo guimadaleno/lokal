@@ -52,6 +52,8 @@ Tab completes a command. Ctrl+C or Esc stops whatever's running; at the >,
 Ctrl+C clears what you typed, and twice on an empty line it quits.
 A line starting with ! runs the rest as your own command, and what it gives
 goes to the model with your next message.
+Shift+Tab switches to accept edits and back: a change to a file in the
+working folder then goes through without asking, once its diff shows.
 Mail from your other Lokal sessions shows above the >. Waiting mail goes to
 the model with Enter on an empty line, and Esc drops it. A line starting
 with @name mails that session.
@@ -100,6 +102,19 @@ pub const APPROVALS_HEADER: &str = "\
 # then the exact command. Delete a line to be asked again.
 ";
 pub const NO_TERMINAL: &str = "Skipped: there's no terminal to ask you on.";
+
+/// The mode, at the right of the `>` and beside the spinner. Manual has
+/// none: it's how Lokal always works.
+pub fn mode_name(mode: crate::mode::Mode) -> Option<&'static str> {
+    use crate::mode::Mode;
+    match mode {
+        Mode::Manual => None,
+        Mode::AcceptEdits => Some("accept edits"),
+    }
+}
+
+/// Under a diff that went through without a question.
+pub const WRITTEN_UNASKED: &str = "written without asking: accept edits is on";
 
 /// Under a `!command` that couldn't start.
 pub fn cant_start_bash(error: &str) -> String {

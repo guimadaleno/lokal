@@ -1,9 +1,10 @@
 //! While Lokal works, it reads the keyboard itself, so Ctrl+C or Esc stops
 //! the work as a key, the way Ctrl+C does at the prompt. Some terminals never
 //! turn Ctrl+C into a signal while a program runs (a Windows console running
-//! WSL), and there the key is the only way it arrives. Other keys typed
-//! meanwhile aren't echoed into the output, where they'd break the spinner's
-//! and the reasoning window's redraws; they're dropped.
+//! WSL), and there the key is the only way it arrives. Shift+Tab changes the
+//! mode, as at the prompt. Other keys typed meanwhile aren't echoed into the
+//! output, where they'd break the spinner's and the reasoning window's
+//! redraws; they're dropped.
 
 use std::fs::{File, OpenOptions};
 use std::os::fd::AsRawFd;
@@ -11,11 +12,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
-use crate::interrupt;
+use crate::{interrupt, mode};
 
 /// Ctrl+C, as a key.
 const CTRL_C: u8 = 3;
 const ESCAPE: u8 = 0x1b;
+/// What terminals send for Shift+Tab.
+const SHIFT_TAB: &[u8] = b"\x1b[Z";
 
 /// The keyboard, read for as long as this lives; the terminal is put back as
 /// it was however it ends.
@@ -80,6 +83,13 @@ fn read_keys(fd: i32, stop: &AtomicBool) {
         let keys = &buffer[..read as usize];
         if keys.contains(&CTRL_C) || (keys == [ESCAPE] && !more_follows(fd)) {
             interrupt::raise();
+        }
+        // From the next step on; the spinner's label shows it.
+        for _ in keys
+            .windows(SHIFT_TAB.len())
+            .filter(|keys| *keys == SHIFT_TAB)
+        {
+            mode::next();
         }
     }
 }
