@@ -7,6 +7,8 @@ use std::os::fd::AsRawFd;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+use crate::mode::Mode;
+
 pub fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| std::io::stderr().is_terminal())
@@ -47,6 +49,16 @@ pub fn mention(text: &str) -> String {
 /// The mail itself, under its mention: faint, in italics.
 pub fn faint_italic(text: &str) -> String {
     paint("3;38;5;239", text)
+}
+
+/// The mode at the right of the `>`, seen at a glance: accept edits in a
+/// soft purple, auto in a yellow that stands out more.
+pub fn mode(text: &str, mode: Mode) -> String {
+    match mode {
+        Mode::Manual => faint(text),
+        Mode::AcceptEdits => paint("38;5;141", text),
+        Mode::Auto => paint("38;5;221", text),
+    }
 }
 
 /// The faint label while the model works, breathing slowly a little brighter.

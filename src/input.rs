@@ -589,13 +589,26 @@ impl Highlighter for Helper {
         }
     }
 
-    /// The reminder and the status are the dimmest things on screen.
+    /// The reminder and the status are the dimmest things on screen; the
+    /// mode among them has its own color.
     fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
         if self.command_hint.get() {
-            Cow::Owned(style::gray(hint))
-        } else {
-            Cow::Owned(style::faint(hint))
+            return Cow::Owned(style::gray(hint));
         }
+        let mode = mode::current();
+        if let Some(name) = text::mode_name(mode).filter(|_| self.accented)
+            && let Some(at) = hint.find(name)
+        {
+            let (before, rest) = hint.split_at(at);
+            let after = &rest[name.len()..];
+            return Cow::Owned(format!(
+                "{}{}{}",
+                style::faint(before),
+                style::mode(name, mode),
+                style::faint(after)
+            ));
+        }
+        Cow::Owned(style::faint(hint))
     }
 
     /// Without this, a typed character is drawn as is, without the color.
