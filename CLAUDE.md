@@ -242,7 +242,7 @@ dependencies.
   glitched, so don't bring it back.
   - **The mode at the right of the `>` has a color of its own**
     (`style::mode`), so it's seen at a glance: accept edits in a soft
-    purple, auto in a yellow that stands out more, since it asks least.
+    pink, auto in a yellow that stands out more, since it asks least.
     The rest of the status stays faint.
   - **Mail a session sends reads like a mention:** `@name` in the accent
     and in italics, and the mail under it faint and italic

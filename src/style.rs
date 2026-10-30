@@ -52,11 +52,12 @@ pub fn faint_italic(text: &str) -> String {
 }
 
 /// The mode at the right of the `>`, seen at a glance: accept edits in a
-/// soft purple, auto in a yellow that stands out more.
+/// soft pink (truecolor, as the 256-color pinks are off), auto in a yellow
+/// that stands out more.
 pub fn mode(text: &str, mode: Mode) -> String {
     match mode {
         Mode::Manual => faint(text),
-        Mode::AcceptEdits => paint("38;5;141", text),
+        Mode::AcceptEdits => paint("38;2;253;172;195", text),
         Mode::Auto => paint("38;5;221", text),
     }
 }
