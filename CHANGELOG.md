@@ -11,8 +11,14 @@ copy and the page show as its notes.
   without asking, since you typed it, and what it gives goes to the model
   with your next message.
 - Shift+Tab turns on accept edits: changes to the files in your project go
-  through without asking, right after you see what changes. Press it
-  again to be asked for everything. Each session starts asking.
+  through without asking, right after you see what changes. Each session
+  starts asking.
+- Press Shift+Tab once more for auto. Lokal then also asks the model,
+  separately, whether each everyday command is fine, and runs it without
+  asking you when it says yes. It's a model on your own computer and it
+  will get some wrong, so use auto at your own risk. Riskier commands, like
+  deleting files or sudo, always ask. Shift+Tab again goes back to asking
+  for everything.
 
 ## 0.6.0 — 2026-10-29
 

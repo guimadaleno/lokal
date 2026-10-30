@@ -18,6 +18,32 @@ dependencies.
     a terminal, but without `gitconfig::UNASKED`, which guards only what
     runs unasked. What it gives goes to the model with the person's next
     request, never with a turn mail starts.
+  - **Auto, the last mode on Shift+Tab, is the one place a model decides**
+    (`src/judge.rs`), and the person is told, once a session, that it will
+    get some wrong and is used at their own risk. It's the model, asked
+    apart from the conversation, whether a command that would open on Yes
+    may run without the question.
+    - **It can only take away:** its yes runs the command, and its no, or a
+      reply Lokal can't read as yes or no, asks the person, on No, with its
+      reason. A judge wrong toward caution costs an Enter.
+    - **Lokal's floor never reaches it:** a command whose question opens on
+      No (`allowlist::opens_on_yes`) or git with a repository setting that
+      runs a program asks as always. Read-only commands and "don't ask
+      again" approvals run as they do in every mode.
+    - **What it reads is the person's or Lokal's own:** the person's last
+      three requests as they typed them, the command, the model's
+      explanation, the working folder and the files written this turn. The
+      model's words, the explanation and the paths, come as one short line
+      each. Never the outputs or the files the model read, where text that
+      steers a model comes from.
+    - **What it lets through shows,** the `$` line and a faint "auto ran
+      it" with its reason, and runs with `gitconfig::UNASKED`, like
+      anything else no one said yes to.
+    - **The model's own code still runs as the person:** a script it wrote
+      (accepted as an edit) and then ran with `cargo test` or `python` is a
+      command the judge sees, not what the script does. Only #2's box
+      bounds that.
+    - **A turn mail started stays manual,** as in accept edits below.
   - **git also runs programs a repository's own settings name, even to
     read:** core.fsmonitor on `git status`, filters and diff drivers on
     `git diff`, `log -p` and `blame`, `gpg.program` on `git log` (measured
@@ -41,9 +67,10 @@ dependencies.
     them is the person's choice, made with the count in front of them.
   - **Accept edits is the one exception, and the person picks it** with
     Shift+Tab (`src/mode.rs`), at the `>` or while Lokal works, from the
-    next step on. Then a change whose question would open on Yes
-    (`tools::write_opens_on_yes`) is written once its diff shows, with a
-    faint line saying so, since that rule already calls it day to day.
+    next step on, and auto after it includes it. Then a change whose
+    question would open on Yes (`tools::write_opens_on_yes`) is written once
+    its diff shows, with a faint line saying so, since that rule already
+    calls it day to day.
     - **Everything else asks as always:** a file outside the working and
       scratch folders, anything hidden on the way, and `remember`.
     - **A turn mail started stays manual,** since another model wrote that
@@ -59,9 +86,11 @@ dependencies.
 - **Approve on a guess where a slip costs much.** A question opens on Yes,
   so Enter alone approves, only for what Lokal's own rule sees as day to day
   (`allowlist::opens_on_yes`, `tools::write_opens_on_yes`), never the
-  model's judgement. Esc is always No, and a key or a number only moves to
-  its option, for Enter to pick, so a stray key never approves. Saying no
-  ends the turn, so the person says what to do instead.
+  model's judgement, except in the modes the person picks on Shift+Tab
+  (above), where what opens on Yes may need no Enter at all. Esc is always
+  No, and a key or a number only moves to its option, for Enter to pick, so
+  a stray key never approves. Saying no ends the turn, so the person says
+  what to do instead.
   - **On No:** anything the rule can't read whole; commands that reach past
     the person (sudo), run code Lokal can't see (a shell, xargs, `curl | sh`,
     a Windows program), delete or overwrite (rm, mv, dd, `git push`, `reset`,
@@ -247,7 +276,8 @@ dependencies.
 | `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it |
 | `input.rs` | The `>` prompt (hints, completion, Ctrl+C twice) and approvals |
 | `menu.rs` | The arrow-key choice the approvals use |
-| `mode.rs` | The mode Shift+Tab picks: manual or accept edits |
+| `mode.rs` | The mode Shift+Tab picks: manual, accept edits or auto |
+| `judge.rs` | Auto's judge: the model, asked apart, on one command |
 | `prompt.rs`, `system.rs` | The system prompt and the machine facts in it |
 | `memory.rs` | The project's notes: LOKAL.md and AGENTS.md, from the git root down |
 | `recon.rs` | `/recon`: what the machine and the project have, gathered by Lokal itself |
@@ -469,11 +499,12 @@ cargo clippy --all-targets
 
 | What | Measured |
 |---|---|
-| Release binary (static, stripped) | 2.1 MB |
+| Release binary (static, stripped) | 2.2 MB |
 | Start to the prompt, server found | ~40 ms |
 | Memory at the prompt | ~3 MB |
+| Auto's judge, a 27B model with reasoning off (Ollama 0.40.2) | 1.1–1.9 s a command; 6–22 s with reasoning; the conversation's prompt cache stays |
 
-Measured on a current laptop, under WSL.
+Measured on a current laptop, under WSL; the judge on a consumer GPU.
 
 ## Unverified paths
 
@@ -495,9 +526,20 @@ Measured on a current laptop, under WSL.
 - **The reasoning window with wide characters or a resize while it shows:**
   rows are cut by character count, so double-width characters may wrap and
   leave a row behind. Tested only with a fake server's plain text.
+- **Auto's judge with LM Studio:** it sends `reasoning_effort: "none"`.
+  Ollama 0.40.2 honors it (1.3 s instead of 8–12 s) and keeps the
+  conversation's prompt cache across the judge's request. Neither is
+  checked with LM Studio. A reasoning model that ignores it runs into the
+  judge's 100 tokens and asks the person after several seconds, and with
+  one slot (`parallel = 1`) the judge's request may evict the cache. Still
+  owed: both, on LM Studio.
+- **A turn mail started stays manual in every mode:** checked by a unit
+  test (`mode::for_step`) and by reading `run_tools`, not run with two
+  sessions in auto.
 - **Servers other than LM Studio:** the chat path should work with any
-  OpenAI-compatible server through `server = host:port`, but none has been
-  tried. The context gauge stays hidden without LM Studio's `/api/v0/models`.
+  OpenAI-compatible server through `server = host:port`. Only Ollama 0.40.2
+  has been tried, under WSL: a conversation with a command step, in auto.
+  The context gauge stays hidden without LM Studio's `/api/v0/models`.
   The speed is timed by Lokal from the first token on. The spinner counts
   a token a piece, and so does the prompt's status where a server sends no
   `usage.completion_tokens`: tried with a fake server that sends none.
@@ -508,7 +550,8 @@ Measured on a current laptop, under WSL.
 
 Tracked as issues:
 - **other local servers** (#1, Ollama first);
-- **an auto mode inside a sandbox** (#2);
+- **auto inside a sandbox**, so the judge's mistakes stay in a box the
+  kernel enforces (#2);
 - **queued messages while Lokal works** (#3);
 - **`/compact`, and the same on its own when dropping outputs isn't
   enough** (#4);
@@ -521,11 +564,7 @@ Tracked as issues:
 - **a vision model seeing an image through `read_file`** (#17);
 - **the model reloaded with enough context when LM Studio gave it the 8K
   default, with a `context` setting**, and `server.rs` moved to `/api/v1`
-  with it (#19);
-- **an auto mode on Shift+Tab, after accept edits, with the local model as
-  judge**, deciding only what opens on Yes, and never in a turn mail
-  started (#33). It loosens two more refusals above when it's built, and
-  #2's box is what would bound the judge's mistakes.
+  with it (#19).
 
 Decided, and kept here so they aren't undone:
 

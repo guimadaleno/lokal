@@ -11,6 +11,7 @@ mod http;
 mod input;
 mod install;
 mod interrupt;
+mod judge;
 mod keys;
 mod markdown;
 mod memory;
@@ -178,7 +179,7 @@ fn main() -> ExitCode {
         let goodbye = text::lasted(started.elapsed(), updated_to.as_deref());
         eprintln!("{}", style::gray(&goodbye));
     } else {
-        conversation.send(&request, &mut input, false);
+        conversation.send(&request, &mut input, Some(&request));
     }
     ExitCode::SUCCESS
 }
@@ -257,16 +258,17 @@ fn talk(
             peers.inbox().person_acted(Some(line));
         }
         let request = with_news(conversation, line);
-        turn(conversation, input, &request, false);
+        turn(conversation, input, &request, Some(line));
     }
 }
 
-/// One turn on `request`. When the person stops a turn on mail, or says no
-/// in one, mail waits for their next request: two models answering each
+/// One turn on `request`, which the person `asked` in their own words, or
+/// which is mail when None. When the person stops a turn on mail, or says
+/// no in one, mail waits for their next request: two models answering each
 /// other would otherwise start the next turn at once.
-fn turn(conversation: &mut Conversation, input: &mut Input, request: &str, on_mail: bool) {
-    if conversation.send(request, input, on_mail)
-        && on_mail
+fn turn(conversation: &mut Conversation, input: &mut Input, request: &str, asked: Option<&str>) {
+    if conversation.send(request, input, asked)
+        && asked.is_none()
         && let Some(peers) = conversation.peers()
     {
         peers.inbox().hold();
@@ -307,7 +309,7 @@ fn take_up_mail(conversation: &mut Conversation, input: &mut Input) {
     }
     inbox.turn_on_mail(&messages);
     let request = with_news(conversation, &peers::framed(&messages));
-    turn(conversation, input, &request, true);
+    turn(conversation, input, &request, None);
 }
 
 /// `@name …` at the `>`, for an open session: Lokal mails it what follows,
@@ -353,7 +355,7 @@ fn pass_on_messages(conversation: &mut Conversation, input: &mut Input) {
     // A blank line between the `>` and what follows, as after a request.
     eprintln!();
     let request = with_news(conversation, &peers::framed(&messages));
-    turn(conversation, input, &request, true);
+    turn(conversation, input, &request, None);
 }
 
 /// Esc on an empty line: the mail on screen goes, and the model never

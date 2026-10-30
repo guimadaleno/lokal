@@ -17,7 +17,7 @@ use crate::server::Server;
 use crate::spinner::Spinner;
 use crate::system::Facts;
 use crate::tools::{self, Outcome};
-use crate::{config, interrupt, keys, mode, prompt, reasoning, style, text};
+use crate::{config, interrupt, judge, keys, mode, prompt, reasoning, style, text};
 
 /// When the spinner starts saying what the model is doing.
 const LABEL_AFTER: Duration = Duration::from_secs(2);
@@ -75,6 +75,10 @@ pub struct Conversation {
     /// The commands the person ran at the `>` since their last request,
     /// framed for the model: they go along with the next one.
     own: Vec<String>,
+    /// The person's last requests, as they typed them, for auto's judge.
+    asked: Vec<String>,
+    /// The files written this turn, for auto's judge.
+    written: Vec<String>,
 }
 
 enum Failure {
@@ -97,6 +101,8 @@ impl Conversation {
             show_reasoning: false,
             peers,
             own: Vec::new(),
+            asked: Vec::new(),
+            written: Vec::new(),
         };
         conversation.notes = conversation.read_notes();
         conversation.refresh_system_prompt();
@@ -180,6 +186,7 @@ impl Conversation {
     pub fn clear(&mut self) {
         self.messages.clear();
         self.own.clear();
+        self.asked.clear();
         self.tokens = None;
         self.model_time = None;
         self.speed = None;
@@ -222,11 +229,19 @@ impl Conversation {
 
     /// Sends one request and works on it, tools and all, until the model
     /// answers, the person stops it, or something fails. True when the
-    /// person stepped in: stopped the turn or said no to a step. A request
-    /// `on_mail` is another session's, and what the person's own commands
-    /// gave waits for one of theirs.
-    pub fn send(&mut self, request: &str, input: &mut Input, on_mail: bool) -> bool {
+    /// person stepped in: stopped the turn or said no to a step. `asked` is
+    /// what the person typed, for auto's judge; None when the request is
+    /// another session's mail, and then what the person's own commands gave
+    /// waits for one of theirs.
+    pub fn send(&mut self, request: &str, input: &mut Input, asked: Option<&str>) -> bool {
         interrupt::clear();
+        let on_mail = asked.is_none();
+        if let Some(asked) = asked {
+            self.asked.push(asked.to_string());
+            let extra = self.asked.len().saturating_sub(judge::REQUESTS_KEPT);
+            self.asked.drain(..extra);
+        }
+        self.written.clear();
         let mut stepped_in = false;
         // Other sessions hear it's working: their mail waits for the turn to end.
         if let Some(peers) = &self.peers {
@@ -235,6 +250,14 @@ impl Conversation {
         // Notes edited since the last turn count from this one on.
         if self.refresh_notes() {
             eprintln!("{}\n", style::gray(text::NOTES_CHANGED));
+        }
+        // Chosen at the `>`, auto's warning shows here, before it acts.
+        if !on_mail && mode::warn_of_auto() {
+            let width = style::terminal_width().unwrap_or(80);
+            for line in crate::peers::indented(text::AUTO_WARNING, 0, width).lines() {
+                eprintln!("{}", style::gray(line));
+            }
+            eprintln!();
         }
         let turn_start = self.messages.len();
         let mut model_time = Duration::ZERO;
@@ -368,7 +391,17 @@ impl Conversation {
                 let room = self.room_for_output().map(|room| room / calls_left);
                 let scratch = self.facts.scratch.as_deref().map(Path::new);
                 let mode = mode::for_step(on_mail);
-                let outcome = tools::run(call, input, mode, room, scratch, self.peers.as_ref());
+                let case = judge::Case {
+                    server: &self.server,
+                    asked: &self.asked,
+                    folder: &self.facts.cwd,
+                    written: &self.written,
+                };
+                let peers = self.peers.as_ref();
+                let outcome = tools::run(call, input, mode, &case, room, scratch, peers);
+                if let Some(path) = tools::written_path(call, &outcome) {
+                    self.written.push(path);
+                }
                 // A blank line after each step, so its output doesn't run into what follows.
                 eprintln!();
                 match outcome {
@@ -866,6 +899,8 @@ mod tests {
             show_reasoning: false,
             peers: None,
             own: Vec::new(),
+            asked: Vec::new(),
+            written: Vec::new(),
         }
     }
 

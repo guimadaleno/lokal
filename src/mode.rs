@@ -2,7 +2,7 @@
 //! Shift+Tab, at the `>` or while Lokal works. Every session starts on
 //! manual, and a turn mail started stays manual whatever the mode.
 
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -10,13 +10,19 @@ pub enum Mode {
     Manual,
     /// File changes whose question would open on Yes go through without it.
     AcceptEdits,
+    /// Accept edits, and commands whose question would open on Yes run
+    /// when the judge says yes (`judge.rs`).
+    Auto,
 }
 
 static MODE: AtomicU8 = AtomicU8::new(0);
+/// Auto's warning has shown this session.
+static WARNED: AtomicBool = AtomicBool::new(false);
 
 pub fn current() -> Mode {
     match MODE.load(Ordering::SeqCst) {
         1 => Mode::AcceptEdits,
+        2 => Mode::Auto,
         _ => Mode::Manual,
     }
 }
@@ -25,7 +31,8 @@ pub fn current() -> Mode {
 pub fn next() {
     let next = match current() {
         Mode::Manual => Mode::AcceptEdits,
-        Mode::AcceptEdits => Mode::Manual,
+        Mode::AcceptEdits => Mode::Auto,
+        Mode::Auto => Mode::Manual,
     };
     MODE.store(next as u8, Ordering::SeqCst);
 }
@@ -36,6 +43,12 @@ pub fn for_step(on_mail: bool) -> Mode {
     if on_mail { Mode::Manual } else { current() }
 }
 
+/// True once a session, the first time it's asked with auto on: auto's
+/// warning shows then, when it's chosen or before it first acts.
+pub fn warn_of_auto() -> bool {
+    current() == Mode::Auto && !WARNED.swap(true, Ordering::SeqCst)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -43,10 +56,17 @@ mod tests {
     #[test]
     fn shift_tab_goes_round_and_mail_stays_manual() {
         assert_eq!(current(), Mode::Manual);
+        assert!(!warn_of_auto());
         next();
         assert_eq!(current(), Mode::AcceptEdits);
         assert_eq!(for_step(false), Mode::AcceptEdits);
         assert_eq!(for_step(true), Mode::Manual);
+        next();
+        assert_eq!(current(), Mode::Auto);
+        assert_eq!(for_step(true), Mode::Manual);
+        // The warning, once.
+        assert!(warn_of_auto());
+        assert!(!warn_of_auto());
         next();
         assert_eq!(current(), Mode::Manual);
     }

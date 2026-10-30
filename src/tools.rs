@@ -11,7 +11,8 @@ use serde_json::{Value, json};
 
 use crate::chat::ToolCall;
 use crate::input::{Approval, Input};
-use crate::mode::Mode;
+use crate::judge::{self, Verdict};
+use crate::mode::{self, Mode};
 use crate::peers::{self, Peers, Then, Undelivered};
 use crate::shell::{self, Run};
 use crate::{allowlist, config, diff, gitconfig, interrupt, style, text};
@@ -29,6 +30,8 @@ const CONTEXT_FULL: &str = "Answer with what you have, or, if that isn't enough,
     the context is full: /new starts a fresh conversation.";
 /// The longest line `remember` adds to user.md.
 const NOTE_LIMIT: usize = 200;
+/// How a file change's result starts, for the model and for `written_path`.
+const WROTE: &str = "Wrote";
 
 pub enum Outcome {
     /// The result for the model.
@@ -140,20 +143,23 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
     })
 }
 
-/// Runs one tool call in `mode`. `room` is how many characters its output
-/// may take, when the context's size is known; `scratch` is the session's
-/// folder, and `peers` the other sessions, when this one listens.
+/// Runs one tool call in `mode`, with what auto's judge reads in `case`.
+/// `room` is how many characters its output may take, when the context's
+/// size is known; `scratch` is the session's folder, and `peers` the other
+/// sessions, when this one listens.
 pub fn run(
     call: &ToolCall,
     input: &mut Input,
     mode: Mode,
+    case: &judge::Case,
     room: Option<usize>,
     scratch: Option<&Path>,
     peers: Option<&Peers>,
 ) -> Outcome {
+    let judge = (mode == Mode::Auto).then_some(case);
     let result = match serde_json::from_str::<Value>(&call.arguments) {
         Ok(args) => match (call.name.as_str(), peers) {
-            ("run_command", _) => run_command(&args, input, room),
+            ("run_command", _) => run_command(&args, input, room, judge),
             ("read_file", _) => read_file(&args, room),
             ("write_file", _) => write_file(&args, input, mode, scratch, peers),
             ("edit_file", _) => edit_file(&args, input, mode, scratch, peers),
@@ -168,7 +174,14 @@ pub fn run(
     result.unwrap_or_else(|error| Outcome::Done(format!("Error: {error}")))
 }
 
-fn run_command(args: &Value, input: &mut Input, room: Option<usize>) -> Result<Outcome, String> {
+/// Runs a command, asking first unless it's read-only. In auto, `judge`
+/// holds what the judge reads, and it decides what would open on Yes.
+fn run_command(
+    args: &Value,
+    input: &mut Input,
+    room: Option<usize>,
+    judge: Option<&judge::Case>,
+) -> Result<Outcome, String> {
     let command = text_arg(args, "command")?;
     eprintln!("{} {}", style::accent("$"), command.replace('\n', "\n  "));
     // git also runs what the repository's own settings name: then even a
@@ -182,7 +195,7 @@ fn run_command(args: &Value, input: &mut Input, room: Option<usize>) -> Result<O
     } else {
         None
     };
-    let unasked = allowlist::is_read_only(command) && git_warning.is_none();
+    let mut unasked = allowlist::is_read_only(command) && git_warning.is_none();
     if !unasked {
         eprintln!();
         if let Some(warning) = &git_warning {
@@ -195,18 +208,29 @@ fn run_command(args: &Value, input: &mut Input, room: Option<usize>) -> Result<O
             eprintln!("  {}", style::faint(note));
         } else {
             // What the model says the command does, where the person decides on it.
-            if let Some(explanation) = args["explanation"]
-                .as_str()
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-            {
+            let explanation = args["explanation"].as_str().map_or("", str::trim);
+            if !explanation.is_empty() {
                 eprintln!("  {}", style::gray(explanation));
             }
             let on_yes = allowlist::opens_on_yes(command) && git_warning.is_none();
-            let approval = input.approve(command, on_yes);
-            input.keep_approval(&approval, command);
-            if let Some(outcome) = refused(approval) {
-                return Ok(outcome);
+            // The judge only ever sees what would open on Yes.
+            let verdict = match judge.filter(|_| on_yes) {
+                Some(case) => match judged(command, explanation, case) {
+                    Some(verdict) => Some(verdict),
+                    None => return Ok(Outcome::Stopped),
+                },
+                None => None,
+            };
+            if let Some(Verdict::Yes(reason)) = &verdict {
+                print_indented(&text::judge_ran(reason), style::faint);
+                unasked = true;
+            } else {
+                // The judge's no, or a verdict it couldn't read, asks on No.
+                let approval = input.approve(command, on_yes && verdict.is_none());
+                input.keep_approval(&approval, command);
+                if let Some(outcome) = refused(approval) {
+                    return Ok(outcome);
+                }
             }
         }
     }
@@ -221,6 +245,30 @@ fn run_command(args: &Value, input: &mut Input, room: Option<usize>) -> Result<O
             limit(room, OUTPUT_LIMIT),
         ))),
         Run::Stopped => Ok(Outcome::Stopped),
+    }
+}
+
+/// Auto's judge on a command, with auto's warning the first time it acts,
+/// and why it asks when it does. None when the person stopped it.
+fn judged(command: &str, explanation: &str, case: &judge::Case) -> Option<Verdict> {
+    if mode::warn_of_auto() {
+        print_indented(text::AUTO_WARNING, style::gray);
+    }
+    let verdict = judge::ask(command, explanation, case)?;
+    match &verdict {
+        Verdict::No(reason) => print_indented(&text::judge_asks(reason), style::gray),
+        Verdict::Unread => print_indented(text::JUDGE_UNREAD, style::gray),
+        Verdict::Yes(_) => {}
+    }
+    Some(verdict)
+}
+
+/// A line in a step, going on under its own start where it doesn't fit,
+/// each row painted on its own.
+fn print_indented(text: &str, paint: fn(&str) -> String) {
+    let width = style::terminal_width().unwrap_or(80);
+    for line in peers::indented(text, 2, width).lines() {
+        eprintln!("{}", paint(line));
     }
 }
 
@@ -650,7 +698,7 @@ fn asking(opens_on_yes: bool, mode: Mode) -> Asking {
     match (opens_on_yes, mode) {
         (false, _) => Asking::OnNo,
         (true, Mode::Manual) => Asking::OnYes,
-        (true, Mode::AcceptEdits) => Asking::Not,
+        (true, Mode::AcceptEdits | Mode::Auto) => Asking::Not,
     }
 }
 
@@ -685,7 +733,19 @@ fn propose(
     if let Some(peers) = peers {
         peers.wrote(path);
     }
-    Ok(Outcome::Done(format!("Wrote {}.", path.display())))
+    Ok(Outcome::Done(format!("{WROTE} {}.", path.display())))
+}
+
+/// The file a call wrote, if it wrote one, as auto's judge hears of it.
+pub fn written_path(call: &ToolCall, outcome: &Outcome) -> Option<String> {
+    let Outcome::Done(result) = outcome else {
+        return None;
+    };
+    if !matches!(call.name.as_str(), "write_file" | "edit_file") || !result.starts_with(WROTE) {
+        return None;
+    }
+    let args = serde_json::from_str::<Value>(&call.arguments).ok()?;
+    path_arg(&args).ok().map(|path| path.display().to_string())
 }
 
 /// Whether a file change's question may open on Yes: only for a file in the
@@ -979,6 +1039,8 @@ mod tests {
         assert!(asking(true, Mode::AcceptEdits) == Asking::Not);
         assert!(asking(false, Mode::Manual) == Asking::OnNo);
         assert!(asking(false, Mode::AcceptEdits) == Asking::OnNo);
+        assert!(asking(true, Mode::Auto) == Asking::Not);
+        assert!(asking(false, Mode::Auto) == Asking::OnNo);
     }
 
     #[test]

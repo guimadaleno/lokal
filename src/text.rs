@@ -52,8 +52,9 @@ Tab completes a command. Ctrl+C or Esc stops whatever's running; at the >,
 Ctrl+C clears what you typed, and twice on an empty line it quits.
 A line starting with ! runs the rest as your own command, and what it gives
 goes to the model with your next message.
-Shift+Tab switches to accept edits and back: a change to a file in the
-working folder then goes through without asking, once its diff shows.
+Shift+Tab goes from asking for everything to accept edits, where a change to
+a file in the working folder goes through once its diff shows, then to auto,
+where the model, asked apart, also lets everyday commands run.
 Mail from your other Lokal sessions shows above the >. Waiting mail goes to
 the model with Enter on an empty line, and Esc drops it. A line starting
 with @name mails that session.
@@ -110,11 +111,36 @@ pub fn mode_name(mode: crate::mode::Mode) -> Option<&'static str> {
     match mode {
         Mode::Manual => None,
         Mode::AcceptEdits => Some("accept edits"),
+        Mode::Auto => Some("auto"),
     }
 }
 
 /// Under a diff that went through without a question.
-pub const WRITTEN_UNASKED: &str = "written without asking: accept edits is on";
+pub const WRITTEN_UNASKED: &str = "written without asking: edits are accepted";
+
+/// Once a session, when auto is chosen or first acts.
+pub const AUTO_WARNING: &str = "Auto runs everyday commands without asking when the model, asked \
+    apart, says they're fine. It's a local model, and it will get some wrong: use it at your own \
+    risk. Risky commands still ask.";
+/// Beside the spinner while the judge decides.
+pub const JUDGING: &str = "auto · asking the model apart";
+/// Under a command auto ran.
+pub fn judge_ran(reason: &str) -> String {
+    if reason.is_empty() {
+        "auto ran it".into()
+    } else {
+        format!("auto ran it: {reason}")
+    }
+}
+/// Over the question, when the judge said no.
+pub fn judge_asks(reason: &str) -> String {
+    if reason.is_empty() {
+        "Auto asks you instead.".into()
+    } else {
+        format!("Auto asks you instead: {reason}")
+    }
+}
+pub const JUDGE_UNREAD: &str = "Auto asks you instead: the model's verdict couldn't be read.";
 
 /// Under a `!command` that couldn't start.
 pub fn cant_start_bash(error: &str) -> String {
