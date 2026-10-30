@@ -177,7 +177,7 @@ fn main() -> ExitCode {
         let goodbye = text::lasted(started.elapsed(), updated_to.as_deref());
         eprintln!("{}", style::gray(&goodbye));
     } else {
-        conversation.send(&request, &mut input);
+        conversation.send(&request, &mut input, false);
     }
     ExitCode::SUCCESS
 }
@@ -237,6 +237,16 @@ fn talk(
             }
             continue;
         }
+        if let Some(command) = own_command(line) {
+            // A blank line between the line and what follows, as after a request.
+            eprintln!();
+            if let Some(peers) = conversation.peers() {
+                peers.inbox().person_acted(None);
+            }
+            conversation.run_own(command);
+            print_separator(input);
+            continue;
+        }
         if mail_from_person(line, conversation) {
             continue;
         }
@@ -254,7 +264,7 @@ fn talk(
 /// in one, mail waits for their next request: two models answering each
 /// other would otherwise start the next turn at once.
 fn turn(conversation: &mut Conversation, input: &mut Input, request: &str, on_mail: bool) {
-    if conversation.send(request, input)
+    if conversation.send(request, input, on_mail)
         && on_mail
         && let Some(peers) = conversation.peers()
     {
@@ -370,6 +380,13 @@ fn print_separator(input: &mut Input) {
 /// `/prefs` is a command; `/etc/hosts is broken` is a request.
 fn is_command(line: &str) -> bool {
     line.starts_with('/') && !line.contains(' ') && !line[1..].contains('/')
+}
+
+/// What follows the `!` of `!ls` or `! ls`: a command of the person's own.
+fn own_command(line: &str) -> Option<&str> {
+    line.strip_prefix('!')
+        .map(str::trim)
+        .filter(|command| !command.is_empty())
 }
 
 /// Runs a slash command. False when it's time to quit.

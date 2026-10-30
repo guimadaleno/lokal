@@ -13,7 +13,7 @@ use crate::chat::ToolCall;
 use crate::input::{Approval, Input};
 use crate::peers::{self, Peers, Then, Undelivered};
 use crate::shell::{self, Run};
-use crate::{allowlist, config, diff, gitconfig, style, text};
+use crate::{allowlist, config, diff, gitconfig, interrupt, style, text};
 
 /// How much command output the model gets; longer output loses its middle.
 const OUTPUT_LIMIT: usize = 12_000;
@@ -220,6 +220,31 @@ fn run_command(args: &Value, input: &mut Input, room: Option<usize>) -> Result<O
         ))),
         Run::Stopped => Ok(Outcome::Stopped),
     }
+}
+
+/// A command the person typed at the `>` after a `!`. It runs without a
+/// question, since typing it was their yes, and without `gitconfig::UNASKED`,
+/// which guards only what runs unasked. What it gave, for the model; None
+/// when there's nothing to give, as when the person stopped it.
+pub fn run_own(command: &str, room: Option<usize>) -> Option<String> {
+    eprintln!("{} {}", style::accent("$"), command.replace('\n', "\n  "));
+    interrupt::clear();
+    let result = match shell::run(command, &[]) {
+        Ok(Run::Finished { output, code }) => {
+            Ok(command_result(&output, code, limit(room, OUTPUT_LIMIT)))
+        }
+        Ok(Run::Stopped) => Err(None),
+        Err(error) => Err(Some(text::cant_start_bash(&error.to_string()))),
+    };
+    if let Err(Some(message)) = &result {
+        eprintln!("  {}", style::red(message));
+    }
+    // A blank line after the step, as after the model's.
+    eprintln!();
+    if let Err(None) = result {
+        eprintln!("{}", style::gray(text::STOPPED));
+    }
+    result.ok()
 }
 
 fn command_result(output: &str, code: Option<i32>, limit: usize) -> String {

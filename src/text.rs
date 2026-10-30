@@ -50,6 +50,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
 pub const HELP_KEYS: &str = "\
 Tab completes a command. Ctrl+C or Esc stops whatever's running; at the >,
 Ctrl+C clears what you typed, and twice on an empty line it quits.
+A line starting with ! runs the rest as your own command, and what it gives
+goes to the model with your next message.
 Mail from your other Lokal sessions shows above the >. Waiting mail goes to
 the model with Enter on an empty line, and Esc drops it. A line starting
 with @name mails that session.
@@ -98,6 +100,11 @@ pub const APPROVALS_HEADER: &str = "\
 # then the exact command. Delete a line to be asked again.
 ";
 pub const NO_TERMINAL: &str = "Skipped: there's no terminal to ask you on.";
+
+/// Under a `!command` that couldn't start.
+pub fn cant_start_bash(error: &str) -> String {
+    format!("Couldn't start bash: {error}")
+}
 pub const GIT_SETTINGS_UNREAD: &str =
     "Lokal couldn't read this repository's git settings, so it asks first.";
 

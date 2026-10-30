@@ -42,6 +42,12 @@ const ASK_AGAIN_NOTE: &str = "(From Lokal, not the user: your last reply ran out
 const CUT_SHORT_RESULT: &str = "Not run: your reply ran out of room before this step was complete. \
     Reason briefly this time, then take it again. A file too long for one reply goes in parts: \
     write_file with its start, then edit_file to add the rest.";
+/// Frame a command the person ran at the `>`, ahead of their next request:
+/// the command between the first two, its result before the last, which
+/// `make_way` looks for to drop it.
+const OWN_START: &str = "[The user ran this command themselves, at their prompt: `";
+const OWN_OUTPUT: &str = "`. What it gave:]\n";
+const OWN_END: &str = "\n[End of what the user's command gave.]";
 
 pub struct Conversation {
     pub server: Server,
@@ -66,6 +72,9 @@ pub struct Conversation {
     show_reasoning: bool,
     /// The person's other sessions, in a conversation at a terminal.
     peers: Option<Peers>,
+    /// The commands the person ran at the `>` since their last request,
+    /// framed for the model: they go along with the next one.
+    own: Vec<String>,
 }
 
 enum Failure {
@@ -87,6 +96,7 @@ impl Conversation {
             speed: None,
             show_reasoning: false,
             peers,
+            own: Vec::new(),
         };
         conversation.notes = conversation.read_notes();
         conversation.refresh_system_prompt();
@@ -169,9 +179,31 @@ impl Conversation {
 
     pub fn clear(&mut self) {
         self.messages.clear();
+        self.own.clear();
         self.tokens = None;
         self.model_time = None;
         self.speed = None;
+    }
+
+    /// `!command` at the `>`: the person's own command runs, and what it
+    /// gave goes to the model with their next request, cut to the room left
+    /// with what's already waiting to go.
+    pub fn run_own(&mut self, command: &str) {
+        let waiting: usize = self.own.iter().map(String::len).sum();
+        let room = self
+            .room_for_output()
+            .map(|room| room.saturating_sub(waiting));
+        if let Some(peers) = &self.peers {
+            peers.set_busy(true);
+        }
+        if let Some(result) = tools::run_own(command, room) {
+            let result = result.trim_end();
+            self.own
+                .push(format!("{OWN_START}{command}{OWN_OUTPUT}{result}{OWN_END}"));
+        }
+        if let Some(peers) = &self.peers {
+            peers.set_busy(false);
+        }
     }
 
     /// The model's time on the last turn, how full the context is and how
@@ -190,8 +222,10 @@ impl Conversation {
 
     /// Sends one request and works on it, tools and all, until the model
     /// answers, the person stops it, or something fails. True when the
-    /// person stepped in: stopped the turn or said no to a step.
-    pub fn send(&mut self, request: &str, input: &mut Input) -> bool {
+    /// person stepped in: stopped the turn or said no to a step. A request
+    /// `on_mail` is another session's, and what the person's own commands
+    /// gave waits for one of theirs.
+    pub fn send(&mut self, request: &str, input: &mut Input, on_mail: bool) -> bool {
         interrupt::clear();
         let mut stepped_in = false;
         // Other sessions hear it's working: their mail waits for the turn to end.
@@ -206,8 +240,21 @@ impl Conversation {
         let mut model_time = Duration::ZERO;
         let (mut generated, mut generating) = (0, Duration::ZERO);
         let mut asked_again = false;
+        // In the request's own message: some chat templates refuse two from
+        // the user in a row.
+        let own = if on_mail {
+            Vec::new()
+        } else {
+            std::mem::take(&mut self.own)
+        };
+        let content = own
+            .iter()
+            .map(String::as_str)
+            .chain([request])
+            .collect::<Vec<_>>()
+            .join("\n\n");
         self.messages
-            .push(json!({"role": "user", "content": request}));
+            .push(json!({"role": "user", "content": content}));
         loop {
             self.free_context();
             let started = Instant::now();
@@ -225,9 +272,11 @@ impl Conversation {
                 }
                 Err(Failure::Error(message)) => {
                     eprintln!("{}", style::red(&message));
-                    // Nothing came of the request, so trying again won't send it twice.
+                    // Nothing came of the request, so trying again won't send
+                    // it twice; what the person's commands gave goes with it.
                     if self.messages.len() == turn_start + 1 {
                         self.messages.pop();
+                        self.own = own;
                     }
                     break;
                 }
@@ -571,10 +620,16 @@ fn budget(context: u64) -> u64 {
 }
 
 /// Drops what a message the model has replied after holds: a tool's output,
-/// or the text of the file changes it asked for.
+/// what the person's own commands gave, or the text of the file changes it
+/// asked for.
 fn make_way(message: &mut Value) {
     if message["role"] == "tool" {
         message["content"] = DROPPED_OUTPUT.into();
+    }
+    if message["role"] == "user"
+        && let Some(content) = message["content"].as_str().and_then(drop_own)
+    {
+        message["content"] = content.into();
     }
     // get_mut, since indexing to change would add the keys a message lacks.
     let calls = message.get_mut("tool_calls").and_then(Value::as_array_mut);
@@ -583,6 +638,31 @@ fn make_way(message: &mut Value) {
             drop_written(function);
         }
     }
+}
+
+/// A request with what each of the person's own commands gave dropped, the
+/// commands kept. None when there's nothing to drop.
+fn drop_own(content: &str) -> Option<String> {
+    let mut kept = String::new();
+    let mut rest = content;
+    let mut dropped = false;
+    while let Some(start) = rest.find(OWN_START)
+        && let Some(output) = rest[start..]
+            .find(OWN_OUTPUT)
+            .map(|at| start + at + OWN_OUTPUT.len())
+        && let Some(end) = rest[output..].find(OWN_END).map(|at| output + at)
+    {
+        kept.push_str(&rest[..output]);
+        if end - output > DROPPED_OUTPUT.len() {
+            kept.push_str(DROPPED_OUTPUT);
+            dropped = true;
+        } else {
+            kept.push_str(&rest[output..end]);
+        }
+        rest = &rest[end..];
+    }
+    kept.push_str(rest);
+    dropped.then_some(kept)
 }
 
 /// A write_file or edit_file call keeps its path and loses its text. The
@@ -770,6 +850,7 @@ mod tests {
             speed: None,
             show_reasoning: false,
             peers: None,
+            own: Vec::new(),
         }
     }
 
@@ -890,6 +971,37 @@ mod tests {
         assert_eq!(arguments["path"], "a.txt");
         assert_eq!(arguments["old_text"], DROPPED_WRITE);
         assert_eq!(arguments["new_text"], "y");
+    }
+
+    #[test]
+    fn what_the_persons_commands_gave_makes_way_and_the_rest_stays() {
+        let own = |command: &str, result: &str| {
+            format!("{OWN_START}{command}{OWN_OUTPUT}{result}{OWN_END}")
+        };
+        let request = format!(
+            "{}\n\n{}\n\nwhy does it fail?",
+            own("cargo test", &"x".repeat(30_000)),
+            own("git status", "ok")
+        );
+        let mut conversation = conversation(8192);
+        conversation.messages = vec![json!({"role": "user", "content": request})];
+        reply(&mut conversation);
+        conversation.free_context();
+        let kept = conversation.messages[0]["content"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            kept,
+            format!(
+                "{}\n\n{}\n\nwhy does it fail?",
+                own("cargo test", DROPPED_OUTPUT),
+                own("git status", "ok")
+            )
+        );
+        // Already dropped, or as short as the note: nothing more to drop.
+        assert_eq!(drop_own(&kept), None);
+        assert_eq!(drop_own("[The user ran this command themselves"), None);
     }
 
     #[test]

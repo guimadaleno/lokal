@@ -12,6 +12,12 @@ dependencies.
   on the read-only list in `src/allowlist.rs` run on their own. That list is
   Lokal's code, never the model's judgement: a model can be talked into
   anything by a file it reads.
+  - **A line the person types at the `>` after a `!` is their own command,**
+    and typing it was their yes, so it isn't asked about (`tools::run_own`).
+    It runs as the model's commands do, in a session of its own and without
+    a terminal, but without `gitconfig::UNASKED`, which guards only what
+    runs unasked. What it gives goes to the model with the person's next
+    request, never with a turn mail starts.
   - **git also runs programs a repository's own settings name, even to
     read:** core.fsmonitor on `git status`, filters and diff drivers on
     `git diff`, `log -p` and `blame`, `gpg.program` on `git log` (measured
@@ -211,7 +217,7 @@ dependencies.
 
 | File | Job |
 |---|---|
-| `main.rs` | Arguments, start-up, the conversation loop, slash commands |
+| `main.rs` | Arguments, start-up, the conversation loop, slash commands and `!` commands |
 | `conversation.rs` | Messages, one turn with its tools, freeing context, the saved conversation |
 | `chat.rs` | One streamed chat request on its own thread |
 | `answer.rs` | What of the stream is shown: no reasoning, no blank edges |
@@ -332,6 +338,10 @@ dependencies.
   from, and with no room at all the model is told to answer with what it
   has. Dropped unseen, the model only asks again, and each try leaves the
   history fuller, until nothing fits.
+  - **What the person's `!` commands gave is an output too,** cut the same
+    way. It goes inside their request's own message, since some chat
+    templates refuse two from the user in a row, framed so `drop_own`
+    finds it again to make way.
 - **What the model wrote into a file makes way like an output,** once it
   has replied after the write (`make_way`). The file holds that text, and
   it is most of a conversation that writes files; kept, nothing else could
@@ -493,8 +503,6 @@ Tracked as issues:
 - **the model reloaded with enough context when LM Studio gave it the 8K
   default, with a `context` setting**, and `server.rs` moved to `/api/v1`
   with it (#19);
-- **`! command` at the `>`, run as the person's own, its output going to
-  the model** (#32);
 - **modes on Shift+Tab: manual, accept edits, and auto with the local
   model as judge**, deciding only what opens on Yes, and never in a turn
   mail started (#33). It loosens three refusals above when it's built,
