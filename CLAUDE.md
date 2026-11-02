@@ -582,8 +582,9 @@ Measured on a current laptop, under WSL; the judge on a consumer GPU.
   with the server on localhost.
 - **The box (`sandbox.rs`) outside WSL:** its escape tests ran only on WSL
   with kernel 6.18. Where the box can't be set up (an older kernel, Ubuntu's
-  AppArmor refusing user namespaces, perhaps CI's runner) they skip, so a
-  green CI doesn't say the box holds there. Still owed: the tests on a plain
+  AppArmor refusing user namespaces) they skip. CI's runner is one of those
+  (writing `/proc/self/setgroups` is refused), so a green CI says nothing
+  about the box. Still owed: the tests on a plain
   Ubuntu 24.04 and on a kernel just past 6.12.
 - **The reasoning window with wide characters or a resize while it shows:**
   rows are cut by character count, so double-width characters may wrap and
