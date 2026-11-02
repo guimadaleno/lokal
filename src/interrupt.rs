@@ -11,9 +11,16 @@ extern "C" fn on_sigint(_signal: libc::c_int) {
 
 pub fn install() {
     let handler: extern "C" fn(libc::c_int) = on_sigint;
-    // SAFETY: the handler only stores to an atomic, which is safe in a signal handler.
+    // sigaction rather than signal(), whose meaning differs between C
+    // libraries. SA_RESTART: a read the signal interrupts goes on.
+    // SAFETY: sigaction is plain data, zeroed then filled in; the handler
+    // only stores to an atomic, which is safe in a signal handler.
     unsafe {
-        libc::signal(libc::SIGINT, handler as libc::sighandler_t);
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = handler as libc::sighandler_t;
+        action.sa_flags = libc::SA_RESTART;
+        libc::sigemptyset(&mut action.sa_mask);
+        libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
     }
 }
 
