@@ -4,9 +4,14 @@
 //! settings are files in .git that anything could have written, so a git
 //! command runs unasked only where the repository names none of them, with
 //! fsmonitor off and kept out of submodules, whose settings are their own.
+//! As git writes, it also runs the repository's hooks, which auto's judge
+//! can't see: there, a git command asks when the repository has any.
 
+use std::fs;
 use std::io::{ErrorKind, Read};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -21,6 +26,10 @@ pub const UNASKED: [(&str, &str); 2] = [
 
 /// Settings that name a program git runs while reading.
 const PROGRAMS: &str = r"^(core\.fsmonitor|diff\.external|diff\..+\.(command|textconv)|filter\..+\.(clean|smudge|process)|gpg\.(.+\.)?program)$";
+/// Settings that name a program git runs as it writes or reaches a remote:
+/// where its hooks are, and what it runs to connect.
+const WRITE_PROGRAMS: &str =
+    r"^(core\.hookspath|core\.sshcommand|remote\..+\.(uploadpack|receivepack))$";
 /// core.fsmonitor as a yes or a no: git's own daemon, or none.
 const SWITCHES: &[&str] = &["", "true", "false", "yes", "no", "on", "off", "1", "0"];
 /// Reading settings is quick; a file they include could be one that never ends.
@@ -32,9 +41,74 @@ const READ_TIME: Duration = Duration::from_secs(2);
 /// couldn't say, in time or at all: a git before 2.26 can't tell where a
 /// setting comes from.
 pub fn program_setting() -> Result<Option<String>, ()> {
+    repository_setting(PROGRAMS)
+}
+
+/// What of the repository's own git would run as it does more than read:
+/// a hook in `.git/hooks`, or a setting that names a program. Auto's judge
+/// sees only the command, so a git command it would let through is asked
+/// about instead. Err when git couldn't say.
+pub fn write_program() -> Result<Option<WriteProgram>, ()> {
+    if let Some(setting) = repository_setting(WRITE_PROGRAMS)? {
+        return Ok(Some(WriteProgram::Setting(setting)));
+    }
+    let paths = match git(&["rev-parse", "--git-common-dir", "--git-path", "hooks"])? {
+        Some((0, paths)) => paths,
+        // Without git or outside a repository, there are no hooks.
+        _ => return Ok(None),
+    };
+    let mut lines = paths.lines();
+    let (Some(common), Some(hooks)) = (lines.next(), lines.next()) else {
+        return Err(());
+    };
+    // Elsewhere, they come from the person's own core.hooksPath.
+    if Path::new(common).join("hooks") != Path::new(hooks) {
+        return Ok(None);
+    }
+    Ok(active_hook(Path::new(hooks)).map(WriteProgram::Hook))
+}
+
+pub enum WriteProgram {
+    Setting(String),
+    Hook(String),
+}
+
+/// The first hook in `folder` that git would run: executable, and not one of
+/// the `.sample` files git puts there.
+fn active_hook(folder: &Path) -> Option<String> {
+    let mut hooks: Vec<String> = fs::read_dir(folder)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            // fs::metadata follows a link, as git does.
+            fs::metadata(entry.path())
+                .is_ok_and(|file| file.is_file() && file.permissions().mode() & 0o111 != 0)
+        })
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| !name.ends_with(".sample"))
+        .collect();
+    hooks.sort();
+    hooks.into_iter().next()
+}
+
+/// The first setting matching `pattern` that the repository sets itself.
+fn repository_setting(pattern: &str) -> Result<Option<String>, ()> {
+    match git(&["config", "--show-scope", "--get-regexp", pattern])? {
+        // Without git, a git command runs nothing at all.
+        None => Ok(None),
+        // Nothing matched.
+        Some((1, _)) => Ok(None),
+        Some((0, listing)) => Ok(first_of_the_repository(&listing)),
+        Some(_) => Err(()),
+    }
+}
+
+/// What git printed with `args` and the code it ended with; None without
+/// git. Err when it couldn't run or didn't end in time.
+fn git(args: &[&str]) -> Result<Option<(i32, String)>, ()> {
     let mut command = Command::new("git");
     command
-        .args(["config", "--show-scope", "--get-regexp", PROGRAMS])
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -48,7 +122,6 @@ pub fn program_setting() -> Result<Option<String>, ()> {
     }
     let mut child = match command.spawn() {
         Ok(child) => child,
-        // Without git, a git command runs nothing at all.
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err(()),
     };
@@ -64,21 +137,14 @@ pub fn program_setting() -> Result<Option<String>, ()> {
         }
         thread::sleep(Duration::from_millis(5));
     };
-    match status.code() {
-        // Nothing matched.
-        Some(1) => Ok(None),
-        Some(0) => {
-            let mut listing = String::new();
-            child
-                .stdout
-                .take()
-                .ok_or(())?
-                .read_to_string(&mut listing)
-                .map_err(|_| ())?;
-            Ok(first_of_the_repository(&listing))
-        }
-        _ => Err(()),
-    }
+    let mut printed = String::new();
+    child
+        .stdout
+        .take()
+        .ok_or(())?
+        .read_to_string(&mut printed)
+        .map_err(|_| ())?;
+    Ok(Some((status.code().ok_or(())?, printed)))
 }
 
 /// From `git config --show-scope --get-regexp` ("local<tab>name value"),
@@ -120,5 +186,23 @@ mod tests {
             first_of_the_repository("local\tcore.fsmonitor .git/hooks/query-watchman\n").as_deref(),
             Some("core.fsmonitor")
         );
+    }
+
+    #[test]
+    fn a_hook_is_an_executable_file_but_a_sample() {
+        let folder = std::env::temp_dir().join(format!("lokal-hooks-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).unwrap();
+        let file = |name: &str, mode: u32| {
+            let path = folder.join(name);
+            fs::write(&path, "#!/bin/sh\n").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+        };
+        file("pre-commit.sample", 0o755);
+        file("pre-push", 0o644);
+        assert_eq!(active_hook(&folder), None);
+        file("post-merge", 0o755);
+        assert_eq!(active_hook(&folder).as_deref(), Some("post-merge"));
+        fs::remove_dir_all(&folder).unwrap();
     }
 }

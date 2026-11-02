@@ -157,6 +157,11 @@ pub fn git_runs_program(setting: &str) -> String {
     )
 }
 
+/// In auto, before a git command the judge would otherwise see.
+pub fn git_runs_hook(hook: &str) -> String {
+    format!("This repository has a git hook ({hook}) that git may run, so Lokal asks first.")
+}
+
 pub const STEP_READ: &str = "read";
 pub const STEP_CREATE: &str = "create";
 pub const STEP_EDIT: &str = "edit";

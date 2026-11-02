@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use crate::chat::ToolCall;
+use crate::gitconfig::WriteProgram;
 use crate::input::{Approval, Input};
 use crate::judge::{self, Verdict};
 use crate::mode::{self, Mode};
@@ -210,12 +211,22 @@ fn run_command(
         {
             eprintln!("  {}", style::faint(note));
         } else {
+            let mut on_yes = allowlist::opens_on_yes(command) && git_warning.is_none();
+            // The judge sees the command, never the hooks or programs the
+            // repository has git run as it writes: those are the person's call.
+            if on_yes
+                && judge.is_some()
+                && allowlist::uses_git(command)
+                && let Some(warning) = write_warning()
+            {
+                eprintln!("  {}", layout::printable(&warning));
+                on_yes = false;
+            }
             // What the model says the command does, where the person decides on it.
             let explanation = args["explanation"].as_str().map_or("", str::trim);
             if !explanation.is_empty() {
                 eprintln!("  {}", style::gray(&layout::printable(explanation)));
             }
-            let on_yes = allowlist::opens_on_yes(command) && git_warning.is_none();
             // The judge only ever sees what would open on Yes.
             let verdict = match judge.filter(|_| on_yes) {
                 Some(case) => match judged(command, explanation, case) {
@@ -245,6 +256,17 @@ fn run_command(
             limit(room, OUTPUT_LIMIT),
         ))),
         Run::Stopped => Ok(Outcome::Stopped),
+    }
+}
+
+/// Why a git command auto would judge is asked instead: a hook or a
+/// program the repository has git run as it writes. None when it has none.
+fn write_warning() -> Option<String> {
+    match gitconfig::write_program() {
+        Ok(None) => None,
+        Ok(Some(WriteProgram::Setting(setting))) => Some(text::git_runs_program(&setting)),
+        Ok(Some(WriteProgram::Hook(hook))) => Some(text::git_runs_hook(&hook)),
+        Err(()) => Some(text::GIT_SETTINGS_UNREAD.to_string()),
     }
 }
 
