@@ -1,0 +1,33 @@
+# Every push and pull request is checked the way a release is, so a broken
+# test or a lint shows on the commit that brought it rather than at the next
+# tag. Nothing here publishes anything.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    paths-ignore: ['site/**', '**.md']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Formatting
+        run: cargo fmt --check
+
+      # Warnings fail here: clippy is clean on main, and stays that way.
+      - name: Lints
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test
