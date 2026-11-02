@@ -44,7 +44,11 @@ pub fn is_wsl() -> bool {
 /// Under WSL's default NAT networking, Windows is the default gateway. Its
 /// address changes when WSL restarts, so it's looked up on every launch.
 pub fn default_gateway() -> Option<Ipv4Addr> {
-    let routes = fs::read_to_string("/proc/net/route").ok()?;
+    gateway_in(&fs::read_to_string("/proc/net/route").ok()?)
+}
+
+/// The default route's gateway in /proc/net/route, written in hex, low byte first.
+fn gateway_in(routes: &str) -> Option<Ipv4Addr> {
     for line in routes.lines().skip(1) {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() > 2 && fields[1] == "00000000" {
@@ -97,14 +101,43 @@ fn windows_folders() -> Vec<(&'static str, String)> {
 
 /// C:\Users\Ana\Desktop becomes /mnt/c/Users/Ana/Desktop, if that folder exists.
 fn wsl_path(windows_path: &str) -> Option<String> {
+    let path = mounted(windows_path)?;
+    Path::new(&path).is_dir().then_some(path)
+}
+
+/// Where WSL mounts a Windows path, whether or not it exists.
+fn mounted(windows_path: &str) -> Option<String> {
     let (drive, rest) = windows_path.split_once(":\\")?;
     if drive.len() != 1 {
         return None;
     }
-    let path = format!(
+    Some(format!(
         "/mnt/{}/{}",
         drive.to_ascii_lowercase(),
         rest.replace('\\', "/")
-    );
-    Path::new(&path).is_dir().then_some(path)
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_gateway_is_the_default_routes() {
+        let routes = "Iface\tDestination\tGateway \tFlags\n\
+                      eth0\t0030A8C0\t00000000\t0001\n\
+                      eth0\t00000000\t0130A8C0\t0003\n";
+        assert_eq!(gateway_in(routes), Some(Ipv4Addr::new(192, 168, 48, 1)));
+        assert_eq!(gateway_in("Iface\tDestination\tGateway\n"), None);
+    }
+
+    #[test]
+    fn windows_paths_map_to_their_mount() {
+        assert_eq!(
+            mounted(r"C:\Users\Ana\Desktop").as_deref(),
+            Some("/mnt/c/Users/Ana/Desktop")
+        );
+        assert_eq!(mounted(r"\\server\share\Desktop"), None);
+        assert_eq!(mounted("relative"), None);
+    }
 }
