@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::{Outcome, text_arg};
 use crate::peers::{self, Peers, Then, Undelivered};
-use crate::{config, layout, style, text};
+use crate::{config, layout, style, text, tty};
 
 /// The other sessions open, on screen and for the model.
 pub(super) fn list_sessions(peers: &Peers) -> Outcome {
@@ -25,10 +25,7 @@ pub(super) fn list_sessions(peers: &Peers) -> Outcome {
         .max()
         .unwrap_or(0);
     let lead = 2 + names + 2;
-    let room = style::terminal_width()
-        .unwrap_or(80)
-        .saturating_sub(lead + 1)
-        .max(20);
+    let room = tty::width().unwrap_or(80).saturating_sub(lead + 1).max(20);
     let mut result = String::new();
     for session in &sessions {
         let mut row = config::shown(Path::new(&session.folder));
@@ -87,7 +84,7 @@ pub(super) fn mail(args: &Value, peers: &Peers) -> Result<Outcome, String> {
         return Err("that's this session's own name; list_sessions lists the others.".into());
     }
     eprintln!("{}", style::mention(&layout::printable(&format!("@{to}"))));
-    let width = style::terminal_width().unwrap_or(80);
+    let width = tty::width().unwrap_or(80);
     for line in layout::indented(&layout::printable(message), 2, width).lines() {
         eprintln!("{}", style::faint_italic(line));
     }

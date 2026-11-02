@@ -19,7 +19,7 @@ use crate::server::Server;
 use crate::spinner::Spinner;
 use crate::system::Facts;
 use crate::tools::{self, Outcome};
-use crate::{config, interrupt, judge, keys, layout, mode, prompt, reasoning, style, text};
+use crate::{config, interrupt, judge, keys, layout, mode, prompt, reasoning, style, text, tty};
 
 /// The project's notes go along with every request, so they get an eighth
 /// of the context; this much when its size isn't known, an eighth of 32K.
@@ -352,7 +352,7 @@ impl Conversation {
         }
         // Chosen at the `>`, auto's warning shows here, before it acts.
         if asked.is_some() && mode::warn_of_auto() {
-            let width = style::terminal_width().unwrap_or(80);
+            let width = tty::width().unwrap_or(80);
             for line in layout::indented(text::AUTO_WARNING, 0, width).lines() {
                 eprintln!("{}", style::gray(line));
             }

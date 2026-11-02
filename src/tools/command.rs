@@ -8,7 +8,7 @@ use crate::gitconfig::{self, WriteProgram};
 use crate::input::Input;
 use crate::judge::{self, Verdict};
 use crate::shell::{self, Run};
-use crate::{allowlist, interrupt, layout, mode, style, text};
+use crate::{allowlist, interrupt, layout, mode, style, text, tty};
 
 /// Runs a command, asking first unless it's read-only. In auto, `judge`
 /// holds what the judge reads, and it decides what would open on Yes.
@@ -149,7 +149,7 @@ fn print_command(command: &str) {
 /// A line in a step, going on under its own start where it doesn't fit,
 /// each row painted on its own.
 fn print_indented(text: &str, paint: fn(&str) -> String) {
-    let width = style::terminal_width().unwrap_or(80);
+    let width = tty::width().unwrap_or(80);
     for line in layout::indented(text, 2, width).lines() {
         eprintln!("{}", paint(line));
     }

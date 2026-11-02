@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 
 use crate::config::{self, Mail};
 use crate::layout::{broken, clean, clean_message, indented};
-use crate::{approvals, style, text};
+use crate::{approvals, style, text, tty};
 
 /// The longest mail, in characters.
 pub const MESSAGE_LIMIT: usize = 2_000;
@@ -759,7 +759,7 @@ pub fn notice_line(text: &str, width: usize) -> String {
 /// A mail as it shows: who sent it and from where, the mail as it came,
 /// and `footer`, what becomes of it.
 fn notice(message: &Message, footer: Option<&str>) -> String {
-    let width = style::terminal_width().unwrap_or(80);
+    let width = tty::width().unwrap_or(80);
     let from = if message.by_user {
         text::MAIL_FROM_YOU.to_string()
     } else {

@@ -131,7 +131,7 @@ impl Input {
     /// The terminal's width right now, if there's a terminal.
     pub fn width(&self) -> Option<usize> {
         self.editor.as_ref()?;
-        style::terminal_width()
+        tty::width()
     }
 
     /// Reads a request at the `>` prompt. `status` (the model's time and
@@ -456,7 +456,7 @@ impl Helper {
                 + status.chars().count();
             // Read on every redraw, so the status follows the window as it's
             // resized. Off the last column, or the terminal wraps the line.
-            let width = style::terminal_width().unwrap_or(0);
+            let width = tty::width().unwrap_or(0);
             if let Some(padding) = width.checked_sub(used + 1).filter(|padding| *padding >= 2) {
                 display.push_str(&" ".repeat(padding));
                 display.push_str(status);
@@ -544,7 +544,7 @@ impl Hinter for Helper {
         // though what it would say has changed.
         self.command_hint.set(line.starts_with('/'));
         if line.starts_with('/') {
-            command_hint(line, pos, style::terminal_width())
+            command_hint(line, pos, tty::width())
         } else {
             self.line_hint(line)
         }

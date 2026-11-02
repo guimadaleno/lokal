@@ -6,7 +6,7 @@
 use std::io::Write;
 use std::time::{Duration, Instant};
 
-use crate::{layout, style};
+use crate::{layout, style, tty};
 
 /// How many rows of reasoning show at once.
 const ROWS: usize = 4;
@@ -37,7 +37,7 @@ impl Window {
             return;
         }
         // Rows narrower than the terminal, so none of them wraps.
-        let width = style::terminal_width().map_or(76, |width| width.saturating_sub(6).max(20));
+        let width = tty::width().map_or(76, |width| width.saturating_sub(6).max(20));
         let rows = last_rows(&self.text, width, ROWS);
         if rows.is_empty() {
             return;

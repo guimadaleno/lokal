@@ -9,7 +9,9 @@ use std::time::Instant;
 use crate::context;
 use crate::conversation::Conversation;
 use crate::input::Input;
-use crate::{config, feedback, layout, memory, peers, recon, server, spinner, style, text, update};
+use crate::{
+    config, feedback, layout, memory, peers, recon, server, spinner, style, text, tty, update,
+};
 
 /// Past this many lines, user.md costs noticeable context on every turn.
 const LONG_USER_MD: usize = 30;
@@ -266,7 +268,7 @@ fn print_sessions(conversation: &Conversation, session: &Session) {
         .map(|other| other.name.chars().count())
         .max()
         .unwrap_or(0);
-    let room = style::terminal_width()
+    let room = tty::width()
         .map_or(usize::MAX, |width| width.saturating_sub(names + 5))
         .max(20);
     for other in &sessions {
@@ -292,7 +294,7 @@ fn print_sessions(conversation: &Conversation, session: &Session) {
 /// runs under the labels.
 fn print_rows(rows: &[(&str, String)]) {
     // The indent and the label's column.
-    let room = style::terminal_width().map_or(0, |width| width.saturating_sub(13));
+    let room = tty::width().map_or(0, |width| width.saturating_sub(13));
     for (label, value) in rows {
         for (index, line) in layout::wrapped(value, room).iter().enumerate() {
             let label = if index == 0 { *label } else { "" };

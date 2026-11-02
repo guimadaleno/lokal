@@ -1,9 +1,7 @@
 //! Terminal colors. Lokal's own output goes to stderr, so colors are on when
 //! stderr is a terminal.
 
-use std::fs::OpenOptions;
 use std::io::IsTerminal;
-use std::os::fd::AsRawFd;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -111,12 +109,3 @@ pub const BOLD_OFF: &str = "\x1b[22m";
 /// A soft blue-gray: orange already marks the person's lines and Lokal acting.
 pub const CODE_ON: &str = "\x1b[38;5;110m";
 pub const CODE_OFF: &str = "\x1b[39m";
-
-/// Columns in the terminal, asked of it each time: the window may have changed.
-pub fn terminal_width() -> Option<usize> {
-    let terminal = OpenOptions::new().read(true).open("/dev/tty").ok()?;
-    // SAFETY: winsize is plain data, filled in by the ioctl.
-    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
-    let found = unsafe { libc::ioctl(terminal.as_raw_fd(), libc::TIOCGWINSZ, &mut size) } == 0;
-    (found && size.ws_col > 0).then_some(size.ws_col as usize)
-}

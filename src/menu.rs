@@ -43,7 +43,7 @@ pub fn choose(question: &str, items: &[Item], start: usize, safe: usize) -> Opti
     let raw = RawMode::enter(&terminal)?;
     // Each on one line, cut with … in a narrow terminal: one that wrapped
     // would throw off the redraws, which go up a line per option.
-    let width = style::terminal_width().unwrap_or(80);
+    let width = tty::width().unwrap_or(80);
     let question = layout::cut(question, width.saturating_sub(3));
     let labels: Vec<String> = items
         .iter()

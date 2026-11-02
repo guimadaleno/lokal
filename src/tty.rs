@@ -1,6 +1,6 @@
-//! The terminal itself, `/dev/tty`, for reading keys one by one: while
-//! Lokal works and in an approval's menu. Read there rather than on stdin,
-//! so piped input never answers a question.
+//! The terminal itself, `/dev/tty`: its width, and reading keys one by one
+//! while Lokal works and in an approval's menu. Read there rather than on
+//! stdin, so piped input never answers a question.
 
 use std::fs::{File, OpenOptions};
 use std::os::fd::{AsRawFd, RawFd};
@@ -12,6 +12,15 @@ pub fn open() -> Option<File> {
         .write(true)
         .open("/dev/tty")
         .ok()
+}
+
+/// Columns in the terminal, asked of it each time: the window may have changed.
+pub fn width() -> Option<usize> {
+    let terminal = open()?;
+    // SAFETY: winsize is plain data, filled in by the ioctl.
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    let found = unsafe { libc::ioctl(terminal.as_raw_fd(), libc::TIOCGWINSZ, &mut size) } == 0;
+    (found && size.ws_col > 0).then_some(size.ws_col as usize)
 }
 
 /// Keys arrive one by one, unechoed, and Ctrl+C arrives as a key rather

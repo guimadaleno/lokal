@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use crate::{config, layout, style, text};
+use crate::{config, layout, style, text, tty};
 
 /// When the spinner starts saying what the model is doing.
 const LABEL_AFTER: Duration = Duration::from_secs(2);
@@ -49,7 +49,7 @@ pub fn working_label(
         }
     }
     // On one line, or the spinner's redraw would leave the rest behind.
-    let room = style::terminal_width().map_or(80, |width| width.saturating_sub(4));
+    let room = tty::width().map_or(80, |width| width.saturating_sub(4));
     // The tool's name and the path are the model's words, as they stream.
     let what = |path: Option<&str>| match writing {
         None => text::THINKING.to_string(),
