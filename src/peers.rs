@@ -6,10 +6,10 @@
 //! free, and the session's name is its working folder's and that number,
 //! like `api-1`.
 //!
-//! With `mail = auto`, a mail starts a turn on its own once the person has
-//! asked the session something, while the `>` waits on an empty line, up to
-//! `mail_turns` in a row. With `mail = ask`, it waits above the `>` until
-//! Enter on an empty line hands it to the model; Esc drops it.
+//! With `mail = auto`, a mail starts a turn on its own while the `>` waits
+//! on an empty line, in a session just opened too, up to `mail_turns` in a
+//! row. With `mail = ask`, it waits above the `>` until Enter on an empty
+//! line hands it to the model; Esc drops it.
 
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, ErrorKind, Read, Write};
