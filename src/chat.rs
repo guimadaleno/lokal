@@ -13,7 +13,7 @@ use serde_json::Value;
 use crate::answer::AnswerFilter;
 use crate::{http, text};
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
