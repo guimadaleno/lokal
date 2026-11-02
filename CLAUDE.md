@@ -70,6 +70,13 @@ dependencies.
     (`src/diff.rs`), so a new file doesn't flood the conversation. "Show the
     rest", between Yes and No, prints them and asks again. Saying yes without
     them is the person's choice, made with the count in front of them.
+  - **What reaches the screen from a file, a command or the model shows
+    its control characters as marks** (`layout::printable`: ESC as `^[`, a
+    lone `\r` as `^M`): the diff, the `$` line and its explanation, the
+    paths, a command's output and the answer. Otherwise they could move the
+    cursor and write over a line, so the diff or the command the person
+    approves isn't what runs, or set the clipboard. The conversation and
+    the files keep the bytes as they are.
   - **Accept edits is the one exception, and the person picks it** with
     Shift+Tab (`src/mode.rs`), at the `>` or while Lokal works, from the
     next step on, and auto after it includes it. Then a change whose

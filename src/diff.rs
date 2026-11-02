@@ -4,7 +4,7 @@
 
 use similar::{ChangeTag, TextDiff};
 
-use crate::{style, text};
+use crate::{layout, style, text};
 
 /// A diff up to this many lines shows whole.
 const LONG: usize = 30;
@@ -39,7 +39,7 @@ fn lines(old: &str, new: &str) -> Vec<String> {
     for hunk in diff.unified_diff().context_radius(3).iter_hunks() {
         lines.push(style::gray(&hunk.header().to_string()));
         for change in hunk.iter_changes() {
-            let line = change.value().trim_end_matches(['\n', '\r']);
+            let line = layout::printable(change.value().trim_end_matches(['\n', '\r']));
             lines.push(match change.tag() {
                 ChangeTag::Delete => style::red(&format!("-{line}")),
                 ChangeTag::Insert => style::green(&format!("+{line}")),
@@ -65,5 +65,14 @@ mod tests {
         let rest = show("", &numbered(100));
         assert_eq!(rest.len(), 101 - START);
         assert!(rest.last().unwrap().contains("+line 100"));
+    }
+
+    #[test]
+    fn a_line_cant_hide_itself() {
+        let shown = lines("", "rm -rf ~ \x1b[2K\x1b[1Gls\n");
+        assert!(shown[1].contains("+rm -rf ~ ^[[2K^[[1Gls"), "{shown:?}");
+        // A lone \r ends a line of the diff, so what follows it can't cover it.
+        let shown = lines("", "rm -rf ~\rls\n");
+        assert!(shown[1].contains("+rm -rf ~") && shown[2].contains("+ls"));
     }
 }

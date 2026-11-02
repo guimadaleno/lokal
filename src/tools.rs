@@ -200,8 +200,9 @@ fn run_command(
     let mut unasked = allowlist::is_read_only(command) && git_warning.is_none();
     if !unasked {
         eprintln!();
+        // A setting's name can hold any character but a line break.
         if let Some(warning) = &git_warning {
-            eprintln!("  {warning}");
+            eprintln!("  {}", layout::printable(warning));
         }
         if let Some(note) = input
             .approved_before(command)
@@ -212,7 +213,7 @@ fn run_command(
             // What the model says the command does, where the person decides on it.
             let explanation = args["explanation"].as_str().map_or("", str::trim);
             if !explanation.is_empty() {
-                eprintln!("  {}", style::gray(explanation));
+                eprintln!("  {}", style::gray(&layout::printable(explanation)));
             }
             let on_yes = allowlist::opens_on_yes(command) && git_warning.is_none();
             // The judge only ever sees what would open on Yes.
@@ -267,7 +268,13 @@ fn judged(command: &str, explanation: &str, case: &judge::Case) -> Option<Verdic
 
 /// The `$` line a command's step starts with, its later lines indented.
 fn print_command(command: &str) {
-    eprintln!("{} {}", style::accent("$"), command.replace('\n', "\n  "));
+    let command = layout::printable(command).replace('\n', "\n  ");
+    eprintln!("{} {command}", style::accent("$"));
+}
+
+/// A path the model gave, as the person reads it.
+fn shown(path: &Path) -> String {
+    layout::printable(&config::shown(path)).into_owned()
 }
 
 /// A line in a step, going on under its own start where it doesn't fit,
@@ -337,7 +344,7 @@ fn read_file(args: &Value, room: Option<usize>) -> Result<Outcome, String> {
     eprintln!(
         "{} {}{}",
         style::accent(text::STEP_READ),
-        config::shown(&path),
+        shown(&path),
         style::gray(&range)
     );
     let limit = limit(room, FILE_LIMIT);
@@ -606,13 +613,15 @@ fn list_sessions(peers: &Peers) -> Outcome {
         .max(20);
     let mut result = String::new();
     for session in &sessions {
-        let mut shown = config::shown(Path::new(&session.folder));
+        let mut row = config::shown(Path::new(&session.folder));
         let mut line = format!("- {}, in {}", session.name, session.folder);
         if !session.branch.is_empty() {
-            shown.push_str(&format!(" · {}", session.branch));
+            row.push_str(&format!(" · {}", session.branch));
             line.push_str(&format!(", branch {}", session.branch));
         }
-        shown.push_str(&format!(" · {}", peers::session_state(session)));
+        row.push_str(&format!(" · {}", peers::session_state(session)));
+        // A folder's or a branch's name can hold control characters.
+        let row = layout::printable(&row);
         line.push_str(match (session.busy, session.asking) {
             (true, true) => {
                 ", waiting for its user to approve a step: mail waits until its turn is done"
@@ -629,7 +638,7 @@ fn list_sessions(peers: &Peers) -> Outcome {
         if !session.files.is_empty() {
             line.push_str(&format!("; it changed {}", session.files.join(", ")));
         }
-        for (index, part) in layout::broken(&shown, room).iter().enumerate() {
+        for (index, part) in layout::broken(&row, room).iter().enumerate() {
             let name = if index == 0 {
                 session.name.as_str()
             } else {
@@ -659,9 +668,9 @@ fn mail(args: &Value, peers: &Peers) -> Result<Outcome, String> {
     if to == peers.name() {
         return Err("that's this session's own name; list_sessions lists the others.".into());
     }
-    eprintln!("{}", style::mention(&format!("@{to}")));
+    eprintln!("{}", style::mention(&layout::printable(&format!("@{to}"))));
     let width = style::terminal_width().unwrap_or(80);
-    for line in layout::indented(message, 2, width).lines() {
+    for line in layout::indented(&layout::printable(message), 2, width).lines() {
         eprintln!("{}", style::faint_italic(line));
     }
     const NO_WAITING: &str = "Any answer comes as mail: end your turn rather than wait for it.";
@@ -741,7 +750,7 @@ fn propose(
             "Nothing to do: the file already has that content.".into(),
         ));
     }
-    eprintln!("{} {}", style::accent(step), config::shown(path));
+    eprintln!("{} {}", style::accent(step), shown(path));
     let rest = diff::show(old, new);
     if asking != Asking::Not
         && let Some(outcome) = refused(input.approve_write(rest, asking == Asking::OnYes))

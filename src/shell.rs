@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::spinner::Spinner;
-use crate::{interrupt, keys, mode, style, text};
+use crate::{interrupt, keys, layout, mode, style, text};
 
 /// How many lines of output show on screen; the model gets more.
 const SHOWN_LINES: usize = 12;
@@ -152,7 +152,10 @@ impl Screen {
             if std::mem::take(&mut self.gap) {
                 eprintln!();
             }
-            let line: String = line.trim_end().chars().take(SHOWN_WIDTH).collect();
+            let line: String = layout::printable(line.trim_end())
+                .chars()
+                .take(SHOWN_WIDTH)
+                .collect();
             eprintln!("  {}", style::gray(&line));
         } else {
             self.tick();

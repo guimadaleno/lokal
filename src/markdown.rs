@@ -46,10 +46,12 @@ impl Markdown {
         Self::default()
     }
 
-    /// Takes the next piece of the answer and returns what to print now.
+    /// Takes the next piece of the answer and returns what to print now,
+    /// its control characters shown as marks, so only Lokal's own styles
+    /// reach the terminal.
     pub fn push(&mut self, piece: &str) -> String {
         let mut out = String::new();
-        for c in piece.chars() {
+        for c in crate::layout::printable(piece).chars() {
             self.feed(c, &mut out);
         }
         out
@@ -365,6 +367,11 @@ mod tests {
             render(&["`aberto\nnormal"]),
             format!("{}\nnormal", code("aberto"))
         );
+    }
+
+    #[test]
+    fn control_characters_show_as_marks() {
+        assert_eq!(render(&["ok\x1b]52;c;eA==\x07\n"]), "ok^[]52;c;eA==^G\n");
     }
 
     #[test]

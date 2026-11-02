@@ -17,7 +17,7 @@ use crate::server::Server;
 use crate::spinner::Spinner;
 use crate::system::Facts;
 use crate::tools::{self, Outcome};
-use crate::{config, interrupt, judge, keys, mode, prompt, reasoning, style, text};
+use crate::{config, interrupt, judge, keys, layout, mode, prompt, reasoning, style, text};
 
 /// When the spinner starts saying what the model is doing.
 const LABEL_AFTER: Duration = Duration::from_secs(2);
@@ -772,13 +772,14 @@ fn working_label(
     }
     // On one line, or the spinner's redraw would leave the rest behind.
     let room = style::terminal_width().map_or(80, |width| width.saturating_sub(4));
+    // The tool's name and the path are the model's words, as they stream.
     let what = |path: Option<&str>| match writing {
         None => text::THINKING.to_string(),
-        Some(call) => text::writing_tool(&call.name, path, call.bytes),
+        Some(call) => text::writing_tool(&layout::printable(&call.name), path, call.bytes),
     };
     let path = writing
         .and_then(|call| call.path.as_deref())
-        .map(|path| config::shown(Path::new(path)));
+        .map(|path| layout::printable(&config::shown(Path::new(path))).into_owned());
     // The progress gives way from its end, before the file's name would.
     let name = path.as_deref().map(|path| {
         let name = Path::new(path)
