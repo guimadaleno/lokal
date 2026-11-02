@@ -312,6 +312,7 @@ dependencies.
 | `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it |
 | `input.rs` | The `>` prompt (hints, completion, Ctrl+C twice) and approvals |
 | `menu.rs` | The arrow-key choice the approvals use |
+| `tty.rs` | `/dev/tty` itself: raw mode, waiting for a key, dropping keys typed ahead |
 | `mode.rs` | The mode Shift+Tab picks: manual, accept edits or auto |
 | `judge.rs` | Auto's judge: the model, asked apart, on one command |
 | `prompt.rs`, `system.rs` | The system prompt and the machine facts in it |

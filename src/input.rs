@@ -6,8 +6,6 @@
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::HashSet;
-use std::fs::OpenOptions;
-use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -25,6 +23,7 @@ use rustyline::{
 
 use crate::approvals::ProjectApprovals;
 use crate::peers::{Directory, Inbox};
+use crate::tty::{self, discard_typed_ahead};
 use crate::{config, diff, menu, mode, style, text};
 
 pub const PROMPT: &str = "> ";
@@ -75,11 +74,7 @@ impl Input {
     pub fn new(project: ProjectApprovals) -> Self {
         let quit_armed = Arc::new(AtomicBool::new(false));
         // Answers piped into stdin don't count as approvals.
-        let has_terminal = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("/dev/tty")
-            .is_ok();
+        let has_terminal = tty::open().is_some();
         if !has_terminal {
             return Input {
                 editor: None,
@@ -339,18 +334,6 @@ impl Input {
         let answer = editor.readline_with_initial(prompt, (typed, "")).ok()?;
         let answer = answer.trim();
         (!answer.is_empty()).then(|| answer.to_string())
-    }
-}
-
-/// Keys pressed while Lokal was working were pressed before the question was
-/// on screen, so they can't be its answer: a "y" typed early would approve a
-/// command nobody has seen.
-fn discard_typed_ahead() {
-    if let Ok(terminal) = OpenOptions::new().read(true).open("/dev/tty") {
-        // SAFETY: a plain call on a descriptor that stays open for it.
-        unsafe {
-            libc::tcflush(terminal.as_raw_fd(), libc::TCIFLUSH);
-        }
     }
 }
 

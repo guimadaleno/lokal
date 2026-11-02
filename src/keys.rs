@@ -6,12 +6,13 @@
 //! output, where they'd break the spinner's and the reasoning window's
 //! redraws; they're dropped.
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
+use crate::tty::{self, RawMode};
 use crate::{interrupt, mode};
 
 /// Ctrl+C, as a key.
@@ -23,39 +24,28 @@ const SHIFT_TAB: &[u8] = b"\x1b[Z";
 /// The keyboard, read for as long as this lives; the terminal is put back as
 /// it was however it ends.
 pub struct KeyWatch {
-    terminal: File,
-    saved: libc::termios,
     stop: Arc<AtomicBool>,
     reader: Option<JoinHandle<()>>,
+    // Dropped in this order, after `drop` has joined the reader: the
+    // terminal put back, then its file closed.
+    _raw: RawMode,
+    _terminal: File,
 }
 
 impl KeyWatch {
     /// None without a terminal: then Ctrl+C can only come as a signal.
     pub fn start() -> Option<KeyWatch> {
-        let terminal = OpenOptions::new().read(true).open("/dev/tty").ok()?;
+        let terminal = tty::open()?;
+        let raw = RawMode::enter(&terminal)?;
         let fd = terminal.as_raw_fd();
-        // SAFETY: termios is plain data, filled in by tcgetattr before use.
-        let mut saved: libc::termios = unsafe { std::mem::zeroed() };
-        if unsafe { libc::tcgetattr(fd, &mut saved) } != 0 {
-            return None;
-        }
-        let mut raw = saved;
-        // Keys one by one, unechoed, and Ctrl+C a key rather than a signal.
-        raw.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG);
-        raw.c_cc[libc::VMIN] = 1;
-        raw.c_cc[libc::VTIME] = 0;
-        // SAFETY: a valid descriptor and a termios read from it.
-        if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw) } != 0 {
-            return None;
-        }
         let stop = Arc::new(AtomicBool::new(false));
         let reader_stop = stop.clone();
         let reader = thread::spawn(move || read_keys(fd, &reader_stop));
         Some(KeyWatch {
-            terminal,
-            saved,
             stop,
             reader: Some(reader),
+            _raw: raw,
+            _terminal: terminal,
         })
     }
 }
@@ -65,13 +55,7 @@ impl KeyWatch {
 fn read_keys(fd: i32, stop: &AtomicBool) {
     let mut buffer = [0u8; 64];
     while !stop.load(Ordering::SeqCst) {
-        let mut poll = libc::pollfd {
-            fd,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        // SAFETY: one valid pollfd, for the length given.
-        if unsafe { libc::poll(&mut poll, 1, 50) } <= 0 {
+        if !tty::readable(fd, 50) {
             continue;
         }
         // SAFETY: the buffer is valid for its length, and the descriptor
@@ -97,13 +81,7 @@ fn read_keys(fd: i32, stop: &AtomicBool) {
 /// Esc alone stops; an arrow key is Esc followed by the rest of its
 /// sequence a moment later, and is only a key someone pressed.
 fn more_follows(fd: i32) -> bool {
-    let mut poll = libc::pollfd {
-        fd,
-        events: libc::POLLIN,
-        revents: 0,
-    };
-    // SAFETY: one valid pollfd, for the length given.
-    unsafe { libc::poll(&mut poll, 1, 30) > 0 }
+    tty::readable(fd, 30)
 }
 
 impl Drop for KeyWatch {
@@ -111,10 +89,6 @@ impl Drop for KeyWatch {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
-        }
-        // SAFETY: the descriptor is still open; the termios is the one read from it.
-        unsafe {
-            libc::tcsetattr(self.terminal.as_raw_fd(), libc::TCSANOW, &self.saved);
         }
     }
 }

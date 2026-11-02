@@ -42,6 +42,7 @@ mod style;
 mod system;
 mod text;
 mod tools;
+mod tty;
 mod update;
 
 use std::env;

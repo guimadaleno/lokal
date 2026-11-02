@@ -2,12 +2,13 @@
 //! per option, move to one, and Enter picks it. Approvals use it, so Esc
 //! always picks the safe option, wherever the choice started.
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::time::Instant;
 
 use crate::style;
+use crate::tty::{self, RawMode};
 
 /// How often the selected option's marker is repainted while it pulses, in ms.
 const PULSE_FRAME: i32 = 60;
@@ -38,11 +39,7 @@ enum Key {
 /// `safe`. When it's done, the options fold into one line with the answer.
 /// None without a terminal.
 pub fn choose(question: &str, items: &[Item], start: usize, safe: usize) -> Option<Choice> {
-    let mut terminal = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/tty")
-        .ok()?;
+    let mut terminal = tty::open()?;
     let raw = RawMode::enter(&terminal)?;
     let mut selected = start;
     let shown = Instant::now();
@@ -77,14 +74,15 @@ pub fn choose(question: &str, items: &[Item], start: usize, safe: usize) -> Opti
             None => draw(&mut terminal, items, selected, true, shown),
         }
     };
-    // Back up to the question and replace the options with the answer.
+    // Back up to the question, replace the options with the answer, and
+    // show the cursor again.
     let answer = match choice {
         Choice::Picked(index) => style::gray(items[index].label),
         Choice::Interrupted => String::new(),
     };
     let _ = write!(
         terminal,
-        "\r\x1b[{}A\x1b[J  {question} {answer}\n",
+        "\r\x1b[{}A\x1b[J  {question} {answer}\n\x1b[?25h",
         items.len()
     );
     drop(raw);
@@ -186,54 +184,8 @@ fn read_byte(terminal: &mut File) -> Option<u8> {
     }
 }
 
-/// Whether a byte arrives within `milliseconds`: a key, or the rest of one's
-/// sequence.
 fn key_within(terminal: &File, milliseconds: i32) -> bool {
-    let mut poll = libc::pollfd {
-        fd: terminal.as_raw_fd(),
-        events: libc::POLLIN,
-        revents: 0,
-    };
-    // SAFETY: one valid pollfd, for the length given.
-    unsafe { libc::poll(&mut poll, 1, milliseconds) > 0 }
-}
-
-/// Keys arrive one by one, unechoed, and Ctrl+C arrives as a key. The
-/// terminal is put back as it was however the choice ends.
-struct RawMode {
-    fd: i32,
-    saved: libc::termios,
-}
-
-impl RawMode {
-    fn enter(terminal: &File) -> Option<RawMode> {
-        let fd = terminal.as_raw_fd();
-        // SAFETY: termios is plain data, filled in by tcgetattr before use.
-        let mut saved: libc::termios = unsafe { std::mem::zeroed() };
-        if unsafe { libc::tcgetattr(fd, &mut saved) } != 0 {
-            return None;
-        }
-        let mut raw = saved;
-        raw.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG);
-        raw.c_cc[libc::VMIN] = 1;
-        raw.c_cc[libc::VTIME] = 0;
-        // SAFETY: a valid descriptor and a termios read from it.
-        if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw) } != 0 {
-            return None;
-        }
-        Some(RawMode { fd, saved })
-    }
-}
-
-impl Drop for RawMode {
-    fn drop(&mut self) {
-        let show_cursor = b"\x1b[?25h";
-        // SAFETY: the descriptor outlives this guard; the buffer is valid.
-        unsafe {
-            libc::write(self.fd, show_cursor.as_ptr().cast(), show_cursor.len());
-            libc::tcsetattr(self.fd, libc::TCSANOW, &self.saved);
-        }
-    }
+    tty::readable(terminal.as_raw_fd(), milliseconds)
 }
 
 #[cfg(test)]
