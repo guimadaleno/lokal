@@ -138,9 +138,11 @@ fn host(wsl: bool) -> String {
     if let Some(zone) = time_zone() {
         parts.push(format!("time zone {zone}"));
     }
+    // Found like the other probes, never through the PATH's relative folders.
     if wsl
+        && let Some((_, wslinfo)) = on_path(&["wslinfo"], wsl).first()
         && let Some(mode) =
-            output_of(Path::new("wslinfo"), &["--networking-mode"]).filter(|mode| !mode.is_empty())
+            output_of(wslinfo, &["--networking-mode"]).filter(|mode| !mode.is_empty())
     {
         parts.push(format!("WSL networking {mode}"));
     }
