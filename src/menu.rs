@@ -7,8 +7,8 @@ use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::time::Instant;
 
-use crate::style;
 use crate::tty::{self, RawMode};
+use crate::{layout, style};
 
 /// How often the selected option's marker is repainted while it pulses, in ms.
 const PULSE_FRAME: i32 = 60;
@@ -41,10 +41,18 @@ enum Key {
 pub fn choose(question: &str, items: &[Item], start: usize, safe: usize) -> Option<Choice> {
     let mut terminal = tty::open()?;
     let raw = RawMode::enter(&terminal)?;
+    // Each on one line, cut with … in a narrow terminal: one that wrapped
+    // would throw off the redraws, which go up a line per option.
+    let width = style::terminal_width().unwrap_or(80);
+    let question = layout::cut(question, width.saturating_sub(3));
+    let labels: Vec<String> = items
+        .iter()
+        .map(|item| layout::cut(item.label, width.saturating_sub(5)))
+        .collect();
     let mut selected = start;
     let shown = Instant::now();
     let _ = write!(terminal, "\x1b[?25l  {question}");
-    draw(&mut terminal, items, selected, false, shown);
+    draw(&mut terminal, &labels, selected, false, shown);
     let choice = loop {
         if !key_within(&terminal, PULSE_FRAME) {
             pulse_marker(&mut terminal, items.len(), selected, shown);
@@ -71,13 +79,16 @@ pub fn choose(question: &str, items: &[Item], start: usize, safe: usize) -> Opti
         };
         match picked {
             Some(index) => break Choice::Picked(index),
-            None => draw(&mut terminal, items, selected, true, shown),
+            None => draw(&mut terminal, &labels, selected, true, shown),
         }
     };
     // Back up to the question, replace the options with the answer, and
     // show the cursor again.
     let answer = match choice {
-        Choice::Picked(index) => style::gray(items[index].label),
+        Choice::Picked(index) => {
+            let room = width.saturating_sub(question.chars().count() + 4);
+            style::gray(&layout::cut(items[index].label, room))
+        }
         Choice::Interrupted => String::new(),
     };
     let _ = write!(
@@ -99,26 +110,22 @@ fn option_by_key(items: &[Item], key: char) -> Option<usize> {
 }
 
 /// One line per option, the selected one marked. `again` redraws in place.
-fn draw(terminal: &mut File, items: &[Item], selected: usize, again: bool, shown: Instant) {
+fn draw(terminal: &mut File, labels: &[String], selected: usize, again: bool, shown: Instant) {
     let mut text = String::new();
     if again {
-        text.push_str(&format!("\r\x1b[{}A", items.len() - 1));
+        text.push_str(&format!("\r\x1b[{}A", labels.len() - 1));
         text.push_str("\x1b[J");
     } else {
         text.push('\n');
     }
-    for (index, item) in items.iter().enumerate() {
+    for (index, label) in labels.iter().enumerate() {
         if index > 0 {
             text.push('\n');
         }
         if index == selected {
-            text.push_str(&format!(
-                "  {} {}",
-                style::pulse_accent("›", shown),
-                item.label
-            ));
+            text.push_str(&format!("  {} {label}", style::pulse_accent("›", shown)));
         } else {
-            text.push_str(&format!("    {}", style::gray(item.label)));
+            text.push_str(&format!("    {}", style::gray(label)));
         }
     }
     let _ = terminal.write_all(text.as_bytes());

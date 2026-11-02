@@ -71,11 +71,15 @@ fn caret(c: char) -> String {
 /// by their code, and at most `limit` characters.
 pub fn clean(text: &str, limit: usize) -> String {
     let line = without_controls(text.lines().next().unwrap_or_default());
-    let line = line.trim();
-    if line.chars().count() <= limit {
-        return line.to_string();
+    cut(line.trim(), limit)
+}
+
+/// `text` in at most `room` characters, cut with … when it's longer.
+pub fn cut(text: &str, room: usize) -> String {
+    if text.chars().count() <= room {
+        return text.to_string();
     }
-    let kept: String = line.chars().take(limit - 1).collect();
+    let kept: String = text.chars().take(room.saturating_sub(1)).collect();
     format!("{kept}…")
 }
 
@@ -260,6 +264,13 @@ mod tests {
     #[test]
     fn no_room_still_ends() {
         assert_eq!(broken("ab cd", 0), ["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn too_long_is_cut_with_an_ellipsis() {
+        assert_eq!(cut("Yes, and don't ask again", 10), "Yes, and …");
+        assert_eq!(cut("No", 10), "No");
+        assert_eq!(cut("No", 0), "…");
     }
 
     #[test]
