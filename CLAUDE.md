@@ -37,8 +37,9 @@ dependencies.
       repository has git run as it writes. So a git command it would judge
       asks instead, on No and with it named, when the repository has an
       active hook in `.git/hooks`, or sets a program git may run: its
-      hooks path, ssh or password command, an editor, a credential helper,
-      a merge driver, the `ext::` transport, an alias, or a remote's
+      hooks path, ssh, proxy or password command, an editor, a credential
+      helper, a merge driver, a diff or merge tool, a trailer command, a
+      submodule's update command, the `ext::` transport, an alias, or a remote's
       `uploadpack` or `receivepack` (`gitconfig::write_program`). The
       person's own global settings and hooks don't count.
     - **What it reads is the person's or Lokal's own:** the person's last

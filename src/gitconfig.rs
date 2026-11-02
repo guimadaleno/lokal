@@ -31,9 +31,10 @@ pub const UNASKED: [(&str, &str); 2] = [
 const PROGRAMS: &str = r"^(core\.fsmonitor|diff\.external|diff\..+\.(command|textconv)|filter\..+\.(clean|smudge|process)|gpg\.(.+\.)?program)$";
 /// Settings that have git run a program as it writes or reaches a remote:
 /// where its hooks are, what it runs to connect or to ask for a password,
-/// an editor, a merge driver, the `ext::` transport, and an alias, which can
-/// be a shell command or bring options of its own.
-const WRITE_PROGRAMS: &str = r"^(core\.(hookspath|sshcommand|askpass|editor)|sequence\.editor|credential\.(.+\.)?helper|merge\..+\.driver|protocol\.(.+\.)?allow|alias\..+|remote\..+\.(uploadpack|receivepack))$";
+/// an editor, a merge, diff or merge tool, a trailer command, a submodule's
+/// update command, the `ext::` transport, and an alias, which can be a shell
+/// command or bring options of its own.
+const WRITE_PROGRAMS: &str = r"^(core\.(hookspath|sshcommand|askpass|editor|gitproxy|alternaterefscommand)|sequence\.editor|credential\.(.+\.)?helper|merge\..+\.driver|(difftool|mergetool)\..+\.cmd|trailer\..+\.(command|cmd)|submodule\..+\.update|protocol\.(.+\.)?allow|alias\..+|remote\..+\.(uploadpack|receivepack))$";
 /// core.fsmonitor as a yes or a no: git's own daemon, or none.
 const SWITCHES: &[&str] = &["", "true", "false", "yes", "no", "on", "off", "1", "0"];
 /// Reading settings is quick; a file they include could be one that never ends.
@@ -205,7 +206,8 @@ mod tests {
             &file,
             "[core]\n\thooksPath = h\n\taskPass = a\n\teditor = e\n\tbare = false\n\
              [alias]\n\tst = !sh x\n[credential \"https://example.com\"]\n\thelper = c\n\
-             [merge \"ours\"]\n\tdriver = d\n[protocol \"ext\"]\n\tallow = always\n\
+             [merge \"ours\"]\n\tdriver = d\n[difftool \"x\"]\n\tcmd = t\n\
+             [submodule \"lib\"]\n\tupdate = !sh u\n\turl = s\n[protocol \"ext\"]\n\tallow = always\n\
              [remote \"origin\"]\n\turl = u\n\tuploadpack = p\n[user]\n\tname = Ana\n",
         )
         .unwrap();
@@ -229,6 +231,8 @@ mod tests {
                 "alias.st",
                 "credential.https://example.com.helper",
                 "merge.ours.driver",
+                "difftool.x.cmd",
+                "submodule.lib.update",
                 "protocol.ext.allow",
                 "remote.origin.uploadpack",
             ]
