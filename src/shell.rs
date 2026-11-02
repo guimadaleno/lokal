@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::spinner::Spinner;
-use crate::{interrupt, keys, layout, mode, style, text};
+use crate::{gitconfig, interrupt, keys, layout, mode, style, text};
 
 /// How many lines of output show on screen; the model gets more.
 const SHOWN_LINES: usize = 12;
@@ -24,8 +24,10 @@ pub enum Run {
     Stopped,
 }
 
-/// Runs `command` in bash, with `git_settings` over what git would read.
-pub fn run(command: &str, git_settings: &[(&str, &str)]) -> io::Result<Run> {
+/// Runs `command` in bash. One that runs `unasked` gets
+/// `gitconfig::UNASKED` over what git would read, and a PATH without
+/// folders relative to where it runs.
+pub fn run(command: &str, unasked: bool) -> io::Result<Run> {
     let (reader, writer) = io::pipe()?;
     let mut shell = Command::new("bash");
     shell
@@ -36,14 +38,19 @@ pub fn run(command: &str, git_settings: &[(&str, &str)]) -> io::Result<Run> {
         .stderr(writer)
         .env("PAGER", "cat")
         .env("GIT_PAGER", "cat");
-    // What `git -c` passes on, which every git reads and hands to the
-    // submodules it goes into; after any the person set, so these win.
-    if !git_settings.is_empty() {
+    if unasked {
+        // What `git -c` passes on, which every git reads and hands to the
+        // submodules it goes into; after any the person set, so these win.
         let mut parameters = env::var("GIT_CONFIG_PARAMETERS").unwrap_or_default();
-        for (name, value) in git_settings {
+        for (name, value) in gitconfig::UNASKED {
             parameters.push_str(&format!(" '{name}={value}'"));
         }
         shell.env("GIT_CONFIG_PARAMETERS", parameters.trim_start());
+        // With `.` or an empty entry in it, `ls` could be a program the
+        // project planted, run with no one's yes.
+        if let Some(path) = env::var_os("PATH") {
+            shell.env("PATH", absolute_only(&path.to_string_lossy()));
+        }
     }
     // SAFETY: setsid is safe to call between fork and exec.
     // A session of its own: no terminal to wait on for input (sudo fails at
@@ -113,6 +120,14 @@ fn read_lines(reader: io::PipeReader) -> Receiver<String> {
         }
     });
     lines
+}
+
+/// A PATH with only its absolute folders.
+fn absolute_only(path: &str) -> String {
+    path.split(':')
+        .filter(|folder| folder.starts_with('/'))
+        .collect::<Vec<_>>()
+        .join(":")
 }
 
 fn signal_group(pid: u32, signal: libc::c_int) {
@@ -190,5 +205,18 @@ impl Screen {
                 style::gray(&text::more_lines(self.lines - SHOWN_LINES))
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_path_for_what_runs_unasked_has_absolute_folders_only() {
+        assert_eq!(
+            absolute_only("/usr/local/bin:.:/usr/bin::bin:/home/ana/.cargo/bin:"),
+            "/usr/local/bin:/usr/bin:/home/ana/.cargo/bin"
+        );
     }
 }

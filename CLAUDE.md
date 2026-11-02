@@ -63,6 +63,9 @@ dependencies.
     unasked `git status` doesn't list changes inside submodules, and a git
     option about submodules is asked about. A git before 2.26 can't say
     where a setting comes from, so there every git command is asked.
+  - **What runs unasked finds programs only in the PATH's absolute
+    folders** (`shell::run`): with `.` or an empty entry in it, `ls` could
+    be a program a project planted.
 - **Write a file without showing the diff and getting a yes.** The person
   sees what changes before it does, every time: file changes have no
   "don't ask again".

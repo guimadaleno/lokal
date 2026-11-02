@@ -237,11 +237,8 @@ fn run_command(
             }
         }
     }
-    let git_settings: &[(&str, &str)] = if unasked { &gitconfig::UNASKED } else { &[] };
     // The output is a block of its own, after the command and any question.
-    match shell::run(command, git_settings)
-        .map_err(|error| format!("couldn't start bash: {error}"))?
-    {
+    match shell::run(command, unasked).map_err(|error| format!("couldn't start bash: {error}"))? {
         Run::Finished { output, code } => Ok(Outcome::Done(command_result(
             &output,
             code,
@@ -293,7 +290,7 @@ fn print_indented(text: &str, paint: fn(&str) -> String) {
 pub fn run_own(command: &str, room: Option<usize>) -> Option<String> {
     print_command(command);
     interrupt::clear();
-    let result = match shell::run(command, &[]) {
+    let result = match shell::run(command, false) {
         Ok(Run::Finished { output, code }) => {
             Ok(command_result(&output, code, limit(room, OUTPUT_LIMIT)))
         }
