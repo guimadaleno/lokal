@@ -37,8 +37,16 @@ fn budget(context: u64) -> u64 {
 /// The request's size in tokens with these messages, and `fixed`
 /// characters besides: the system prompt and the tools.
 pub fn estimate(fixed: usize, messages: &[Value]) -> u64 {
-    let characters = fixed + serde_json::to_string(messages).map_or(0, |json| json.len());
+    tokens(fixed + json_length(messages))
+}
+
+fn tokens(characters: usize) -> u64 {
     (characters / CHARS_PER_TOKEN) as u64
+}
+
+/// The length of the JSON a value is sent as.
+fn json_length<T: serde::Serialize + ?Sized>(value: &T) -> usize {
+    serde_json::to_string(value).map_or(0, |json| json.len())
 }
 
 /// Near the end of the context, the oldest of what the model has seen
@@ -48,23 +56,29 @@ pub fn estimate(fixed: usize, messages: &[Value]) -> u64 {
 /// instead (`room_for_output`): dropped unseen, it would only ask for them
 /// again, and again.
 pub fn free(messages: &mut [Value], fixed: usize, context: u64) {
+    // Measured once, then by what each message gives up: measuring the
+    // whole conversation again for each one would cost the square of it.
+    let mut characters = fixed + json_length(messages);
     for index in 0..last_reply(messages) {
-        if estimate(fixed, messages) <= budget(context) {
+        if tokens(characters) <= budget(context) {
             return;
         }
+        characters -= json_length(&messages[index]);
         make_way(&mut messages[index]);
+        characters += json_length(&messages[index]);
     }
 }
 
 /// How many characters the next tool output may take: the room left once
 /// everything that can make way has, since that goes first.
 pub fn room_for_output(messages: &[Value], fixed: usize, context: u64) -> usize {
-    let mut messages = messages.to_vec();
-    let seen = last_reply(&messages);
-    for message in &mut messages[..seen] {
-        make_way(message);
+    let mut characters = fixed + json_length(messages);
+    for message in &messages[..last_reply(messages)] {
+        let mut made_way = message.clone();
+        make_way(&mut made_way);
+        characters = characters + json_length(&made_way) - json_length(message);
     }
-    let room = budget(context).saturating_sub(estimate(fixed, &messages));
+    let room = budget(context).saturating_sub(tokens(characters));
     room as usize * CHARS_PER_TOKEN
 }
 
@@ -228,6 +242,55 @@ mod tests {
 
     fn content_length(messages: &[Value], index: usize) -> usize {
         messages[index]["content"].as_str().unwrap().len()
+    }
+
+    /// As `free` and `room_for_output` were, measuring everything at each
+    /// step: what they must still give.
+    fn free_as_before(messages: &mut [Value], fixed: usize, context: u64) {
+        for index in 0..last_reply(messages) {
+            if estimate(fixed, messages) <= budget(context) {
+                return;
+            }
+            make_way(&mut messages[index]);
+        }
+    }
+
+    fn room_as_before(messages: &[Value], fixed: usize, context: u64) -> usize {
+        let mut messages = messages.to_vec();
+        let seen = last_reply(&messages);
+        for message in &mut messages[..seen] {
+            make_way(message);
+        }
+        let room = budget(context).saturating_sub(estimate(fixed, &messages));
+        room as usize * CHARS_PER_TOKEN
+    }
+
+    #[test]
+    fn measuring_once_gives_what_measuring_each_time_gave() {
+        for steps in 0..12 {
+            let mut messages = vec![
+                json!({"role": "user", "content": own_command("ls", &"é".repeat(steps * 700))}),
+            ];
+            for step in 0..steps {
+                reply(&mut messages);
+                output(&mut messages, 1000 + step * 1700);
+                if step % 3 == 0 {
+                    write(&mut messages, 500 + step * 2300);
+                }
+            }
+            for context in [4096, 8192, 16_384, 32_768] {
+                assert_eq!(
+                    room_for_output(&messages, fixed(), context),
+                    room_as_before(&messages, fixed(), context),
+                    "{steps} steps, {context}"
+                );
+                let mut freed = messages.clone();
+                free(&mut freed, fixed(), context);
+                let mut before = messages.clone();
+                free_as_before(&mut before, fixed(), context);
+                assert_eq!(freed, before, "{steps} steps, {context}");
+            }
+        }
     }
 
     #[test]

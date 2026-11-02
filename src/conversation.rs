@@ -64,6 +64,9 @@ pub struct Conversation {
     asked: Vec<String>,
     /// The files written this turn, for auto's judge.
     written: Vec<String>,
+    /// What the tools' definitions take in a request, in characters: the
+    /// same all session.
+    tools_size: usize,
 }
 
 enum Failure {
@@ -84,6 +87,7 @@ pub enum Turn {
 
 impl Conversation {
     pub fn new(server: Server, facts: Facts, peers: Option<Peers>) -> Self {
+        let tools_size = tools::definitions(peers.is_some()).to_string().len();
         let mut conversation = Conversation {
             server,
             facts,
@@ -99,6 +103,7 @@ impl Conversation {
             own: Vec::new(),
             asked: Vec::new(),
             written: Vec::new(),
+            tools_size,
         };
         conversation.notes = conversation.read_notes();
         conversation.refresh_system_prompt();
@@ -584,7 +589,7 @@ impl Conversation {
     /// What every request carries besides the messages, in characters: the
     /// system prompt and the tools.
     fn fixed(&self) -> usize {
-        self.system.len() + tools::definitions(self.peers.is_some()).to_string().len()
+        self.system.len() + self.tools_size
     }
 
     fn save(&self) {
@@ -680,6 +685,7 @@ mod tests {
             own: Vec::new(),
             asked: Vec::new(),
             written: Vec::new(),
+            tools_size: tools::definitions(false).to_string().len(),
         }
     }
 
