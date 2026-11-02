@@ -612,7 +612,8 @@ Measured on a current laptop, under WSL; the judge on a consumer GPU.
 Tracked as issues:
 - **other local servers** (#1, Ollama first);
 - **auto inside a sandbox**, so the judge's mistakes stay in a box the
-  kernel enforces (#2);
+  kernel enforces (#2). Its design is in `docs/sandbox.md`: read it before
+  touching how commands run unasked;
 - **queued messages while Lokal works** (#3);
 - **`/compact`, and the same on its own when dropping outputs isn't
   enough** (#4);
