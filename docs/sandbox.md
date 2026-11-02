@@ -32,8 +32,13 @@ Lokal runs itself again as `lokal --box <profile> -- bash -c <command>`. A fresh
    - writes are allowed beneath the writable folders above only;
    - execution is allowed beneath `/usr`, `/bin`, `/sbin`, `/lib*`, `/opt`, the home folder and the project, never `/init` or `/mnt`;
    - the signal and abstract-socket scopes are on.
-4. **Drops variables** that point outside: `SSH_AUTH_SOCK`, `GPG_AGENT_INFO`, `WSL_INTEROP`, `DBUS_SESSION_BUS_ADDRESS`, `DOCKER_HOST`, `DISPLAY` and `WAYLAND_DISPLAY`.
-5. **Execs bash.** It runs as the person's uid, with no capabilities left.
+   - It needs Landlock ABI 6 (Linux 6.12), the first with the scopes.
+4. **Filters two calls with seccomp:**
+   - `socket(AF_UNIX)` is refused, since Landlock doesn't cover connecting to a socket by its path and a socket could sit anywhere; `socketpair` still works;
+   - `io_uring_setup` is refused, since io_uring could open a socket past the filter.
+   - Calls of the 32-bit and x32 ABIs are refused whole.
+5. **Drops variables** that point outside: `SSH_AUTH_SOCK`, `GPG_AGENT_INFO`, `WSL_INTEROP`, `DBUS_SESSION_BUS_ADDRESS`, `DOCKER_HOST`, `DISPLAY` and `WAYLAND_DISPLAY`.
+6. **Execs bash.** It runs as the person's uid, with no capabilities left.
 
 Everything is syscalls through `libc`: no bubblewrap and no new crate. Setting it up costs about 2–3 ms a command (measured with `unshare`).
 
@@ -84,9 +89,11 @@ One test per promise, run from inside the box:
 
 Where the box can't be set up, the tests say so and pass.
 
+**A working folder under /tmp comes along:** it is cloned before /tmp is covered and put back, read-only in the read box. The scratch folder goes back over it, writable. So does `/tmp` itself, the person's other files there unchanged.
+
 ## Phases
 
-1. `sandbox.rs`, `lokal --box` and the escape tests, with no change in behavior.
+1. `sandbox.rs`, `lokal --box` and the escape tests (`tests/sandbox.rs`), with no change in behavior. **Done:** the 13 tests pass here, and taking out any one layer (the hidden `/run`, seccomp, the scopes, the hidden keys, the read-only folder under /tmp) makes one fail. About 7 ms a command, bash included, with the release build.
 2. The read-only list runs in the read box.
 3. Auto runs what its judge lets through in the work box, and lists the files changed.
 4. After real use, decide whether the box replaces the judge, which was this issue's first idea.

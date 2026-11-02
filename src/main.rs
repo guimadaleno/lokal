@@ -34,6 +34,7 @@ mod release;
 #[rustfmt::skip]
 #[allow(clippy::all)]
 mod report;
+mod sandbox;
 mod scratch;
 mod server;
 mod shell;
@@ -100,6 +101,11 @@ fn parse_args(args: impl Iterator<Item = String>) -> Args {
 }
 
 fn main() -> ExitCode {
+    // The box sets itself up and becomes the command: nothing else of
+    // Lokal's may start first, a thread least of all.
+    if env::args().nth(1).as_deref() == Some("--box") {
+        return sandbox::enter(env::args().skip(2));
+    }
     let started = Instant::now();
     interrupt::install();
     match parse_args(env::args().skip(1)) {
