@@ -101,6 +101,7 @@ fn stream(
     let reader = http::post_json(address, "/v1/chat/completions", body)?;
     let mut reply = Reply::default();
     let mut filter = AnswerFilter::new();
+    let mut paths = Vec::new();
     let mut first_token = None;
     // Server-sent events: one `data: {json}` line per piece, then `data: [DONE]`.
     for line in reader.lines() {
@@ -119,7 +120,7 @@ fn stream(
         if let Some(message) = http::error_message(&piece) {
             return Err(text::server_said(&message));
         }
-        if add_piece(&piece, &mut reply, &mut filter, sender) {
+        if add_piece(&piece, &mut reply, &mut filter, &mut paths, sender) {
             let now = Instant::now();
             reply.generating = now - *first_token.get_or_insert(now);
         }
@@ -132,12 +133,14 @@ fn stream(
     Ok(reply)
 }
 
-/// Adds one piece of the stream to the reply. True when the model
-/// generated something in it, rather than only the usage or a finish.
+/// Adds one piece of the stream to the reply, with `paths` following each
+/// tool call's path as its arguments arrive. True when the model generated
+/// something in it, rather than only the usage or a finish.
 fn add_piece(
     piece: &Value,
     reply: &mut Reply,
     filter: &mut AnswerFilter,
+    paths: &mut Vec<PathSearch>,
     sender: &Sender<Event>,
 ) -> bool {
     let delta = &piece["choices"][0]["delta"];
@@ -182,6 +185,7 @@ fn add_piece(
                 ..ToolCall::default()
             });
         }
+        paths.resize_with(reply.tool_calls.len(), PathSearch::default);
         let target = &mut reply.tool_calls[index];
         if let Some(id) = call["id"].as_str().filter(|id| !id.is_empty()) {
             target.id = id.to_string();
@@ -197,17 +201,47 @@ fn add_piece(
         }
         let _ = sender.send(Event::ToolCall {
             name: target.name.clone(),
-            path: path_in(&target.arguments),
+            path: paths[index].update(&target.arguments),
             bytes: target.arguments.len(),
         });
     }
     generated
 }
 
+const PATH_KEY: &str = "\"path\"";
+
+/// A tool call's path, looked for in each new piece of its arguments
+/// rather than in all of them every time: a long file can come in
+/// thousands of pieces, and its path after its content.
+#[derive(Default)]
+struct PathSearch {
+    /// How far the arguments have been looked through for the key.
+    searched: usize,
+    /// Where the key is, once found.
+    key: Option<usize>,
+    path: Option<String>,
+}
+
+impl PathSearch {
+    fn update(&mut self, arguments: &str) -> Option<String> {
+        if self.path.is_none() {
+            if self.key.is_none() {
+                // Back a little, for a key split between two pieces.
+                let from =
+                    arguments.floor_char_boundary(self.searched.saturating_sub(PATH_KEY.len()));
+                self.key = arguments[from..].find(PATH_KEY).map(|at| from + at);
+                self.searched = arguments.len();
+            }
+            self.path = self.key.and_then(|key| path_in(&arguments[key..]));
+        }
+        self.path.clone()
+    }
+}
+
 /// The `"path"` in a tool call's arguments, read from the JSON while it is
 /// still arriving: None until its closing quote is there.
 fn path_in(arguments: &str) -> Option<String> {
-    let after_key = &arguments[arguments.find("\"path\"")? + "\"path\"".len()..];
+    let after_key = &arguments[arguments.find(PATH_KEY)? + PATH_KEY.len()..];
     let value = after_key
         .trim_start()
         .strip_prefix(':')?
@@ -235,6 +269,7 @@ mod tests {
         let (sender, events) = mpsc::channel();
         let mut reply = Reply::default();
         let mut filter = AnswerFilter::new();
+        let mut paths = Vec::new();
         let pieces = [
             json!({"choices": [{"delta": {"reasoning_content": "hmm"}}]}),
             json!({"choices": [{"delta": {"content": "\n\n"}}]}),
@@ -244,7 +279,7 @@ mod tests {
             json!({"choices": [], "usage": {"total_tokens": 386}}),
         ];
         for piece in &pieces {
-            add_piece(piece, &mut reply, &mut filter, &sender);
+            add_piece(piece, &mut reply, &mut filter, &mut paths, &sender);
         }
         assert_eq!(reply.content, "");
         assert_eq!(reply.tool_calls.len(), 1);
@@ -266,6 +301,7 @@ mod tests {
         let (sender, _events) = mpsc::channel();
         let mut reply = Reply::default();
         let mut filter = AnswerFilter::new();
+        let mut paths = Vec::new();
         let generated = [
             json!({"choices": [{"delta": {"reasoning_content": "hmm"}}]}),
             json!({"choices": [{"delta": {"content": "Hi"}}]}),
@@ -275,14 +311,32 @@ mod tests {
             json!({"choices": [{"delta": {}, "finish_reason": "stop"}]}),
         ];
         for piece in &generated {
-            assert!(add_piece(piece, &mut reply, &mut filter, &sender));
+            assert!(add_piece(
+                piece,
+                &mut reply,
+                &mut filter,
+                &mut paths,
+                &sender
+            ));
         }
         for piece in &not_generated {
-            assert!(!add_piece(piece, &mut reply, &mut filter, &sender));
+            assert!(!add_piece(
+                piece,
+                &mut reply,
+                &mut filter,
+                &mut paths,
+                &sender
+            ));
         }
         assert_eq!(reply.generated, 2);
         let usage = json!({"choices": [], "usage": {"completion_tokens": 5, "total_tokens": 90}});
-        assert!(!add_piece(&usage, &mut reply, &mut filter, &sender));
+        assert!(!add_piece(
+            &usage,
+            &mut reply,
+            &mut filter,
+            &mut paths,
+            &sender
+        ));
         assert_eq!(reply.generated, 5);
     }
 
@@ -298,5 +352,18 @@ mod tests {
         );
         assert_eq!(path_in(r#"{"path": "/tmp/unfini"#), None);
         assert_eq!(path_in(r#"{"command": "ls"}"#), None);
+    }
+
+    #[test]
+    fn finds_the_path_piece_by_piece_as_a_whole_read_would() {
+        let arguments =
+            r#"{"content":"ação \"path\" x","pa"#.to_string() + r#"th": "~/n\"q.md", "x": 1}"#;
+        let mut search = PathSearch::default();
+        let mut so_far = String::new();
+        for c in arguments.chars() {
+            so_far.push(c);
+            assert_eq!(search.update(&so_far), path_in(&so_far), "{so_far}");
+        }
+        assert_eq!(search.update(&so_far).as_deref(), Some("~/n\"q.md"));
     }
 }
