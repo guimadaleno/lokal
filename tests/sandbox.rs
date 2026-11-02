@@ -355,8 +355,9 @@ fn in_namespace(
         .unwrap();
     let text = String::from_utf8_lossy(&output.stdout).into_owned()
         + &String::from_utf8_lossy(&output.stderr);
-    if output.status.code() == Some(UNAVAILABLE) && text.contains("unshare")
-        || text.contains("unshare:")
+    // No namespace for the setup, or no box inside it.
+    if text.contains("unshare:")
+        || output.status.code() == Some(UNAVAILABLE) && text.contains("couldn't be set up")
     {
         eprintln!("no namespace here, skipped: {text}");
         return None;
@@ -500,7 +501,8 @@ fn paths_in_the_persons_own_settings_that_lead_into_the_tree_stay_read_only() {
     let output = command.output().unwrap();
     let text = String::from_utf8_lossy(&output.stdout).into_owned()
         + &String::from_utf8_lossy(&output.stderr);
-    if output.status.code() == Some(UNAVAILABLE) && text.contains("unshare") {
+    if output.status.code() == Some(UNAVAILABLE) && text.contains("couldn't be set up") {
+        eprintln!("no box here, skipped: {text}");
         return;
     }
     // ~/ is the home folder's, so a missing ~/.gitconfig.local refuses nothing.
