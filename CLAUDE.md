@@ -303,6 +303,7 @@ dependencies.
 | `markdown.rs` | Bold, inline code, headings, code blocks and links, styled as the answer streams |
 | `server.rs`, `http.rs` | Finding the server and its model; plain-HTTP requests |
 | `tools.rs`, `shell.rs`, `diff.rs` | The model's tools, running a command, showing a change |
+| `tools/command.rs` | run_command and the person's `!` commands: who decides, what the model hears |
 | `allowlist.rs` | Which commands run without asking, and which questions open on Yes |
 | `gitconfig.rs` | What a repository's own git settings would have git run |
 | `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it |
