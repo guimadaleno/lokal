@@ -303,27 +303,13 @@ fn print_rows(rows: &[(&str, String)]) {
 /// `/recon`'s probes, with the spinner meanwhile: Docker can take a moment.
 fn gather_recon() -> Vec<(&'static str, String)> {
     let folder = env::current_dir().unwrap_or_default();
-    let gathering = std::thread::spawn(move || recon::gather(&folder));
-    let mut spinner = spinner::Spinner::new();
-    while !gathering.is_finished() {
-        spinner.tick();
-        std::thread::sleep(std::time::Duration::from_millis(40));
-    }
-    spinner.clear();
-    gathering.join().unwrap_or_default()
+    spinner::while_running(move || recon::gather(&folder)).unwrap_or_default()
 }
 
 /// `/update`: asks for the newest version now, with the spinner meanwhile.
 fn check_for_update(session: &Session) {
     let updates_off = session.updates_off;
-    let check = std::thread::spawn(move || update::check_now(updates_off));
-    let mut spinner = spinner::Spinner::new();
-    while !check.is_finished() {
-        spinner.tick();
-        std::thread::sleep(std::time::Duration::from_millis(40));
-    }
-    spinner.clear();
-    let message = match check.join() {
+    let message = match spinner::while_running(move || update::check_now(updates_off)) {
         Ok(update::Asked::Installed(version)) => text::ready_next_time(&version),
         Ok(update::Asked::Newest) => text::newest(),
         Ok(update::Asked::Unavailable(standing)) => text::cant_update(&standing),

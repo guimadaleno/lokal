@@ -3,12 +3,28 @@
 //! it never jitters, whatever the terminal's setting for ambiguous widths.
 
 use std::io::Write;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::style;
 
 const FRAMES: [&str; 5] = ["·", "•", "●", "•", "·"];
 const FRAME_TIME: Duration = Duration::from_millis(160);
+
+/// Runs `work` on a thread of its own, with the spinner meanwhile, and
+/// returns what it gave, or Err if it panicked.
+pub fn while_running<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> thread::Result<T> {
+    let running = thread::spawn(work);
+    let mut spinner = Spinner::new();
+    while !running.is_finished() {
+        spinner.tick();
+        thread::sleep(Duration::from_millis(40));
+    }
+    spinner.clear();
+    running.join()
+}
 
 /// Draws at the start of the current line, which must be empty.
 pub struct Spinner {
