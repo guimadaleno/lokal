@@ -354,8 +354,9 @@ dependencies.
   development build would replace itself and undo the rebuild.
 - **A one-shot request (`lokal "..."`) never reaches the network on its
   own:** it often runs in a script. The update check runs in conversations
-  only, and a one-shot request that got no answer exits with 1
-  (`Turn::Failed`).
+  only, and a one-shot request that got no answer exits with 1: the
+  server failed, or the person said no or stopped it (anything but
+  `Turn::Answered`).
 - **Commands run in a session of their own** (`setsid` in `shell.rs`). Then
   nothing can wait on the terminal (sudo fails at once instead of hanging),
   and Ctrl+C reaches a command only through Lokal.

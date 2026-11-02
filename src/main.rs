@@ -216,8 +216,10 @@ fn run(started: Instant, resume: bool, request: &str) -> ExitCode {
         let updated_to = update.and_then(|check| check.installed());
         let goodbye = text::lasted(started.elapsed(), updated_to.as_deref());
         eprintln!("{}", style::gray(&goodbye));
-    } else if conversation.send(request, &mut input, Some(request)) == conversation::Turn::Failed {
-        // A script running a one-shot request can tell no answer came.
+    } else if conversation.send(request, &mut input, Some(request)) != conversation::Turn::Answered
+    {
+        // A script running a one-shot request can tell no answer came: the
+        // server failed, or the person said no or stopped it.
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
