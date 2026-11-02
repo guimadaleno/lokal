@@ -296,6 +296,8 @@ dependencies.
 | `config.rs` | The settings file, user.md, the state files |
 | `spinner.rs`, `style.rs`, `interrupt.rs`, `text.rs` | Spinner, colors, Ctrl+C flag, every word on screen |
 | `site/` | The page at guimadaleno.com/lokal/, published by `.github/workflows/site.yml` |
+| `README.md` | What a person reads first in the repository: what Lokal is, setting up a model, what it won't do |
+| `.github/workflows/ci.yml` | Formatting, lints and tests on every push |
 | `tools/icon.py` | Draws the mark and writes `site/`'s icons from one definition |
 
 ## Invariants
@@ -444,7 +446,9 @@ Its About screen shows the same thing.
 
 **The page's "Set up LM Studio" steps name its screens and options** (the
 Developer tab, "Serve on Local Network", the mark on models that use tools).
-When LM Studio changes, check those words in `site/index.html` too.
+When LM Studio changes, check those words in `site/index.html` and
+`README.md` too. Both also list what Lokal won't do: a change to the
+refusals changes them with it.
 
 ## Build and validation
 
