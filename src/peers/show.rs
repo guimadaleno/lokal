@@ -2,9 +2,11 @@
 //! the notices above the `>`, the mail framed for the model, and the words
 //! for what a session is doing.
 
+use std::path::Path;
+
 use super::{Message, Session};
 use crate::layout::{broken, indented};
-use crate::{style, text, tty};
+use crate::{config, style, text, tty};
 
 /// What the model gets when a turn starts on mail, or when Enter passes it
 /// on: each framed with who sent it, from where, and as another model's
@@ -80,6 +82,43 @@ pub fn session_state(session: &Session) -> &'static str {
         (true, false) => text::WORKING,
         (false, _) => text::SESSION_IDLE,
     }
+}
+
+/// The other sessions as the person sees them listed: the names in a
+/// column, then each one's folder, branch and what it's doing, going on
+/// under itself in a narrow terminal. With `asked`, also what its person
+/// last asked and the files it changed. Lines ready to print.
+pub fn session_rows(sessions: &[Session], asked: bool) -> Vec<String> {
+    let names = sessions
+        .iter()
+        .map(|session| session.name.chars().count())
+        .max()
+        .unwrap_or(0);
+    let room = tty::width()
+        .map_or(usize::MAX, |width| width.saturating_sub(names + 5))
+        .max(20);
+    let mut rows = Vec::new();
+    for session in sessions {
+        let mut about = config::shown(Path::new(&session.folder));
+        if !session.branch.is_empty() {
+            about.push_str(&format!(" · {}", session.branch));
+        }
+        about.push_str(&format!(" · {}", session_state(session)));
+        let mut lines = broken(&about, room);
+        let doing = text::session_doing(&session.request, &session.files);
+        if asked && !doing.is_empty() {
+            lines.extend(broken(&doing, room));
+        }
+        for (index, line) in lines.iter().enumerate() {
+            let name = if index == 0 {
+                session.name.as_str()
+            } else {
+                ""
+            };
+            rows.push(format!("  {name:<names$}  {}", style::gray(line)));
+        }
+    }
+    rows
 }
 
 /// A line about mail and the other sessions: a faint `·`, then `text` in

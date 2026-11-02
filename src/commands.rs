@@ -262,30 +262,8 @@ fn print_sessions(conversation: &Conversation, session: &Session) {
         eprintln!("  {}", style::gray(&text::no_other_sessions(peers.name())));
         return;
     }
-    // The names in a column, and the rest after them, going on under itself.
-    let names = sessions
-        .iter()
-        .map(|other| other.name.chars().count())
-        .max()
-        .unwrap_or(0);
-    let room = tty::width()
-        .map_or(usize::MAX, |width| width.saturating_sub(names + 5))
-        .max(20);
-    for other in &sessions {
-        let mut about = config::shown(Path::new(&other.folder));
-        if !other.branch.is_empty() {
-            about.push_str(&format!(" · {}", other.branch));
-        }
-        about.push_str(&format!(" · {}", peers::session_state(other)));
-        let mut lines = layout::broken(&about, room);
-        let doing = text::session_doing(&other.request, &other.files);
-        if !doing.is_empty() {
-            lines.extend(layout::broken(&doing, room));
-        }
-        for (index, line) in lines.iter().enumerate() {
-            let name = if index == 0 { other.name.as_str() } else { "" };
-            eprintln!("  {name:<names$}  {}", style::gray(line));
-        }
+    for row in peers::session_rows(&sessions, true) {
+        eprintln!("{row}");
     }
 }
 
