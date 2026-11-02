@@ -458,7 +458,10 @@ impl Conversation {
         let prompt_tokens = self.estimated_tokens();
         let mut generated: u64 = 0;
         let mut first_piece: Option<Instant> = None;
-        let progress = |generated: u64, first_piece: Option<Instant>| -> Vec<String> {
+        let label = |generated: u64,
+                     first_piece: Option<Instant>,
+                     writing: Option<&ToolProgress>|
+         -> String {
             let used = self
                 .server
                 .context
@@ -466,7 +469,13 @@ impl Conversation {
             let rate = first_piece
                 .and_then(|first| speed(generated.saturating_sub(1), first.elapsed()))
                 .map(text::speed);
-            [used, rate].into_iter().flatten().collect()
+            let progress: Vec<String> = [used, rate].into_iter().flatten().collect();
+            working_label(
+                started,
+                writing,
+                &progress,
+                text::mode_name(mode::current()),
+            )
         };
         let mut writing: Option<ToolProgress> = None;
         // The reasoning, when shown, sits in a small window that goes away.
@@ -498,13 +507,7 @@ impl Conversation {
                         reasoning.push(&text);
                         reasoning.draw();
                         // The window redrew over the spinner's row: put the spinner back.
-                        let label = working_label(
-                            started,
-                            writing.as_ref(),
-                            &progress(generated, first_piece),
-                            text::mode_name(mode::current()),
-                        );
-                        spinner.redraw(&label);
+                        spinner.redraw(&label(generated, first_piece, writing.as_ref()));
                     }
                 }
                 Some(Event::Text(text)) => {
@@ -545,13 +548,7 @@ impl Conversation {
             // reasoning or a file being written can stream with no pause for
             // seconds, and the spinner would freeze.
             if !mid_line && spinner.due() {
-                let label = working_label(
-                    started,
-                    writing.as_ref(),
-                    &progress(generated, first_piece),
-                    text::mode_name(mode::current()),
-                );
-                spinner.tick_with(&label);
+                spinner.tick_with(&label(generated, first_piece, writing.as_ref()));
             }
         }
     }
