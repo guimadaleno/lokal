@@ -329,6 +329,7 @@ dependencies.
 | `peers.rs` | Mail between the person's sessions: listening, listing them, sending, what waits, what each is doing |
 | `peers/inbox.rs` | The mail waiting, and when it starts a turn |
 | `peers/show.rs` | What the person and the model see of mail and the other sessions |
+| `peers/socket.rs` | The wire between sessions and its trust boundary: who's on the other end, who sent a mail |
 | `config.rs` | The settings file, user.md, the state files |
 | `layout.rs` | Text made safe and laid out for the terminal: control characters out, lines broken to fit |
 | `spinner.rs`, `style.rs`, `interrupt.rs`, `text.rs` | Spinner, colors, Ctrl+C flag, every word on screen |
