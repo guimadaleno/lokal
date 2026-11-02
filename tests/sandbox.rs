@@ -70,6 +70,39 @@ impl Place {
     }
 }
 
+impl Place {
+    /// Whether `lokal --box work` refused to set up, with git's global
+    /// settings read from `global` when given.
+    fn work_refused(&self, line: &str, global: Option<&Path>) -> bool {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_lokal"));
+        command
+            .args(["--box", "work"])
+            .arg(&self.project)
+            .arg(&self.scratch)
+            .arg(line);
+        if let Some(global) = global {
+            command.env("GIT_CONFIG_GLOBAL", global);
+        }
+        command.output().unwrap().status.code() == Some(UNAVAILABLE)
+    }
+
+    fn git(&self, args: &[&str]) {
+        let done = Command::new("git")
+            .args(args)
+            .current_dir(&self.project)
+            .status()
+            .unwrap();
+        assert!(done.success());
+    }
+
+    /// A file of git's global settings beside the project.
+    fn global(&self, contents: &str) -> PathBuf {
+        let path = self.base.join("global.gitconfig");
+        fs::write(&path, contents).unwrap();
+        path
+    }
+}
+
 impl Drop for Place {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.base);
@@ -300,28 +333,6 @@ fn a_second_mount_of_the_same_files_is_covered() {
     assert!(!text.contains("SECRET"), "{text}");
 }
 
-#[test]
-fn hooks_kept_in_the_tree_stay_read_only() {
-    let place = Place::new("hooks");
-    fs::create_dir_all(place.project.join(".husky")).unwrap();
-    fs::create_dir_all(place.project.join("tools/hooks")).unwrap();
-    let configured = Command::new("git")
-        .args(["config", "core.hooksPath", "tools/hooks"])
-        .current_dir(&place.project)
-        .status()
-        .unwrap();
-    assert!(configured.success());
-    let Some(_) = place.run(
-        "work",
-        "echo x > .husky/pre-commit; echo x > tools/hooks/pre-commit; touch tools/other; true",
-    ) else {
-        return;
-    };
-    assert!(!place.project.join(".husky/pre-commit").exists());
-    assert!(!place.project.join("tools/hooks/pre-commit").exists());
-    assert!(place.project.join("tools/other").exists());
-}
-
 /// `inside` run by `lokal --box <profile>` from a shell in a namespace of
 /// its own, after `setup` there; None where that can't be had.
 fn in_namespace(
@@ -418,80 +429,103 @@ fn a_folder_on_a_windows_drive_can_use_the_read_box() {
 }
 
 #[test]
-fn what_gits_settings_name_in_the_tree_stays_read_only() {
-    let place = Place::new("named");
-    let git = |args: &[&str]| {
-        let done = Command::new("git")
-            .args(args)
-            .current_dir(&place.project)
-            .status()
-            .unwrap();
-        assert!(done.success());
-    };
-    // An include from the tree, a hooks folder named there, and a script
-    // git runs as it reads.
-    fs::write(
-        place.project.join("shared.gitconfig"),
-        "[core]\n\thooksPath = hk\n",
-    )
-    .unwrap();
-    fs::create_dir_all(place.project.join("hk")).unwrap();
-    fs::write(place.project.join("fsmonitor.sh"), "#!/bin/sh\n").unwrap();
-    git(&["config", "include.path", "../shared.gitconfig"]);
-    git(&["config", "core.fsmonitor", "./fsmonitor.sh"]);
-    let Some(_) = place.run(
-        "work",
-        "echo x > hk/pre-commit; echo '[core] fsmonitor = x' >> shared.gitconfig; \
-         echo evil >> fsmonitor.sh; touch other; true",
-    ) else {
+fn hook_managers_kept_in_the_tree_stay_read_only() {
+    let place = Place::new("husky");
+    fs::create_dir_all(place.project.join(".husky")).unwrap();
+    let Some(_) = place.run("work", "echo x > .husky/pre-commit; touch other; true") else {
         return;
     };
-    assert!(!place.project.join("hk/pre-commit").exists());
+    assert!(!place.project.join(".husky/pre-commit").exists());
+    assert!(place.project.join("other").exists());
+}
+
+#[test]
+fn the_repositorys_own_settings_beyond_the_plain_keep_the_work_box_shut() {
+    // Each names, or could name, a program git runs later, outside.
+    for setting in [
+        ["core.hooksPath", "tools"],
+        ["alias.t", "!sh tools/t.sh"],
+        ["filter.x.clean", "sh tools/c.sh"],
+        ["difftool.x.cmd", "./tools/d.sh"],
+        ["core.pager", "./tools/p.sh"],
+        ["include.path", "../shared.gitconfig"],
+    ] {
+        let place = Place::new("repository");
+        if place.run("read", "true").is_none() {
+            return;
+        }
+        place.git(&["config", setting[0], setting[1]]);
+        assert!(
+            place.work_refused("mkdir -p tools; echo x > tools/t.sh", None),
+            "{setting:?}"
+        );
+        assert!(!place.project.join("tools").exists(), "{setting:?}");
+    }
+}
+
+#[test]
+fn settings_git_cant_read_keep_the_work_box_shut() {
+    let place = Place::new("unreadable");
+    if place.run("read", "true").is_none() {
+        return;
+    }
+    fs::write(place.project.join("bad.cfg"), "[core\n").unwrap();
+    let config = place.project.join(".git/config");
+    let mut text = fs::read_to_string(&config).unwrap();
+    text.push_str("[include]\n\tpath = ../bad.cfg\n");
+    fs::write(&config, text).unwrap();
+    assert!(place.work_refused("echo '[core]' > bad.cfg", None));
     assert_eq!(
-        fs::read_to_string(place.project.join("shared.gitconfig")).unwrap(),
-        "[core]\n\thooksPath = hk\n"
+        fs::read_to_string(place.project.join("bad.cfg")).unwrap(),
+        "[core\n"
     );
+}
+
+#[test]
+fn paths_in_the_persons_own_settings_that_lead_into_the_tree_stay_read_only() {
+    let place = Place::new("global");
+    fs::create_dir_all(place.project.join("tools/hooks")).unwrap();
+    fs::write(place.project.join("tools/t.sh"), "#!/bin/sh\n").unwrap();
+    let global = place.global(
+        "[core]\n\thooksPath = tools/hooks\n[alias]\n\tt = !sh tools/t.sh\n\
+         [include]\n\tpath = ~/.gitconfig.local\n",
+    );
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lokal"));
+    command
+        .args(["--box", "work"])
+        .arg(&place.project)
+        .arg(&place.scratch)
+        .arg("echo x > tools/hooks/pre-commit; echo evil >> tools/t.sh; touch other; echo RAN")
+        .env("GIT_CONFIG_GLOBAL", &global);
+    let output = command.output().unwrap();
+    let text = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    if output.status.code() == Some(UNAVAILABLE) && text.contains("unshare") {
+        return;
+    }
+    // ~/ is the home folder's, so a missing ~/.gitconfig.local refuses nothing.
+    assert!(text.contains("RAN"), "{text}");
+    assert!(!place.project.join("tools/hooks/pre-commit").exists());
     assert_eq!(
-        fs::read_to_string(place.project.join("fsmonitor.sh")).unwrap(),
+        fs::read_to_string(place.project.join("tools/t.sh")).unwrap(),
         "#!/bin/sh\n"
     );
     assert!(place.project.join("other").exists());
 }
 
 #[test]
-fn what_gits_settings_name_but_isnt_there_keeps_the_work_box_shut() {
-    let place = Place::new("unnamed");
-    let configured = Command::new("git")
-        .args(["config", "core.hooksPath", "tools/hooks"])
-        .current_dir(&place.project)
-        .status()
-        .unwrap();
-    assert!(configured.success());
-    let output = Command::new(env!("CARGO_BIN_EXE_lokal"))
-        .args(["--box", "work"])
-        .arg(&place.project)
-        .arg(&place.scratch)
-        .arg("mkdir -p tools/hooks && echo x > tools/hooks/pre-commit")
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(UNAVAILABLE));
-    assert!(!place.project.join("tools/hooks").exists());
-}
-
-#[test]
-fn a_hooks_path_outside_the_project_is_left_to_the_rest_of_the_box() {
-    let place = Place::new("upward");
-    let configured = Command::new("git")
-        .args(["config", "core.hooksPath", "../../.."])
-        .current_dir(&place.project)
-        .status()
-        .unwrap();
-    assert!(configured.success());
-    let Some((code, text)) = place.run("work", "touch made && echo WROTE") else {
+fn a_path_the_persons_settings_name_that_isnt_there_keeps_the_work_box_shut() {
+    let place = Place::new("missing");
+    if place.run("read", "true").is_none() {
         return;
-    };
-    assert_eq!(code, 0, "{text}");
-    assert!(text.contains("WROTE"), "{text}");
+    }
+    let global = place.global("[core]\n\thooksPath = .hooks\n");
+    assert!(place.work_refused("mkdir .hooks && echo x > .hooks/pre-commit", Some(&global)));
+    assert!(!place.project.join(".hooks").exists());
+    // Outside the project, it's the rest of the box's to keep.
+    let upward = place.global("[core]\n\thooksPath = ../../..\n");
+    assert!(!place.work_refused("touch made", Some(&upward)));
+    assert!(place.project.join("made").exists());
 }
 
 #[test]

@@ -248,7 +248,7 @@ fn first_beyond_the_plain(listing: &str) -> Option<String> {
 
 /// Whether a setting, as git lists it (section and key in lowercase, a
 /// subsection between them as written), can't have git run anything.
-fn is_plain(name: &str, value: &str) -> bool {
+pub fn is_plain(name: &str, value: &str) -> bool {
     let Some((section, rest)) = name.split_once('.') else {
         return false;
     };

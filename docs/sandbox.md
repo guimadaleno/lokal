@@ -29,12 +29,18 @@ Lokal runs itself again as `lokal --box <read|work> <folder> <scratch> <command>
      (`.husky`, `.githooks`, `.pre-commit-config.yaml`, lefthook's files),
      `.vscode`, `.idea`, `.envrc`, shell rc files, `.gitconfig`, `LOKAL.md`
      and `AGENTS.md`;
-   - also read-only in the work box, whatever in the tree git's settings
-     name for git to run or read: the hooks folder, a file the config
-     includes, an fsmonitor, filter, diff, merge or credential program, an
-     alias's script. git itself lists them (`git config --includes --list`,
-     every scope), before the box is set up. If one isn't there yet, the
-     work box isn't set up at all, since a command could make it;
+   - git's settings, as git itself lists them (`git config --includes
+     --list`, every scope) before the box is set up, decide whether the
+     work box is set up at all:
+     - the repository's own settings may hold only the plain ones
+       (`gitconfig::is_plain`, as for auto's judge), since the settings
+       that name a program git runs later have no fixed end (an alias, a
+       filter, a pager, a diff tool, a hooks folder, an include…);
+     - in the person's own settings, a path that leads into the project
+       (`core.hooksPath = .hooks`, an alias's `sh tools/x.sh`) is kept
+       read-only, and one that isn't there yet refuses the box, since a
+       command could make it; `~/` is the home folder, as for git;
+     - git that can't list them (a broken include) refuses the box too;
    - an empty read-only tmpfs (or `/dev/null`, for a file) over every
      **second door** to the files of the home folder, Lokal's own folders
      and, in the work box, the project. A door is another mount of the same
@@ -118,7 +124,8 @@ Where the box can't be set up, the tests say so and pass.
 1. `sandbox.rs`, `lokal --box` and the escape tests (`tests/sandbox.rs`), with no change in behavior. **Done, and reviewed twice:**
    - The first review found five ways out: second doors, protected names not there yet, vsock, inherited descriptors, and keys through the second doors. All are closed or handed to phase 3.
    - The second found that the first door rule broke the box where /tmp or /home has a file system of its own, and two ways around the hooks folder: one named but not there, and one set through an include.
-   - 24 escape tests and 5 unit tests pass here. Taking out any one layer makes one fail: the hidden `/run`, seccomp and its socket list, the scopes, the hidden keys, the read-only folder under /tmp, the second doors and how they're told apart, the closed descriptors, what git's settings name, the writable scratch folder, and the home check.
+   - The third found that a list of the settings that run a program kept missing some, and that git failing to list them let everything through. The rule above, the plain list for the repository's own, replaced it.
+   - 25 escape tests and 5 unit tests pass here. Taking out any one layer makes one fail: the hidden `/run`, seccomp and its socket list, the scopes, the hidden keys, the read-only folder under /tmp, the second doors and how they're told apart, the closed descriptors, what git's settings name, the writable scratch folder, and the home check.
    - About 7 ms a command, bash included, with the release build.
 2. The read-only list runs in the read box.
 3. Auto runs what its judge lets through in the work box, lists the files changed, and asks about new protected names.

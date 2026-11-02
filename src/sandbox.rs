@@ -133,16 +133,10 @@ fn set_up(profile: Profile, folder: &Path, scratch: &Path) -> Result<(), String>
     // Read while git still runs as it would outside. One that isn't there
     // yet can't be covered, and a command could make it.
     let named = if profile == Profile::Work {
-        named_by_git(&project)
+        named_by_git(&project, &home)?
     } else {
         Vec::new()
     };
-    if let Some(missing) = named.iter().find(|path| !path.exists()) {
-        return Err(format!(
-            "git's settings name {}, which isn't there yet",
-            missing.display()
-        ));
-    }
     if profile == Profile::Work
         && (!project.join(".git").exists()
             || home.starts_with(&project)
@@ -160,12 +154,18 @@ fn set_up(profile: Profile, folder: &Path, scratch: &Path) -> Result<(), String>
     write("/proc/self/gid_map", &format!("{gid} {gid} 1"))?;
     mount(None, "/", None, libc::MS_REC | libc::MS_PRIVATE, None)?;
     // Found before the box mounts anything of its own.
-    let mut restricted = vec![home.as_path()];
-    let own = config::own_folders();
-    restricted.extend(own.iter().map(PathBuf::as_path));
+    // Where their files really are: through a link (/home to /var/home),
+    // the path as written would find the wrong mount.
+    let mut restricted = vec![home.clone()];
+    restricted.extend(config::own_folders());
     if profile == Profile::Work {
-        restricted.push(&project);
+        restricted.push(project.clone());
     }
+    let restricted: Vec<PathBuf> = restricted
+        .into_iter()
+        .map(|path| fs::canonicalize(&path).unwrap_or(path))
+        .collect();
+    let restricted: Vec<&Path> = restricted.iter().map(PathBuf::as_path).collect();
     let doors = doors(&mounts()?, &restricted);
     if let Some(door) = doors
         .iter()
@@ -257,76 +257,73 @@ fn set_up(profile: Profile, folder: &Path, scratch: &Path) -> Result<(), String>
     seccomp()
 }
 
-/// Whether a git setting names a program for git to run, or a file of
-/// settings for it to read: what a command must not plant or rewrite in
-/// the tree, for git to run later, outside the box.
-fn names_a_program(key: &str) -> bool {
-    let ends = |suffixes: &[&str]| suffixes.iter().any(|suffix| key.ends_with(suffix));
-    matches!(
-        key,
-        "core.hookspath"
-            | "core.fsmonitor"
-            | "core.sshcommand"
-            | "core.askpass"
-            | "core.editor"
-            | "sequence.editor"
-            | "diff.external"
-            | "include.path"
-    ) || (key.starts_with("gpg.") && ends(&[".program"]))
-        || (key.starts_with("includeif.") && ends(&[".path"]))
-        || (key.starts_with("filter.") && ends(&[".clean", ".smudge", ".process"]))
-        || (key.starts_with("diff.") && ends(&[".textconv", ".command"]))
-        || (key.starts_with("merge.") && ends(&[".driver"]))
-        || (key.starts_with("credential.") && ends(&["helper"]))
-        || key.starts_with("alias.")
-}
-
-/// The files and folders inside the project that git's settings name for
-/// it to run or read, there yet or not. Read with git itself, includes
-/// followed and every scope: a global `core.hooksPath = .hooks` names a
-/// folder in each repository.
-fn named_by_git(project: &Path) -> Vec<PathBuf> {
-    let Some(git) = system::program("git") else {
-        return Vec::new();
-    };
-    let Ok(output) = Command::new(git)
+/// What of the tree git's settings would have git run or read later,
+/// outside the box, read with git itself (includes followed, every scope)
+/// before the box is set up. Err when the work box can't vouch for them:
+/// - the repository's own settings, which anything could have written,
+///   may hold only the plain ones `gitconfig::is_plain` knows, since the
+///   settings that name a program have no fixed end;
+/// - the person's own (global, system) are theirs, but a path in them can
+///   point into the tree (`core.hooksPath = .hooks`): each such path is
+///   kept read-only, and one that isn't there yet refuses the box, since a
+///   command could make it;
+/// - git that can't list them refuses the box too.
+fn named_by_git(project: &Path, home: &Path) -> Result<Vec<PathBuf>, String> {
+    let git = system::program("git").ok_or("git isn't there to read its settings")?;
+    let output = Command::new(git)
         .arg("-C")
         .arg(project)
-        .args(["config", "--includes", "--null", "--list"])
+        .args(["config", "--includes", "--show-scope", "--null", "--list"])
         .stderr(std::process::Stdio::null())
         .output()
-    else {
-        return Vec::new();
-    };
-    let git_dir = project.join(".git");
-    String::from_utf8_lossy(&output.stdout)
-        .split('\0')
-        .filter_map(|entry| {
-            let (key, value) = entry.split_once('\n')?;
-            let key = key.to_ascii_lowercase();
-            if !names_a_program(&key) {
-                return None;
+        .map_err(|error| format!("git config: {error}"))?;
+    if !output.status.success() {
+        return Err("git couldn't list the repository's settings".into());
+    }
+    let listing = String::from_utf8_lossy(&output.stdout);
+    let mut fields = listing.split('\0');
+    let mut named = Vec::new();
+    while let (Some(scope), Some(setting)) = (fields.next(), fields.next()) {
+        let (key, value) = setting.split_once('\n').unwrap_or((setting, ""));
+        let key = key.to_ascii_lowercase();
+        if matches!(scope, "local" | "worktree") {
+            if !crate::gitconfig::is_plain(&key, value) {
+                return Err(format!(
+                    "the repository's git settings hold {key}, which the box can't vouch for"
+                ));
             }
-            let word = value
-                .trim()
-                .trim_start_matches('!')
-                .split_whitespace()
-                .next()?;
-            // A hooks folder or an include is always a path; for a program,
-            // a bare name is one on the PATH.
-            let always_a_path = key == "core.hookspath" || key.starts_with("include");
-            if !always_a_path && !word.contains('/') && !word.starts_with('.') {
-                return None;
-            }
-            // An include is read relative to the file that names it.
-            let base = if key.starts_with("include") {
-                &git_dir
-            } else {
-                project
-            };
-            let path = lexical(&base.join(word));
-            path.starts_with(project).then_some(path)
+            continue;
+        }
+        // An include of the person's points at their own files.
+        if key.starts_with("include") {
+            continue;
+        }
+        named.extend(paths_in(project, home, &key, value));
+    }
+    if let Some(missing) = named.iter().find(|path| !path.exists()) {
+        return Err(format!(
+            "git's settings name {}, which isn't there yet",
+            missing.display()
+        ));
+    }
+    Ok(named)
+}
+
+/// The words of a setting's value that name a path inside the project, as
+/// git would read them: `~/` is the home folder, a relative path is the
+/// project's. A bare word is a program on the PATH, but for a hooks folder.
+fn paths_in(project: &Path, home: &Path, key: &str, value: &str) -> Vec<PathBuf> {
+    value
+        .split_whitespace()
+        .map(|word| word.trim_start_matches('!').trim_matches(['"', '\'']))
+        .filter(|word| !word.is_empty() && !word.starts_with('-') && !word.contains("://"))
+        .filter(|word| key == "core.hookspath" || word.contains('/') || word.starts_with('.'))
+        .map(|word| match word.strip_prefix("~/") {
+            Some(rest) => home.join(rest),
+            None => project.join(word),
         })
+        .map(|path| lexical(&path))
+        .filter(|path| path.starts_with(project))
         .collect()
 }
 
@@ -858,30 +855,31 @@ mod tests {
     }
 
     #[test]
-    fn settings_that_name_a_program_are_known() {
-        for key in [
-            "core.hookspath",
-            "core.fsmonitor",
-            "include.path",
-            "includeif.gitdir:~/work/.path",
-            "filter.lfs.smudge",
-            "diff.pdf.textconv",
-            "merge.ours.driver",
-            "credential.https://example.com.helper",
-            "alias.st",
-            "gpg.ssh.program",
-        ] {
-            assert!(names_a_program(key), "{key}");
-        }
-        for key in [
-            "user.name",
-            "branch.main.merge",
-            "remote.origin.url",
-            "core.bare",
-        ] {
-            assert!(!names_a_program(key), "{key}");
-        }
+    fn paths_in_a_setting_are_the_projects_or_homes() {
+        let project = Path::new("/home/ana/p");
+        let home = Path::new("/home/ana");
+        assert_eq!(
+            paths_in(project, home, "alias.t", "!sh tools/t.sh --flag"),
+            [PathBuf::from("/home/ana/p/tools/t.sh")]
+        );
+        assert_eq!(
+            paths_in(project, home, "core.hookspath", "hooks"),
+            [PathBuf::from("/home/ana/p/hooks")]
+        );
+        // ~/ is home's, outside the project; a bare program is the PATH's.
+        assert!(paths_in(project, home, "core.hookspath", "~/hooks").is_empty());
+        assert!(paths_in(project, home, "core.pager", "less -R").is_empty());
+        assert!(
+            paths_in(
+                project,
+                home,
+                "credential.helper",
+                "!/usr/bin/gh auth git-credential"
+            )
+            .is_empty()
+        );
+        assert!(paths_in(project, home, "url.x.insteadof", "https://example.com/").is_empty());
+        assert!(paths_in(project, home, "core.hookspath", "../../..").is_empty());
         assert_eq!(lexical(Path::new("/p/./a/../b")), PathBuf::from("/p/b"));
-        assert_eq!(lexical(Path::new("/p/../../x")), PathBuf::from("/x"));
     }
 }
