@@ -4,6 +4,7 @@ mod approvals;
 mod chat;
 mod commands;
 mod config;
+mod context;
 mod conversation;
 mod diff;
 mod feedback;

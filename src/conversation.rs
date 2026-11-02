@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::chat::{self, Event, Reply};
+use crate::context::{self, CHARS_PER_TOKEN, is_object, kept_arguments};
 use crate::input::Input;
 use crate::markdown::Markdown;
 use crate::memory::{self, Note};
@@ -24,12 +25,6 @@ const LABEL_AFTER: Duration = Duration::from_secs(2);
 /// How long the model has to generate before its speed shows: a few
 /// tokens' worth says little about it.
 const SPEED_AFTER: Duration = Duration::from_secs(1);
-/// Stands in for a tool's output once it's dropped to free up context.
-const DROPPED_OUTPUT: &str = "[Output dropped to free up context, after you saw it.]";
-/// Stands in for the text a file change carried once it's dropped.
-const DROPPED_WRITE: &str = "[Dropped to free up context; read the file for what it holds now.]";
-/// About three characters a token: rough, and on the high side.
-const CHARS_PER_TOKEN: usize = 3;
 /// The project's notes go along with every request, so they get an eighth
 /// of the context; this much when its size isn't known, an eighth of 32K.
 const NOTES_SHARE: u64 = 8;
@@ -42,12 +37,6 @@ const ASK_AGAIN_NOTE: &str = "(From Lokal, not the user: your last reply ran out
 const CUT_SHORT_RESULT: &str = "Not run: your reply ran out of room before this step was complete. \
     Reason briefly this time, then take it again. A file too long for one reply goes in parts: \
     write_file with its start, then edit_file to add the rest.";
-/// Frame a command the person ran at the `>`, ahead of their next request:
-/// the command between the first two, its result before the last, which
-/// `make_way` looks for to drop it.
-const OWN_START: &str = "[The user ran this command themselves, at their prompt: `";
-const OWN_OUTPUT: &str = "`. What it gave:]\n";
-const OWN_END: &str = "\n[End of what the user's command gave.]";
 
 pub struct Conversation {
     pub server: Server,
@@ -142,7 +131,7 @@ impl Conversation {
             .flatten()
             .filter_map(|tool| tool["function"]["name"].as_str().map(String::from))
             .collect();
-        (&self.system, names, self.estimate(&[]))
+        (&self.system, names, context::estimate(self.fixed(), &[]))
     }
 
     /// Picks user.md up again after it changed.
@@ -216,8 +205,7 @@ impl Conversation {
         }
         if let Some(result) = tools::run_own(command, room) {
             let result = result.trim_end();
-            self.own
-                .push(format!("{OWN_START}{command}{OWN_OUTPUT}{result}{OWN_END}"));
+            self.own.push(context::own_command(command, result));
         }
         if let Some(peers) = &self.peers {
             peers.set_busy(false);
@@ -573,57 +561,34 @@ impl Conversation {
         body
     }
 
-    /// Near the end of the context, the oldest of what the model has seen
-    /// and replied after goes first: tool outputs, and the text of the files
-    /// it wrote, which the files hold now. They take the most room and matter
-    /// least later on. The outputs the model hasn't seen yet stay, cut to fit
-    /// instead (`room_for_output`): dropped unseen, it would only ask for them
-    /// again, and again.
+    /// Near the end of the context, what the model has seen makes way
+    /// (`context::free`).
     fn free_context(&mut self) {
-        let Some(context) = self.server.context else {
-            return;
-        };
-        for index in 0..self.last_reply() {
-            if self.estimated_tokens() <= budget(context) {
-                return;
-            }
-            make_way(&mut self.messages[index]);
+        if let Some(context) = self.server.context {
+            let fixed = self.fixed();
+            context::free(&mut self.messages, fixed, context);
         }
     }
 
     /// How many characters the next tool output may take, when the context's
-    /// size is known: the room left once everything that can make way has,
-    /// since that goes first.
+    /// size is known (`context::room_for_output`).
     fn room_for_output(&self) -> Option<usize> {
         let context = self.server.context?;
-        let mut messages = self.messages.clone();
-        for message in &mut messages[..self.last_reply()] {
-            make_way(message);
-        }
-        let room = budget(context).saturating_sub(self.estimate(&messages));
-        Some(room as usize * CHARS_PER_TOKEN)
-    }
-
-    /// Where the model's last reply is: everything before it, the model has
-    /// seen and replied after.
-    fn last_reply(&self) -> usize {
-        self.messages
-            .iter()
-            .rposition(|message| message["role"] == "assistant")
-            .unwrap_or(0)
+        Some(context::room_for_output(
+            &self.messages,
+            self.fixed(),
+            context,
+        ))
     }
 
     fn estimated_tokens(&self) -> u64 {
-        self.estimate(&self.messages)
+        context::estimate(self.fixed(), &self.messages)
     }
 
-    /// The request's size in tokens with these messages: rough, and on the
-    /// high side.
-    fn estimate(&self, messages: &[Value]) -> u64 {
-        let characters = self.system.len()
-            + tools::definitions(self.peers.is_some()).to_string().len()
-            + serde_json::to_string(messages).map_or(0, |json| json.len());
-        (characters / CHARS_PER_TOKEN) as u64
+    /// What every request carries besides the messages, in characters: the
+    /// system prompt and the tools.
+    fn fixed(&self) -> usize {
+        self.system.len() + tools::definitions(self.peers.is_some()).to_string().len()
     }
 
     fn save(&self) {
@@ -653,95 +618,9 @@ impl Conversation {
             return false;
         };
         self.messages = messages.clone();
-        mend_arguments(&mut self.messages);
+        context::mend_arguments(&mut self.messages);
         self.tokens = saved["tokens"].as_u64();
         true
-    }
-}
-
-/// A text's size in tokens: rough, and on the high side.
-pub fn tokens_in(text: &str) -> u64 {
-    (text.len() / CHARS_PER_TOKEN) as u64
-}
-
-/// What the conversation may fill: a quarter of the context stays for the
-/// model's reasoning and reply.
-fn budget(context: u64) -> u64 {
-    context * 3 / 4
-}
-
-/// Drops what a message the model has replied after holds: a tool's output,
-/// what the person's own commands gave, or the text of the file changes it
-/// asked for.
-fn make_way(message: &mut Value) {
-    if message["role"] == "tool" {
-        message["content"] = DROPPED_OUTPUT.into();
-    }
-    if message["role"] == "user"
-        && let Some(content) = message["content"].as_str().and_then(drop_own)
-    {
-        message["content"] = content.into();
-    }
-    // get_mut, since indexing to change would add the keys a message lacks.
-    let calls = message.get_mut("tool_calls").and_then(Value::as_array_mut);
-    for call in calls.into_iter().flatten() {
-        if let Some(function) = call.get_mut("function") {
-            drop_written(function);
-        }
-    }
-}
-
-/// A request with what each of the person's own commands gave dropped, the
-/// commands kept. None when there's nothing to drop.
-fn drop_own(content: &str) -> Option<String> {
-    let mut kept = String::new();
-    let mut rest = content;
-    let mut dropped = false;
-    while let Some(start) = rest.find(OWN_START)
-        && let Some(output) = rest[start..]
-            .find(OWN_OUTPUT)
-            .map(|at| start + at + OWN_OUTPUT.len())
-        && let Some(end) = rest[output..].find(OWN_END).map(|at| output + at)
-    {
-        kept.push_str(&rest[..output]);
-        if end - output > DROPPED_OUTPUT.len() {
-            kept.push_str(DROPPED_OUTPUT);
-            dropped = true;
-        } else {
-            kept.push_str(&rest[output..end]);
-        }
-        rest = &rest[end..];
-    }
-    kept.push_str(rest);
-    dropped.then_some(kept)
-}
-
-/// A write_file or edit_file call keeps its path and loses its text. The
-/// arguments stay valid JSON: the server reads them back into the prompt.
-fn drop_written(function: &mut Value) {
-    let fields: &[&str] = match function["name"].as_str() {
-        Some("write_file") => &["content"],
-        Some("edit_file") => &["old_text", "new_text"],
-        _ => return,
-    };
-    let Some(Ok(mut arguments)) = function["arguments"]
-        .as_str()
-        .map(serde_json::from_str::<Value>)
-    else {
-        return;
-    };
-    let mut dropped = false;
-    for &field in fields {
-        if arguments[field]
-            .as_str()
-            .is_some_and(|text| text.len() > DROPPED_WRITE.len())
-        {
-            arguments[field] = DROPPED_WRITE.into();
-            dropped = true;
-        }
-    }
-    if dropped {
-        function["arguments"] = arguments.to_string().into();
     }
 }
 
@@ -850,36 +729,6 @@ fn assistant_message(reply: &Reply) -> Value {
     message
 }
 
-/// A call's arguments as the conversation keeps them. The server reads them
-/// back into the prompt, and arguments that aren't JSON, such as ones cut
-/// short, make it fail every request after. Those are kept as `{}`, and so
-/// is anything but an object, which no tool takes.
-fn kept_arguments(arguments: &str) -> &str {
-    if is_object(arguments) {
-        arguments
-    } else {
-        "{}"
-    }
-}
-
-fn is_object(arguments: &str) -> bool {
-    serde_json::from_str::<Value>(arguments).is_ok_and(|value| value.is_object())
-}
-
-/// A saved conversation may hold arguments the server can't read back:
-/// kept as they are, it couldn't go on.
-fn mend_arguments(messages: &mut [Value]) {
-    let calls = messages
-        .iter_mut()
-        .filter_map(|message| message.get_mut("tool_calls"))
-        .filter_map(Value::as_array_mut)
-        .flatten();
-    for arguments in calls.filter_map(|call| call.pointer_mut("/function/arguments")) {
-        let kept = kept_arguments(arguments.as_str().unwrap_or_default()).to_string();
-        *arguments = kept.into();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -917,163 +766,6 @@ mod tests {
         }
     }
 
-    /// The model replies with a step.
-    fn reply(conversation: &mut Conversation) {
-        let call = json!({"id": "1", "type": "function",
-            "function": {"name": "read_file", "arguments": "{}"}});
-        conversation
-            .messages
-            .push(json!({"role": "assistant", "content": "", "tool_calls": [call]}));
-    }
-
-    /// The step's output arrives.
-    fn output(conversation: &mut Conversation, characters: usize) {
-        conversation
-            .messages
-            .push(json!({"role": "tool", "tool_call_id": "1", "content": "x".repeat(characters)}));
-    }
-
-    /// The model writes a file with this much text, and it's written.
-    fn write(conversation: &mut Conversation, characters: usize) {
-        let arguments = json!({"path": "a.txt", "content": "x".repeat(characters)}).to_string();
-        let call = json!({"id": "2", "type": "function",
-            "function": {"name": "write_file", "arguments": arguments}});
-        conversation
-            .messages
-            .push(json!({"role": "assistant", "content": "", "tool_calls": [call]}));
-        conversation
-            .messages
-            .push(json!({"role": "tool", "tool_call_id": "2", "content": "Wrote a.txt."}));
-    }
-
-    fn arguments(conversation: &Conversation, index: usize) -> Value {
-        let arguments = &conversation.messages[index]["tool_calls"][0]["function"]["arguments"];
-        serde_json::from_str(arguments.as_str().unwrap()).unwrap()
-    }
-
-    fn content_length(conversation: &Conversation, index: usize) -> usize {
-        conversation.messages[index]["content"]
-            .as_str()
-            .unwrap()
-            .len()
-    }
-
-    #[test]
-    fn older_outputs_make_way_for_the_newest() {
-        let mut conversation = conversation(8192);
-        reply(&mut conversation);
-        output(&mut conversation, 9000);
-        reply(&mut conversation);
-        output(&mut conversation, 12_000);
-        conversation.free_context();
-        assert_eq!(conversation.messages[2]["content"], DROPPED_OUTPUT);
-        assert_eq!(content_length(&conversation, 4), 12_000);
-    }
-
-    #[test]
-    fn an_output_the_model_hasnt_seen_is_never_dropped() {
-        let mut conversation = conversation(8192);
-        reply(&mut conversation);
-        output(&mut conversation, 30_000);
-        conversation.free_context();
-        assert_eq!(content_length(&conversation, 2), 30_000);
-    }
-
-    #[test]
-    fn room_for_output_counts_seen_outputs_as_gone() {
-        let mut conversation = conversation(8192);
-        reply(&mut conversation);
-        output(&mut conversation, 9000);
-        reply(&mut conversation);
-        // About 18,000 characters under the budget; the 9,000 seen don't count.
-        let room = conversation.room_for_output().unwrap();
-        assert!(room > 12_000, "room {room}");
-        // A first output of this step, not seen yet, does count.
-        output(&mut conversation, 3000);
-        let after = conversation.room_for_output().unwrap();
-        assert!(room - after >= 3000, "room {room}, after {after}");
-    }
-
-    #[test]
-    fn a_written_file_makes_way_once_the_model_replied_after_it() {
-        let mut conversation = conversation(8192);
-        write(&mut conversation, 20_000);
-        reply(&mut conversation);
-        conversation.free_context();
-        let arguments = arguments(&conversation, 1);
-        assert_eq!(arguments["path"], "a.txt");
-        assert_eq!(arguments["content"], DROPPED_WRITE);
-    }
-
-    #[test]
-    fn the_last_reply_keeps_what_it_wrote() {
-        let mut conversation = conversation(8192);
-        write(&mut conversation, 20_000);
-        conversation.free_context();
-        let arguments = arguments(&conversation, 1);
-        assert_eq!(arguments["content"].as_str().unwrap().len(), 20_000);
-    }
-
-    #[test]
-    fn room_for_output_counts_written_files_as_gone() {
-        let mut conversation = conversation(8192);
-        write(&mut conversation, 15_000);
-        reply(&mut conversation);
-        // About 18,000 characters under the budget; kept, the file would leave under 3,500.
-        let room = conversation.room_for_output().unwrap();
-        assert!(room > 10_000, "room {room}");
-    }
-
-    #[test]
-    fn an_edit_loses_its_long_text_and_keeps_the_rest() {
-        let arguments = json!({"path": "a.txt", "old_text": "x".repeat(500), "new_text": "y"});
-        let mut function = json!({"name": "edit_file", "arguments": arguments.to_string()});
-        drop_written(&mut function);
-        let arguments: Value =
-            serde_json::from_str(function["arguments"].as_str().unwrap()).unwrap();
-        assert_eq!(arguments["path"], "a.txt");
-        assert_eq!(arguments["old_text"], DROPPED_WRITE);
-        assert_eq!(arguments["new_text"], "y");
-    }
-
-    #[test]
-    fn what_the_persons_commands_gave_makes_way_and_the_rest_stays() {
-        let own = |command: &str, result: &str| {
-            format!("{OWN_START}{command}{OWN_OUTPUT}{result}{OWN_END}")
-        };
-        let request = format!(
-            "{}\n\n{}\n\nwhy does it fail?",
-            own("cargo test", &"x".repeat(30_000)),
-            own("git status", "ok")
-        );
-        let mut conversation = conversation(8192);
-        conversation.messages = vec![json!({"role": "user", "content": request})];
-        reply(&mut conversation);
-        conversation.free_context();
-        let kept = conversation.messages[0]["content"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        assert_eq!(
-            kept,
-            format!(
-                "{}\n\n{}\n\nwhy does it fail?",
-                own("cargo test", DROPPED_OUTPUT),
-                own("git status", "ok")
-            )
-        );
-        // Already dropped, or as short as the note: nothing more to drop.
-        assert_eq!(drop_own(&kept), None);
-        assert_eq!(drop_own("[The user ran this command themselves"), None);
-    }
-
-    #[test]
-    fn making_way_adds_nothing_to_a_message_without_calls() {
-        let mut message = json!({"role": "user", "content": "hi"});
-        make_way(&mut message);
-        assert_eq!(message, json!({"role": "user", "content": "hi"}));
-    }
-
     #[test]
     fn arguments_cut_short_are_kept_as_an_empty_object() {
         let call = |id: &str, arguments: &str| chat::ToolCall {
@@ -1094,32 +786,6 @@ mod tests {
             message["tool_calls"][1]["function"]["arguments"],
             r#"{"path": "b.txt", "content": "whole"}"#
         );
-    }
-
-    #[test]
-    fn a_saved_conversation_with_arguments_the_server_cant_read_is_mended() {
-        let call = |arguments: &str| {
-            json!({"id": "1", "type": "function",
-                "function": {"name": "write_file", "arguments": arguments}})
-        };
-        let calls = [
-            call(r#"{"path": "a"#),
-            call("[1]"),
-            call(r#"{"path": "b"}"#),
-        ];
-        let mut messages = vec![
-            json!({"role": "user", "content": "hi"}),
-            json!({"role": "assistant", "content": "", "tool_calls": calls}),
-        ];
-        mend_arguments(&mut messages);
-        let kept: Vec<&str> = messages[1]["tool_calls"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|call| call["function"]["arguments"].as_str().unwrap())
-            .collect();
-        assert_eq!(kept, ["{}", "{}", r#"{"path": "b"}"#]);
-        assert_eq!(messages[0], json!({"role": "user", "content": "hi"}));
     }
 
     #[test]

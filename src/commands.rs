@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use crate::conversation::{self, Conversation};
+use crate::context;
+use crate::conversation::Conversation;
 use crate::input::Input;
 use crate::{config, feedback, layout, memory, peers, recon, server, spinner, style, text, update};
 
@@ -216,7 +217,7 @@ fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
     }
     for (index, note) in notes.iter().enumerate() {
         let label = if index == 0 { text::INFO_NOTES } else { "" };
-        let tokens = conversation::tokens_in(&note.text);
+        let tokens = context::tokens_in(&note.text);
         rows.push((label, text::note_size(&note.name, tokens, note.cut)));
     }
     rows.push((
@@ -367,7 +368,7 @@ pub fn print_notes(conversation: &Conversation) {
     let names: Vec<&str> = notes.iter().map(|note| note.name.as_str()).collect();
     let tokens = notes
         .iter()
-        .map(|note| conversation::tokens_in(&note.text))
+        .map(|note| context::tokens_in(&note.text))
         .sum();
     let cut = notes.iter().any(|note| note.cut);
     eprintln!("{}", style::gray(&text::notes_taken(&names, tokens, cut)));
