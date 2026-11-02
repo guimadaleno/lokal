@@ -140,31 +140,56 @@ const INTERPRETERS: &[&str] = &["python", "python3", "perl", "ruby", "node", "ph
 /// Package managers whose `publish` sends out what can't be taken back.
 const PUBLISHERS: &[&str] = &["npm", "pnpm", "yarn", "cargo"];
 
+/// One program of a command line: its words, and whether any of them has an
+/// unquoted `*`, `?` or `[`, which bash replaces with file names.
+#[derive(Default)]
+struct Program {
+    words: Vec<String>,
+    globbed: bool,
+}
+
 pub fn is_read_only(command: &str) -> bool {
     match split(command) {
-        Some(programs) => programs.iter().all(|words| program_is_read_only(words)),
+        Some(programs) => programs.iter().all(program_is_read_only),
         None => false,
     }
 }
 
-fn program_is_read_only(words: &[String]) -> bool {
-    let Some((program, args)) = words.split_first() else {
+fn program_is_read_only(program: &Program) -> bool {
+    let Some((name, args)) = program.words.split_first() else {
         return false;
     };
-    match program.as_str() {
+    if glob_may_write(name, program) {
+        return false;
+    }
+    match name.as_str() {
         "git" => git_is_read_only(args),
         "docker" => args
             .first()
             .is_some_and(|sub| DOCKER_READ_ONLY.contains(&sub.as_str())),
         // `uniq input output` writes to output.
         "uniq" => args.iter().filter(|arg| !arg.starts_with('-')).count() <= 1,
-        _ => match READ_ONLY.iter().find(|(name, _)| name == program) {
+        _ => match READ_ONLY.iter().find(|(read_only, _)| read_only == name) {
             Some((_, writing)) => !args
                 .iter()
                 .any(|arg| writing.iter().any(|option| matches_option(arg, option))),
             None => false,
         },
     }
+}
+
+/// A file can be named like an option: with one called `--pre=bash`,
+/// `rg x *` runs every file it searches as a script. So a glob counts as one
+/// of the options that write or run, for a program that has any, and for
+/// uniq, whose second file is its output. `ls *` and `grep x *` stay as
+/// they are.
+fn glob_may_write(name: &str, program: &Program) -> bool {
+    let name = name.rsplit('/').next().unwrap_or(name);
+    program.globbed
+        && (matches!(name, "git" | "uniq")
+            || READ_ONLY
+                .iter()
+                .any(|(read_only, writing)| *read_only == name && !writing.is_empty()))
 }
 
 fn git_is_read_only(args: &[String]) -> bool {
@@ -193,7 +218,7 @@ pub fn uses_git(command: &str) -> bool {
     split(command).is_some_and(|programs| {
         programs
             .iter()
-            .filter_map(|words| words.first())
+            .filter_map(|program| program.words.first())
             .any(|program| program.rsplit('/').next() == Some("git"))
     })
 }
@@ -202,13 +227,16 @@ pub fn uses_git(command: &str) -> bool {
 /// a command Lokal can read whole, with nothing in it from the lists above.
 /// It picks where the question starts, never whether there is one.
 pub fn opens_on_yes(command: &str) -> bool {
-    split(command).is_some_and(|programs| programs.iter().all(|words| is_everyday(words)))
+    split(command).is_some_and(|programs| programs.iter().all(is_everyday))
 }
 
-fn is_everyday(words: &[String]) -> bool {
-    let Some((program, args)) = words.split_first() else {
+fn is_everyday(whole: &Program) -> bool {
+    let Some((program, args)) = whole.words.split_first() else {
         return false;
     };
+    if glob_may_write(program, whole) {
+        return false;
+    }
     // `X=1 make` changes what a program does, and LD_PRELOAD what runs.
     if program.contains('=') {
         return false;
@@ -294,11 +322,11 @@ fn matches_option(arg: &str, option: &str) -> bool {
 /// anything else the shell interprets (variables, substitution, redirection
 /// other than to /dev/null, background jobs, subshells, several lines), since
 /// those can hide writes or other programs.
-fn split(command: &str) -> Option<Vec<Vec<String>>> {
+fn split(command: &str) -> Option<Vec<Program>> {
     if command.contains(['\n', '\r']) {
         return None;
     }
-    let mut programs = vec![Vec::new()];
+    let mut programs = vec![Program::default()];
     let mut word = String::new();
     let mut in_word = false;
     let mut chars = command.chars().peekable();
@@ -343,7 +371,7 @@ fn split(command: &str) -> Option<Vec<Vec<String>>> {
                     chars.next();
                 }
                 end_word(&mut programs, &mut word, &mut in_word);
-                programs.push(Vec::new());
+                programs.push(Program::default());
             }
             '>' => {
                 // Only discarding output (>/dev/null, 2>/dev/null) or merging it (2>&1) is harmless.
@@ -368,20 +396,25 @@ fn split(command: &str) -> Option<Vec<Vec<String>>> {
             other => {
                 in_word = true;
                 word.push(other);
+                if matches!(other, '*' | '?' | '[')
+                    && let Some(program) = programs.last_mut()
+                {
+                    program.globbed = true;
+                }
             }
         }
     }
     end_word(&mut programs, &mut word, &mut in_word);
-    if programs.iter().any(|words| words.is_empty()) {
+    if programs.iter().any(|program| program.words.is_empty()) {
         return None;
     }
     Some(programs)
 }
 
-fn end_word(programs: &mut [Vec<String>], word: &mut String, in_word: &mut bool) {
+fn end_word(programs: &mut [Program], word: &mut String, in_word: &mut bool) {
     if *in_word {
-        if let Some(words) = programs.last_mut() {
-            words.push(std::mem::take(word));
+        if let Some(program) = programs.last_mut() {
+            program.words.push(std::mem::take(word));
         }
         *in_word = false;
     }
@@ -408,8 +441,31 @@ mod tests {
             "du -sh * 2>&1 | sort -h",
             "echo \"price: \\$5\"",
             "wc -l a b; pwd",
+            "ls *",
+            "cat *.md",
+            "grep -rn x src/*",
+            "sort 'a*b' | head",
+            "rg foo \\*",
         ] {
             assert!(is_read_only(command), "should run: {command}");
+        }
+    }
+
+    #[test]
+    fn a_glob_where_a_file_name_could_be_an_option_asks() {
+        // A file named `--pre=bash` turns `rg foo *` into running every file.
+        for command in [
+            "rg foo *",
+            "sort *",
+            "uniq *.txt",
+            "find * -name x",
+            "tree src/?",
+            "file [ab]*",
+            "git diff *",
+            "/usr/bin/sort *",
+        ] {
+            assert!(!is_read_only(command), "should ask: {command}");
+            assert!(!opens_on_yes(command), "should open on No: {command}");
         }
     }
 
@@ -549,9 +605,10 @@ mod tests {
     #[test]
     fn splits_like_the_shell() {
         let programs = split("grep 'a|b' \"x y\" z\\ w | wc -l").unwrap();
-        assert_eq!(
-            programs,
-            vec![vec!["grep", "a|b", "x y", "z w"], vec!["wc", "-l"]]
-        );
+        let words: Vec<&[String]> = programs.iter().map(|program| &program.words[..]).collect();
+        assert_eq!(words, [&["grep", "a|b", "x y", "z w"][..], &["wc", "-l"]]);
+        assert!(programs.iter().all(|program| !program.globbed));
+        let programs = split("ls '*' \"?\" | ls x[1]").unwrap();
+        assert!(!programs[0].globbed && programs[1].globbed);
     }
 }
