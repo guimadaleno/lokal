@@ -2,6 +2,7 @@ mod allowlist;
 mod answer;
 mod approvals;
 mod chat;
+mod commands;
 mod config;
 mod conversation;
 mod diff;
@@ -42,67 +43,100 @@ mod tools;
 mod update;
 
 use std::env;
-use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 use std::time::Instant;
 
+use commands::{Session, is_command, run_command};
 use conversation::Conversation;
 use input::{Input, Line};
 
-/// Past this many lines, user.md costs noticeable context on every turn.
-const LONG_USER_MD: usize = 30;
 /// Below this, a long file or output no longer fits in one read. LM Studio
 /// loads models with 8K unless told otherwise.
 const SMALL_CONTEXT: u64 = 16_384;
 
-fn main() -> ExitCode {
-    let started = Instant::now();
-    interrupt::install();
+/// What the command line asks for.
+#[derive(Debug, PartialEq)]
+enum Args {
+    Help,
+    Version,
+    Install,
+    Uninstall,
+    /// An option Lokal doesn't know.
+    Unknown(String),
+    /// A conversation when `request` is empty, otherwise a one-shot request.
+    Run {
+        resume: bool,
+        request: String,
+    },
+}
+
+/// Options come first; from the first word on, everything is the request,
+/// so `lokal explain -r` asks about `-r`.
+fn parse_args(args: impl Iterator<Item = String>) -> Args {
     let mut resume = false;
     let mut words = Vec::new();
-    for arg in env::args().skip(1) {
+    for arg in args {
         if !words.is_empty() {
             words.push(arg);
             continue;
         }
         match arg.as_str() {
             "-r" | "--resume" => resume = true,
-            "-h" | "--help" => {
-                println!("{}", text::USAGE);
-                return ExitCode::SUCCESS;
-            }
-            "-V" | "--version" => {
-                println!("lokal {}", text::VERSION);
-                return ExitCode::SUCCESS;
-            }
-            "--install" => {
-                return match install::install() {
-                    Ok(message) => {
-                        eprintln!("{message}");
-                        ExitCode::SUCCESS
-                    }
-                    Err(message) => {
-                        eprintln!("{}", style::red(&message));
-                        ExitCode::FAILURE
-                    }
-                };
-            }
-            "--uninstall" => {
-                return if install::uninstall() {
-                    ExitCode::SUCCESS
-                } else {
-                    ExitCode::FAILURE
-                };
-            }
-            option if option.starts_with('-') => {
-                eprintln!("{}", text::unknown_option(option));
-                return ExitCode::from(2);
-            }
+            "-h" | "--help" => return Args::Help,
+            "-V" | "--version" => return Args::Version,
+            "--install" => return Args::Install,
+            "--uninstall" => return Args::Uninstall,
+            option if option.starts_with('-') => return Args::Unknown(option.to_string()),
             _ => words.push(arg),
         }
     }
-    let request = words.join(" ");
+    Args::Run {
+        resume,
+        request: words.join(" "),
+    }
+}
 
+fn main() -> ExitCode {
+    let started = Instant::now();
+    interrupt::install();
+    match parse_args(env::args().skip(1)) {
+        Args::Help => {
+            println!("{}", text::USAGE);
+            ExitCode::SUCCESS
+        }
+        Args::Version => {
+            println!("lokal {}", text::VERSION);
+            ExitCode::SUCCESS
+        }
+        Args::Install => match install::install() {
+            Ok(message) => {
+                eprintln!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(message) => {
+                eprintln!("{}", style::red(&message));
+                ExitCode::FAILURE
+            }
+        },
+        Args::Uninstall => {
+            if install::uninstall() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Args::Unknown(option) => {
+            eprintln!("{}", text::unknown_option(&option));
+            ExitCode::from(2)
+        }
+        Args::Run { resume, request } => run(started, resume, &request),
+    }
+}
+
+/// Start-up, then the conversation or the one-shot request.
+fn run(started: Instant, resume: bool, request: &str) -> ExitCode {
+    // A conversation at the `>`, rather than a one-shot request.
+    let talking = request.is_empty();
     let config = match config::load() {
         Ok(config) => config,
         Err(message) => {
@@ -123,13 +157,13 @@ fn main() -> ExitCode {
     // Conversations only: a one-shot request often runs in a script, and
     // shouldn't reach the network on its own.
     let mut update = None;
-    let mut first_command = None;
-    if request.is_empty() {
+    let mut first_line = None;
+    if talking {
         update = update::start(config.updates_off);
-        print_header(&server);
+        commands::print_header(&server);
         warn_if_context_is_small(&server);
-        first_command = ask_first_question(&mut input);
-        warn_if_user_md_is_long();
+        first_line = ask_first_question(&mut input);
+        commands::warn_if_user_md_is_long();
     }
     // Lives until Lokal quits, and takes its folder with it.
     let scratch = scratch::Scratch::create();
@@ -142,7 +176,7 @@ fn main() -> ExitCode {
     let mail_turns = config.mail_turns.unwrap_or(peers::TURNS);
     let peers = scratch
         .as_ref()
-        .filter(|_| request.is_empty() && config.mail != config::Mail::Off)
+        .filter(|_| talking && config.mail != config::Mail::Off)
         .and_then(|scratch| {
             let printer = input.printer()?;
             peers::Peers::start(
@@ -157,17 +191,17 @@ fn main() -> ExitCode {
         input.receive(peers.inbox(), peers.directory());
     }
     let mut conversation = Conversation::new(server, facts, peers);
-    if request.is_empty() && !conversation.notes().is_empty() {
-        print_notes(&conversation);
+    if talking && !conversation.notes().is_empty() {
+        commands::print_notes(&conversation);
     }
     if resume {
         if !conversation.resume() {
             eprintln!("{}", style::gray(text::NOTHING_TO_RESUME));
-        } else if request.is_empty() {
+        } else if talking {
             eprintln!("{}", style::gray(text::RESUMED));
         }
     }
-    if request.is_empty() {
+    if talking {
         let mut session = Session {
             started,
             updates_off: config.updates_off,
@@ -175,33 +209,14 @@ fn main() -> ExitCode {
             mail_turns,
             feedback_draft: None,
         };
-        talk(&mut conversation, &mut input, &mut session, first_command);
+        talk(&mut conversation, &mut input, &mut session, first_line);
         let updated_to = update.and_then(|check| check.installed());
         let goodbye = text::lasted(started.elapsed(), updated_to.as_deref());
         eprintln!("{}", style::gray(&goodbye));
     } else {
-        conversation.send(&request, &mut input, Some(&request));
+        conversation.send(request, &mut input, Some(request));
     }
     ExitCode::SUCCESS
-}
-
-fn print_header(server: &server::Server) {
-    eprintln!(
-        "{} {}  {}",
-        style::bold("Lokal"),
-        text::VERSION,
-        style::gray(&server.model)
-    );
-}
-
-/// What the slash commands need to know about the running session.
-struct Session {
-    started: Instant,
-    updates_off: bool,
-    mail: config::Mail,
-    mail_turns: usize,
-    /// What /feedback was given and couldn't send yet.
-    feedback_draft: Option<feedback::Draft>,
 }
 
 /// The conversation, from `first`, a line typed at the first question that
@@ -393,142 +408,11 @@ fn print_separator(input: &mut Input) {
     }
 }
 
-/// `/prefs` is a command; `/etc/hosts is broken` is a request.
-fn is_command(line: &str) -> bool {
-    line.starts_with('/') && !line.contains(' ') && !line[1..].contains('/')
-}
-
 /// What follows the `!` of `!ls` or `! ls`: a command of the person's own.
 fn own_command(line: &str) -> Option<&str> {
     line.strip_prefix('!')
         .map(str::trim)
         .filter(|command| !command.is_empty())
-}
-
-/// Runs a slash command. False when it's time to quit.
-fn run_command(
-    command: &str,
-    conversation: &mut Conversation,
-    input: &mut Input,
-    session: &mut Session,
-) -> bool {
-    match command {
-        "/new" => {
-            conversation.clear();
-            // A fresh start looks like one: the screen cleared, the header again.
-            // What was on screen stays in the scrollback.
-            if style::enabled() {
-                eprint!("\x1b[2J\x1b[H");
-            }
-            print_header(&conversation.server);
-            eprintln!("{}", style::gray(text::NEW_CONVERSATION));
-        }
-        "/prefs" => {
-            let path = config::user_md_path();
-            if !path.exists() {
-                let _ = config::write_user_md("");
-            }
-            open_in_editor(&[&path]);
-            warn_if_user_md_is_long();
-            conversation.refresh_system_prompt();
-        }
-        "/memory" => {
-            // The notes there are, or a first LOKAL.md, made only if it's saved.
-            let mut paths: Vec<PathBuf> = conversation
-                .notes()
-                .iter()
-                .map(|note| note.path.clone())
-                .collect();
-            if paths.is_empty() {
-                paths.push(memory::first_path(&env::current_dir().unwrap_or_default()));
-            }
-            let paths: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
-            open_in_editor(&paths);
-            if conversation.refresh_notes() {
-                if conversation.notes().is_empty() {
-                    eprintln!("{}", style::gray(text::NOTES_GONE));
-                } else {
-                    print_notes(conversation);
-                }
-            }
-        }
-        "/config" => edit_settings(),
-        "/sysprompt" => {
-            // Plain and whole, just as the model gets it.
-            let (prompt, tools, tokens) = conversation.system_prompt();
-            eprintln!("\n{}\n", prompt.trim_end());
-            eprintln!("{}\n", style::gray(&text::sysprompt_cost(tokens, &tools)));
-        }
-        "/sessions" => {
-            eprintln!();
-            print_sessions(conversation, session);
-            eprintln!();
-        }
-        "/info" => {
-            eprintln!();
-            print_info(conversation, input, session);
-            eprintln!();
-        }
-        "/recon" => {
-            let rows = gather_recon();
-            eprintln!();
-            print_rows(&rows);
-            eprintln!();
-            eprintln!("{}", style::gray(text::RECON_DONE));
-            conversation.set_recon(rows);
-        }
-        "/update" => check_for_update(session),
-        "/reasoning" => {
-            let shown = conversation.toggle_reasoning();
-            let message = if shown {
-                text::REASONING_SHOWN
-            } else {
-                text::REASONING_HIDDEN
-            };
-            eprintln!("{}", style::gray(message));
-        }
-        "/feedback" => {
-            eprintln!();
-            let draft = session.feedback_draft.take();
-            session.feedback_draft =
-                feedback::run(input, &conversation.server, session.updates_off, draft);
-            eprintln!();
-        }
-        "/help" => {
-            eprintln!();
-            // The longest name and two spaces, so every description lines up.
-            let width = text::COMMANDS
-                .iter()
-                .map(|(name, _)| name.len())
-                .max()
-                .unwrap_or(0)
-                + 2;
-            for (name, about) in text::COMMANDS {
-                eprintln!("  {name:<width$}{}", style::gray(about));
-            }
-            eprintln!("{}", style::gray(text::HELP_KEYS));
-            eprintln!();
-        }
-        "/about" => {
-            eprintln!();
-            print_about();
-            eprintln!();
-        }
-        "/exit" | "/quit" => return false,
-        other => eprintln!("{}", text::unknown_command(other)),
-    }
-    true
-}
-
-fn print_about() {
-    eprintln!(
-        "  {} {}  {}",
-        style::bold("Lokal"),
-        text::VERSION,
-        style::gray(text::DESCRIPTION)
-    );
-    eprintln!("  {} {}", style::gray(text::MADE_BY), text::AUTHOR);
-    eprintln!("  {}", text::WEBSITE);
 }
 
 /// On the first launch, asks one question; skipping it is fine. Either way
@@ -564,215 +448,6 @@ fn ask_first_question(input: &mut Input) -> Option<String> {
     None
 }
 
-/// Everything about this session, for when something seems off.
-fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
-    let server = &conversation.server;
-    let updates = text::update_standing(&update::standing_of(session.updates_off));
-    let context = server.context.map_or_else(String::new, |tokens| {
-        format!(" · {}", text::context_size(tokens))
-    });
-    let found = if server.pinned {
-        text::FROM_SETTINGS
-    } else {
-        text::FOUND_ON_ITS_OWN
-    };
-    let in_use = match (conversation.tokens(), server.context) {
-        (Some(tokens), Some(context)) => text::tokens_in_use(tokens, context),
-        _ => text::NOTHING_YET.to_string(),
-    };
-    let session_time = text::duration(session.started.elapsed());
-    let user_md = config::user_md_path();
-    let user_md_lines = config::read_user_md().map_or(0, |text| text.lines().count());
-    let settings = config::settings_path();
-    let mut rows = vec![
-        (text::INFO_VERSION, format!("{} · {updates}", text::VERSION)),
-        (text::INFO_MODEL, format!("{}{context}", server.model)),
-        (text::INFO_SERVER, format!("{} · {found}", server.address)),
-        (
-            text::INFO_IN_USE,
-            format!("{in_use} · {} {session_time}", text::THIS_SESSION),
-        ),
-        (
-            text::INFO_ABOUT_ME,
-            text::file_lines(&config::shown(&user_md), user_md_lines),
-        ),
-        (
-            text::INFO_SETTINGS,
-            text::settings_file(&config::shown(&settings), settings.exists()),
-        ),
-        (
-            text::INFO_PROJECT,
-            text::project_approvals(
-                &config::shown(input.project().project()),
-                input.project().count(),
-            ),
-        ),
-    ];
-    // One row a note, the label on the first.
-    let notes = conversation.notes();
-    if notes.is_empty() {
-        rows.push((text::INFO_NOTES, text::NO_NOTES.to_string()));
-    }
-    for (index, note) in notes.iter().enumerate() {
-        let label = if index == 0 { text::INFO_NOTES } else { "" };
-        let tokens = conversation::tokens_in(&note.text);
-        rows.push((label, text::note_size(&note.name, tokens, note.cut)));
-    }
-    rows.push((
-        text::INFO_SCRATCH,
-        text::scratch_folder(conversation.scratch()),
-    ));
-    let peers = conversation.peers();
-    let others: Vec<String> = peers
-        .map(|peers| {
-            peers
-                .others()
-                .into_iter()
-                .map(|session| session.name)
-                .collect()
-        })
-        .unwrap_or_default();
-    rows.push((
-        text::INFO_SESSION,
-        text::session_names(
-            peers.map(peers::Peers::name),
-            session.mail,
-            session.mail_turns,
-            &others,
-        ),
-    ));
-    print_rows(&rows);
-}
-
-/// The other sessions open, each with its folder, branch, what it's doing
-/// and what it was asked: the facts the model hears of the ones working
-/// where it does, without them showing then.
-fn print_sessions(conversation: &Conversation, session: &Session) {
-    let Some(peers) = conversation.peers() else {
-        let off = session.mail == config::Mail::Off;
-        eprintln!("  {}", style::gray(text::sessions_unreachable(off)));
-        return;
-    };
-    let sessions = peers.others();
-    if sessions.is_empty() {
-        eprintln!("  {}", style::gray(&text::no_other_sessions(peers.name())));
-        return;
-    }
-    // The names in a column, and the rest after them, going on under itself.
-    let names = sessions
-        .iter()
-        .map(|other| other.name.chars().count())
-        .max()
-        .unwrap_or(0);
-    let room = style::terminal_width()
-        .map_or(usize::MAX, |width| width.saturating_sub(names + 5))
-        .max(20);
-    for other in &sessions {
-        let mut about = config::shown(Path::new(&other.folder));
-        if !other.branch.is_empty() {
-            about.push_str(&format!(" · {}", other.branch));
-        }
-        about.push_str(&format!(" · {}", peers::session_state(other)));
-        let mut lines = layout::broken(&about, room);
-        let doing = text::session_doing(&other.request, &other.files);
-        if !doing.is_empty() {
-            lines.extend(layout::broken(&doing, room));
-        }
-        for (index, line) in lines.iter().enumerate() {
-            let name = if index == 0 { other.name.as_str() } else { "" };
-            eprintln!("  {name:<names$}  {}", style::gray(line));
-        }
-    }
-}
-
-/// Labels in one column, values in the next. A value too long for the
-/// terminal goes on under itself, broken after a separator, so it never
-/// runs under the labels.
-fn print_rows(rows: &[(&str, String)]) {
-    // The indent and the label's column.
-    let room = style::terminal_width().map_or(0, |width| width.saturating_sub(13));
-    for (label, value) in rows {
-        for (index, line) in layout::wrapped(value, room).iter().enumerate() {
-            let label = if index == 0 { *label } else { "" };
-            eprintln!("  {}{line}", style::gray(&format!("{label:<10}")));
-        }
-    }
-}
-
-/// `/recon`'s probes, with the spinner meanwhile: Docker can take a moment.
-fn gather_recon() -> Vec<(&'static str, String)> {
-    let folder = env::current_dir().unwrap_or_default();
-    let gathering = std::thread::spawn(move || recon::gather(&folder));
-    let mut spinner = spinner::Spinner::new();
-    while !gathering.is_finished() {
-        spinner.tick();
-        std::thread::sleep(std::time::Duration::from_millis(40));
-    }
-    spinner.clear();
-    gathering.join().unwrap_or_default()
-}
-
-/// `/update`: asks for the newest version now, with the spinner meanwhile.
-fn check_for_update(session: &Session) {
-    let updates_off = session.updates_off;
-    let check = std::thread::spawn(move || update::check_now(updates_off));
-    let mut spinner = spinner::Spinner::new();
-    while !check.is_finished() {
-        spinner.tick();
-        std::thread::sleep(std::time::Duration::from_millis(40));
-    }
-    spinner.clear();
-    let message = match check.join() {
-        Ok(update::Asked::Installed(version)) => text::ready_next_time(&version),
-        Ok(update::Asked::Newest) => text::newest(),
-        Ok(update::Asked::Unavailable(standing)) => text::cant_update(&standing),
-        Ok(update::Asked::Failed) | Err(_) => text::UPDATE_FAILED.to_string(),
-    };
-    eprintln!("{}", style::gray(&message));
-}
-
-/// Opens the settings in the person's editor, written out with every setting
-/// commented when there are none yet, and says whether what was saved reads.
-fn edit_settings() {
-    let path = config::settings_path();
-    if !path.exists()
-        && let Err(error) = config::write(&path, text::SETTINGS_TEMPLATE)
-    {
-        eprintln!(
-            "{}",
-            style::red(&text::cant_save(&config::shown(&path), &error.to_string()))
-        );
-        return;
-    }
-    // The approvals per project are settings too, opened beside them once there are any.
-    let approvals = config::approvals_path();
-    if approvals.exists() {
-        open_in_editor(&[&path, &approvals]);
-    } else {
-        open_in_editor(&[&path]);
-    }
-    match config::load() {
-        Ok(_) => eprintln!("{}", style::gray(text::SETTINGS_NEXT_START)),
-        Err(message) => eprintln!("{}", style::red(&message)),
-    }
-}
-
-fn open_in_editor(paths: &[&Path]) {
-    let editor = env::var("VISUAL")
-        .or_else(|_| env::var("EDITOR"))
-        .unwrap_or_else(|_| "nano".into());
-    // Through sh, so an editor set with arguments ("code --wait") works.
-    let status = Command::new("sh")
-        .arg("-c")
-        .arg(format!("{editor} \"$@\""))
-        .arg("sh")
-        .args(paths)
-        .status();
-    if !status.is_ok_and(|status| status.success()) {
-        eprintln!("{}", style::red(&text::no_editor(&editor)));
-    }
-}
-
 /// Only when the model takes more: otherwise there's nothing to raise.
 fn warn_if_context_is_small(server: &server::Server) {
     if let (Some(context), Some(most)) = (server.context, server.max_context)
@@ -783,22 +458,26 @@ fn warn_if_context_is_small(server: &server::Server) {
     }
 }
 
-/// Which of the project's notes go along, and what they cost: what's in
-/// every request is never a surprise.
-fn print_notes(conversation: &Conversation) {
-    let notes = conversation.notes();
-    let names: Vec<&str> = notes.iter().map(|note| note.name.as_str()).collect();
-    let tokens = notes
-        .iter()
-        .map(|note| conversation::tokens_in(&note.text))
-        .sum();
-    let cut = notes.iter().any(|note| note.cut);
-    eprintln!("{}", style::gray(&text::notes_taken(&names, tokens, cut)));
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn warn_if_user_md_is_long() {
-    let lines = config::read_user_md().map_or(0, |contents| contents.lines().count());
-    if lines > LONG_USER_MD {
-        eprintln!("{}", style::gray(&text::long_prefs(lines)));
+    fn parsed(args: &[&str]) -> Args {
+        parse_args(args.iter().map(|arg| arg.to_string()))
+    }
+
+    #[test]
+    fn options_come_before_the_request() {
+        let run = |resume, request: &str| Args::Run {
+            resume,
+            request: request.to_string(),
+        };
+        assert_eq!(parsed(&[]), run(false, ""));
+        assert_eq!(parsed(&["-r"]), run(true, ""));
+        assert_eq!(parsed(&["--resume", "fix", "it"]), run(true, "fix it"));
+        // From the first word on, an option is part of the request.
+        assert_eq!(parsed(&["explain", "-r"]), run(false, "explain -r"));
+        assert_eq!(parsed(&["-V", "x"]), Args::Version);
+        assert_eq!(parsed(&["--nope"]), Args::Unknown("--nope".into()));
     }
 }

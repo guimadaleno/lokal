@@ -292,7 +292,8 @@ dependencies.
 
 | File | Job |
 |---|---|
-| `main.rs` | Arguments, start-up, the conversation loop, slash commands and `!` commands |
+| `main.rs` | Arguments, start-up, the conversation loop, `!` commands and mail typed at the `>` |
+| `commands.rs` | The slash commands, and what they print |
 | `conversation.rs` | Messages, one turn with its tools, freeing context, the saved conversation |
 | `chat.rs` | One streamed chat request on its own thread |
 | `answer.rs` | What of the stream is shown: no reasoning, no blank edges |
