@@ -153,6 +153,7 @@ Where the box can't be set up, the tests say so and pass.
    - The third found that a list of the settings that run a program kept missing some, and that git failing to list them let everything through. The rule above, the plain list for the repository's own, replaced it.
    - The fourth found the person's everyday settings refusing the box (a ref in an alias, a Windows program with a space under WSL), now told apart.
    - A fresh review then found the box sharing IPC and the person's terminals, missing tools' files Claude Code protects, and leaving nested repositories' `.git` writable.
+   - Its fixes (commit d4585a8) weren't reviewed: two more review sessions were stopped partway by a safety classifier. They go into phase 2's review, before any command runs in the box.
    - 32 escape tests and 5 unit tests pass here. Taking out any one layer makes one fail: the hidden `/run`, seccomp and its socket list, the scopes, the hidden keys, the read-only folder under /tmp, the second doors and how they're told apart, the closed descriptors, what git's settings name, the writable scratch folder, and the home check.
    - About 7 ms a command, bash included, with the release build.
 2. The read-only list runs in the read box.
