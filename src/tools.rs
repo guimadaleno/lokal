@@ -19,7 +19,7 @@ use crate::shell::{self, Run};
 use crate::{allowlist, config, diff, gitconfig, interrupt, layout, style, text};
 
 /// How much command output the model gets; longer output loses its middle.
-const OUTPUT_LIMIT: usize = 12_000;
+pub const OUTPUT_LIMIT: usize = 12_000;
 /// How much of a file one read gives the model; a longer one says where to read on.
 const FILE_LIMIT: usize = 30_000;
 /// The most of a file read into memory, for a part of it or a change to it.
@@ -252,8 +252,13 @@ fn run_command(
     }
     // The output is a block of its own, after the command and any question.
     match shell::run(command, unasked).map_err(|error| format!("couldn't start bash: {error}"))? {
-        Run::Finished { output, code } => Ok(Outcome::Done(command_result(
+        Run::Finished {
+            output,
+            hidden_lines,
+            code,
+        } => Ok(Outcome::Done(command_result(
             &output,
+            hidden_lines,
             code,
             limit(room, OUTPUT_LIMIT),
         ))),
@@ -315,9 +320,16 @@ pub fn run_own(command: &str, room: Option<usize>) -> Option<String> {
     print_command(command);
     interrupt::clear();
     let result = match shell::run(command, false) {
-        Ok(Run::Finished { output, code }) => {
-            Ok(command_result(&output, code, limit(room, OUTPUT_LIMIT)))
-        }
+        Ok(Run::Finished {
+            output,
+            hidden_lines,
+            code,
+        }) => Ok(command_result(
+            &output,
+            hidden_lines,
+            code,
+            limit(room, OUTPUT_LIMIT),
+        )),
         Ok(Run::Stopped) => Err(None),
         Err(error) => Err(Some(text::cant_start_bash(&error.to_string()))),
     };
@@ -332,7 +344,10 @@ pub fn run_own(command: &str, room: Option<usize>) -> Option<String> {
     result.ok()
 }
 
-fn command_result(output: &str, code: Option<i32>, limit: usize) -> String {
+/// What the model hears of a command: its output, cut to `limit`, and how
+/// it ended. `hidden_lines` is how many line breaks the shell left out of
+/// the output's middle.
+fn command_result(output: &str, hidden_lines: usize, code: Option<i32>, limit: usize) -> String {
     let mut result = if output.trim().is_empty() {
         "(no output)".to_string()
     } else if limit < LEAST_ROOM {
@@ -340,7 +355,7 @@ fn command_result(output: &str, code: Option<i32>, limit: usize) -> String {
             "The command ran, but there's no room left in the context for its output. {CONTEXT_FULL}"
         )
     } else {
-        clip(output, limit)
+        clip(output, limit, hidden_lines)
     };
     match code {
         Some(0) => {}
@@ -912,8 +927,9 @@ fn limit(room: Option<usize>, own: usize) -> usize {
 }
 
 /// Keeps the start and the end of a long text, cut at line breaks: that's
-/// where the useful part of an output usually is.
-fn clip(text: &str, limit: usize) -> String {
+/// where the useful part of an output usually is. `hidden_lines` line
+/// breaks were already left out of its middle, and count among those cut.
+fn clip(text: &str, limit: usize, hidden_lines: usize) -> String {
     if text.len() <= limit {
         return text.to_string();
     }
@@ -924,7 +940,7 @@ fn clip(text: &str, limit: usize) -> String {
         .find('\n')
         .map_or(tail, |newline| tail + newline + 1);
     let first_cut = text[..head].lines().count() + 1;
-    let last_cut = first_cut + text[head..tail].lines().count().max(1) - 1;
+    let last_cut = first_cut + text[head..tail].lines().count().max(1) - 1 + hidden_lines;
     format!(
         "{}[... lines {first_cut}-{last_cut} left out ...]\n{}",
         &text[..head],
@@ -939,7 +955,7 @@ mod tests {
     #[test]
     fn clip_keeps_head_and_tail_whole_lines() {
         let text: String = (1..=1000).map(|n| format!("line {n}\n")).collect();
-        let clipped = clip(&text, 2000);
+        let clipped = clip(&text, 2000, 0);
         assert!(clipped.len() < 2100);
         assert!(clipped.starts_with("line 1\n"));
         assert!(clipped.ends_with("line 1000\n"));
@@ -977,21 +993,32 @@ mod tests {
 
     #[test]
     fn clip_leaves_short_text_alone() {
-        assert_eq!(clip("short\n", 100), "short\n");
+        assert_eq!(clip("short\n", 100, 0), "short\n");
+    }
+
+    #[test]
+    fn clip_counts_the_lines_the_shell_left_out() {
+        let text: String = (1..=1000).map(|n| format!("line {n}\n")).collect();
+        let whole = clip(&text, 2000, 0);
+        // As if lines 401 to 600 had never been kept.
+        let start = text.find("line 401\n").unwrap();
+        let end = text.find("line 601\n").unwrap();
+        let kept = format!("{}{}", &text[..start], &text[end..]);
+        assert_eq!(clip(&kept, 2000, 200), whole);
     }
 
     #[test]
     fn command_result_notes_failures() {
-        assert_eq!(command_result("", Some(0), OUTPUT_LIMIT), "(no output)");
+        assert_eq!(command_result("", 0, Some(0), OUTPUT_LIMIT), "(no output)");
         assert_eq!(
-            command_result("oops\n", Some(2), OUTPUT_LIMIT),
+            command_result("oops\n", 0, Some(2), OUTPUT_LIMIT),
             "oops\n\n[exit code 2]"
         );
     }
 
     #[test]
     fn command_result_without_room_still_says_it_ran() {
-        let result = command_result("lots of output\n", Some(1), 10);
+        let result = command_result("lots of output\n", 0, Some(1), 10);
         assert!(result.starts_with("The command ran, but there's no room left"));
         assert!(result.ends_with("[exit code 1]"));
     }
