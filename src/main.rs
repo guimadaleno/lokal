@@ -404,7 +404,8 @@ fn print_separator(input: &mut Input) {
     match input.width() {
         // One column short of the edge, so the terminal doesn't wrap it.
         Some(width) if width > 1 => eprintln!("{}", style::faint(&"─".repeat(width - 1))),
-        _ => println!(),
+        // On stderr, like the line: stdout carries only answers.
+        _ => eprintln!(),
     }
 }
 
