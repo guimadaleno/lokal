@@ -21,6 +21,7 @@ mod memory;
 mod menu;
 mod mode;
 mod peers;
+mod progress;
 mod prompt;
 mod reasoning;
 mod recon;

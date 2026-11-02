@@ -297,6 +297,7 @@ dependencies.
 | `commands.rs` | The slash commands, and what they print |
 | `conversation.rs` | Messages, one turn with its tools, the saved conversation |
 | `context.rs` | How much of the context the conversation takes, and what makes way when it's full |
+| `progress.rs` | What the spinner says while the model works: time, tokens, speed, the file being written |
 | `chat.rs` | One streamed chat request on its own thread |
 | `answer.rs` | What of the stream is shown: no reasoning, no blank edges |
 | `markdown.rs` | Bold, inline code, headings, code blocks and links, styled as the answer streams |
@@ -461,7 +462,7 @@ Last checked against **LM Studio 0.4.26**, on 2026-10-14.
 | An unknown endpoint answers HTTP 200 with `{"error": "..."}`, so the `error` field matters more than the status | `http.rs`, `server.rs` | `curl -i <host>:1234/api/v0/nonexistent` |
 | Streaming is `data: {json}` lines ending in `data: [DONE]`, and `stream_options.include_usage` adds a last piece with `usage.total_tokens`, `usage.completion_tokens` and no choices. The prompt's status counts the reply's speed from the latter, since a piece isn't always one token | `chat.rs` | a streamed `curl -N` of `/v1/chat/completions` |
 | Reasoning comes in `delta.reasoning_content` (with "separate reasoning content" on) or inside `<think>` in the content | `answer.rs`, `chat.rs` | the same request, with a reasoning model |
-| A tool call streams its `index`, `id` and `function.name` first, then its `arguments` in small pieces as they're generated, ending with `finish_reason: "tool_calls"`; blank content may come first. While a long file is written, the spinner shows its size growing | `chat.rs`, `conversation.rs` | a streamed request with one tool that the prompt asks it to use to write a long file |
+| A tool call streams its `index`, `id` and `function.name` first, then its `arguments` in small pieces as they're generated, ending with `finish_reason: "tool_calls"`; blank content may come first. While a long file is written, the spinner shows its size growing | `chat.rs`, `conversation.rs`, `progress.rs` | a streamed request with one tool that the prompt asks it to use to write a long file |
 | A `model` that doesn't exist falls back to the loaded model instead of failing | `server.rs` checks the name first | a request with `"model": "nope"` |
 | `max_tokens` caps a reply, and one cut short ends with `finish_reason: "length"` | `conversation.rs` | a request with `"max_tokens": 50` and a long question |
 | A tool call's `arguments` in the conversation must be valid JSON: arguments cut short get HTTP 500 with an HTML page | `context.rs` (`kept_arguments`) | a request whose history has a call with `"arguments": "{\"path\": \"a"` |
