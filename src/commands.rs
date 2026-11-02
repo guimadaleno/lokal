@@ -196,7 +196,7 @@ fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
             text::INFO_IN_USE,
             format!("{in_use} · {} {session_time}", text::THIS_SESSION),
         ),
-        (text::INFO_ABOUT_ME, user_md),
+        (text::INFO_USER_MD, user_md),
         (
             text::INFO_SETTINGS,
             text::settings_file(&config::shown(&settings), settings.exists()),
