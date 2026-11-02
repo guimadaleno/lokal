@@ -51,6 +51,8 @@ const PLAIN_CORE: &[&str] = &[
     "untrackedcache",
     "quotepath",
     "longpaths",
+    // Where a submodule's work tree is, from inside it.
+    "worktree",
 ];
 const PLAIN_REMOTE: &[&str] = &[
     "url",
@@ -62,11 +64,18 @@ const PLAIN_REMOTE: &[&str] = &[
     "mirror",
     "promisor",
     "partialclonefilter",
+    // What `gh repo clone` marks a fork's upstream with.
+    "gh-resolved",
 ];
+const PLAIN_BRANCH: &[&str] = &["remote", "merge", "rebase", "pushremote", "description"];
+/// What Git LFS writes itself; others in its section name programs it runs.
+const PLAIN_LFS: &[&str] = &["repositoryformatversion", "url", "access", "locksverify"];
 const PLAIN_SUBMODULE: &[&str] = &["url", "active", "branch", "shallow", "ignore"];
 /// A submodule's `update` can also be `!command`.
 const SUBMODULE_UPDATES: &[&str] = &["checkout", "rebase", "merge", "none"];
 const PLAIN_OTHER: &[&str] = &[
+    // `git clone --recurse-submodules` sets it.
+    "submodule.active",
     "pull.rebase",
     "pull.ff",
     "push.default",
@@ -78,10 +87,9 @@ const PLAIN_OTHER: &[&str] = &[
     "commit.gpgsign",
     "tag.gpgsign",
 ];
-/// Sections whose every setting is plain: branches, who commits, git's own
-/// format extensions, Git LFS's own settings (its filters are `filter.lfs`),
-/// colors.
-const PLAIN_SECTIONS: &[&str] = &["branch", "user", "extensions", "lfs", "color"];
+/// Sections whose every setting is plain: who commits, git's own format
+/// extensions, colors.
+const PLAIN_SECTIONS: &[&str] = &["user", "extensions", "color"];
 /// core.fsmonitor as a yes or a no: git's own daemon, or none.
 const SWITCHES: &[&str] = &["", "true", "false", "yes", "no", "on", "off", "1", "0"];
 /// Reading settings is quick; a file they include could be one that never ends.
@@ -248,6 +256,8 @@ fn is_plain(name: &str, value: &str) -> bool {
         ("remote", Some(_), key) => PLAIN_REMOTE.contains(&key),
         ("submodule", Some(_), "update") => SUBMODULE_UPDATES.contains(&value.trim()),
         ("submodule", Some(_), key) => PLAIN_SUBMODULE.contains(&key),
+        ("branch", Some(_), key) => PLAIN_BRANCH.contains(&key),
+        ("lfs", _, key) => PLAIN_LFS.contains(&key),
         (section, _, _) if PLAIN_SECTIONS.contains(&section) => true,
         (section, None, key) => PLAIN_OTHER.contains(&format!("{section}.{key}").as_str()),
         _ => false,
@@ -298,7 +308,12 @@ mod tests {
                      local\tsubmodule.lib.active true\n\
                      local\tsubmodule.lib.update rebase\n\
                      local\tuser.email ana@example.com\n\
-                     local\tpull.rebase true\n";
+                     local\tpull.rebase true\n\
+                     local\tsubmodule.active .\n\
+                     local\tcore.worktree ../../../lib\n\
+                     local\tlfs.repositoryformatversion 0\n\
+                     local\tlfs.https://example.com/repo.git/info/lfs.access basic\n\
+                     local\tremote.upstream.gh-resolved base\n";
         assert_eq!(first_beyond_the_plain(plain), None);
         for (setting, name) in [
             ("alias.st !sh x", "alias.st"),
@@ -315,6 +330,15 @@ mod tests {
             ("remote.origin.uploadpack p", "remote.origin.uploadpack"),
             ("protocol.ext.allow always", "protocol.ext.allow"),
             ("something.new value", "something.new"),
+            (
+                "lfs.customtransfer.x.path /bin/sh",
+                "lfs.customtransfer.x.path",
+            ),
+            ("lfs.extension.x.smudge s", "lfs.extension.x.smudge"),
+            (
+                "branch.main.mergeoptions -s evil",
+                "branch.main.mergeoptions",
+            ),
         ] {
             let listing = format!("{plain}worktree\t{setting}\n");
             assert_eq!(first_beyond_the_plain(&listing).as_deref(), Some(name));
