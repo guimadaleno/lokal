@@ -9,15 +9,16 @@ dependencies.
 ## What it refuses to do
 
 - **Run a command that may change something without a yes.** Only commands
-  on the read-only list in `src/allowlist.rs` run on their own. That list is
-  Lokal's code, never the model's judgement: a model can be talked into
-  anything by a file it reads.
+  on the read-only list in `src/allowlist.rs` run on their own, and not
+  with a glob where a file named like an option could write (`rg x *` with
+  a `--pre=bash`). That list is Lokal's code, never the model's judgement:
+  a model can be talked into anything by a file it reads.
   - **A line the person types at the `>` after a `!` is their own command,**
     and typing it was their yes, so it isn't asked about (`tools::run_own`).
     It runs as the model's commands do, in a session of its own and without
-    a terminal, but without `gitconfig::UNASKED`, which guards only what
-    runs unasked. What it gives goes to the model with the person's next
-    request, never with a turn mail starts.
+    a terminal, but without `gitconfig::UNASKED` and with the person's
+    PATH, which guard only what runs unasked. What it gives goes to the
+    model with the person's next request, never with a turn mail starts.
   - **Auto, the last mode on Shift+Tab, is the one place a model decides**
     (`src/judge.rs`), and the person is told, once a session, that it will
     get some wrong and is used at their own risk. It's the model, asked
@@ -27,9 +28,9 @@ dependencies.
       reply Lokal can't read as yes or no, asks the person, on No, with its
       reason. A judge wrong toward caution costs an Enter.
     - **Lokal's floor never reaches it:** a command whose question opens on
-      No (`allowlist::opens_on_yes`) or git with a repository setting that
-      runs a program asks as always. Read-only commands and "don't ask
-      again" approvals run as they do in every mode.
+      No (`allowlist::opens_on_yes`), or git with a repository setting that
+      runs a program or after a `cd`, asks as always. Read-only commands
+      and "don't ask again" approvals run as they do in every mode.
     - **Nor git's hooks:** the judge sees the command, never what the
       repository has git run as it writes. So a git command it would judge
       asks instead, on No and with it named, when the repository has an
@@ -44,8 +45,8 @@ dependencies.
       each. Never the outputs or the files the model read, where text that
       steers a model comes from.
     - **What it lets through shows,** the `$` line and a faint "auto ran
-      it" with its reason, and runs with `gitconfig::UNASKED`, like
-      anything else no one said yes to.
+      it" with its reason, and runs as anything else no one said yes to
+      (`gitconfig::UNASKED`, the PATH's absolute folders).
     - **The model's own code still runs as the person:** a script it wrote
       (accepted as an edit) and then ran with `cargo test` or `python` is a
       command the judge sees, not what the script does. Only #2's box
@@ -308,7 +309,7 @@ dependencies.
 | `tools/remember.rs` | remember: a line added to user.md, or one swapped for it |
 | `tools/mail.rs` | list_sessions and mail, shown as steps |
 | `allowlist.rs` | Which commands run without asking, and which questions open on Yes |
-| `gitconfig.rs` | What a repository's own git settings would have git run |
+| `gitconfig.rs` | What a repository's own git settings and hooks would have git run |
 | `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it |
 | `input.rs` | The `>` prompt (hints, completion, Ctrl+C twice) and approvals |
 | `menu.rs` | The arrow-key choice the approvals use |
@@ -347,7 +348,8 @@ dependencies.
   development build would replace itself and undo the rebuild.
 - **A one-shot request (`lokal "..."`) never reaches the network on its
   own:** it often runs in a script. The update check runs in conversations
-  only.
+  only, and a one-shot request that got no answer exits with 1
+  (`Turn::Failed`).
 - **Commands run in a session of their own** (`setsid` in `shell.rs`). Then
   nothing can wait on the terminal (sudo fails at once instead of hanging),
   and Ctrl+C reaches a command only through Lokal.
@@ -427,6 +429,9 @@ dependencies.
   from, and with no room at all the model is told to answer with what it
   has. Dropped unseen, the model only asks again, and each try leaves the
   history fuller, until nothing fits.
+  - **Nothing it reads can fill Lokal's memory:** a command's output is
+    kept as its start and end, the lines between counted (`shell.rs`), and
+    a read takes a regular file only, up to 64 MB (`files::read_text`).
   - **What the person's `!` commands gave is an output too,** cut the same
     way. It goes inside their request's own message, since some chat
     templates refuse two from the user in a row, framed so `drop_own`
