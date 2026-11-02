@@ -148,6 +148,8 @@ pub fn cant_start_bash(error: &str) -> String {
 }
 pub const GIT_SETTINGS_UNREAD: &str =
     "Lokal couldn't read this repository's git settings, so it asks first.";
+pub const GIT_ELSEWHERE: &str = "git may run in another repository here, or with other settings, \
+    and Lokal read only this folder's, so it asks first.";
 
 pub fn git_runs_program(setting: &str) -> String {
     format!(

@@ -52,6 +52,11 @@ dependencies.
     repository's settings, not the person's global ones, name none of them
     (`src/gitconfig.rs`). Otherwise it's asked, on No, with the setting
     named, whatever was approved before.
+    - **Lokal reads only the working folder's settings,** so git after a
+      `cd` or `pushd` in the same line, or with options before its command
+      (`-C`, `-c`, `--git-dir`), is asked the same way
+      (`allowlist::git_elsewhere`): it may reach another repository, a
+      submodule included, or settings of the command's own.
   - **What runs unasked gets fsmonitor off and stays out of submodules**
     (`gitconfig::UNASKED`, through `GIT_CONFIG_PARAMETERS`), since a
     submodule's settings are its own and Lokal doesn't read them. So an

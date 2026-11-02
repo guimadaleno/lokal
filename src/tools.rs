@@ -186,7 +186,9 @@ fn run_command(
     eprintln!("{} {}", style::accent("$"), command.replace('\n', "\n  "));
     // git also runs what the repository's own settings name: then even a
     // read is asked about, on No, whatever was approved before.
-    let git_warning = if allowlist::uses_git(command) {
+    let git_warning = if allowlist::git_elsewhere(command) {
+        Some(text::GIT_ELSEWHERE.to_string())
+    } else if allowlist::uses_git(command) {
         match gitconfig::program_setting() {
             Ok(None) => None,
             Ok(Some(setting)) => Some(text::git_runs_program(&setting)),

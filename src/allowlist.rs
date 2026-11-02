@@ -223,6 +223,24 @@ pub fn uses_git(command: &str) -> bool {
     })
 }
 
+/// Whether git may run in another repository, or with other settings, than
+/// the working folder's, which are the ones `gitconfig` reads: after a `cd`
+/// or `pushd` in the same line, or with options before its command (`-C`,
+/// `-c`, `--git-dir`).
+pub fn git_elsewhere(command: &str) -> bool {
+    split(command).is_some_and(|programs| {
+        let mut moved = false;
+        programs.iter().any(|program| {
+            let Some((name, args)) = program.words.split_first() else {
+                return false;
+            };
+            let name = name.rsplit('/').next().unwrap_or(name);
+            moved |= matches!(name, "cd" | "pushd");
+            name == "git" && (moved || args.first().is_some_and(|arg| arg.starts_with('-')))
+        })
+    })
+}
+
 /// Whether a command's question may open on Yes, so Enter approves it: only
 /// a command Lokal can read whole, with nothing in it from the lists above.
 /// It picks where the question starts, never whether there is one.
@@ -521,6 +539,23 @@ mod tests {
         assert!(uses_git("cd src && /usr/bin/git diff | head"));
         assert!(!uses_git("ls git"));
         assert!(!uses_git("echo $(git status)"));
+    }
+
+    #[test]
+    fn finds_git_that_may_reach_another_repository() {
+        for command in [
+            "cd /tmp/other && git diff",
+            "pushd vendor/lib; git log -p",
+            "cd sub && make && /usr/bin/git status",
+            "git -C ../other log -p",
+            "git -c diff.x.textconv=sh diff",
+            "git --git-dir=/tmp/x/.git log",
+        ] {
+            assert!(git_elsewhere(command), "elsewhere: {command}");
+        }
+        for command in ["git status", "git diff; cd src", "cd src && make"] {
+            assert!(!git_elsewhere(command), "here: {command}");
+        }
     }
 
     #[test]
