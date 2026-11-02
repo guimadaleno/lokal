@@ -105,6 +105,7 @@ fn stream(
     let mut first_token = None;
     // Server-sent events: one `data: {json}` line per piece, then `data: [DONE]`.
     for line in reader.lines() {
+        // No one reads this result: the request that wanted it is gone.
         if abandoned.load(Ordering::SeqCst) {
             return Err(String::new());
         }

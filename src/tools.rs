@@ -1,6 +1,7 @@
 //! The tools the model can call: run a command, read a file, write a file,
 //! edit a file, and, in a conversation, list the person's other sessions and
-//! mail one. Anything that changes something asks first.
+//! mail one. Anything that changes something asks first, but where the
+//! person chose a mode that asks less (`mode.rs`).
 
 use std::env;
 use std::fs;
