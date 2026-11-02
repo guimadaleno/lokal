@@ -67,7 +67,15 @@ const PLAIN_REMOTE: &[&str] = &[
     // What `gh repo clone` marks a fork's upstream with.
     "gh-resolved",
 ];
-const PLAIN_BRANCH: &[&str] = &["remote", "merge", "rebase", "pushremote", "description"];
+/// `vscode-merge-base` is what VS Code writes on a branch it makes: a ref.
+const PLAIN_BRANCH: &[&str] = &[
+    "remote",
+    "merge",
+    "rebase",
+    "pushremote",
+    "description",
+    "vscode-merge-base",
+];
 /// What Git LFS writes itself; others in its section name programs it runs.
 const PLAIN_LFS: &[&str] = &["repositoryformatversion", "url", "access", "locksverify"];
 const PLAIN_SUBMODULE: &[&str] = &["url", "active", "branch", "shallow", "ignore"];
@@ -313,7 +321,8 @@ mod tests {
                      local\tcore.worktree ../../../lib\n\
                      local\tlfs.repositoryformatversion 0\n\
                      local\tlfs.https://example.com/repo.git/info/lfs.access basic\n\
-                     local\tremote.upstream.gh-resolved base\n";
+                     local\tremote.upstream.gh-resolved base\n\
+                     local\tbranch.fix.vscode-merge-base origin/main\n";
         assert_eq!(first_beyond_the_plain(plain), None);
         for (setting, name) in [
             ("alias.st !sh x", "alias.st"),
