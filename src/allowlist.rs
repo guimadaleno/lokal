@@ -148,11 +148,11 @@ const INTERPRETERS: &[&str] = &["python", "python3", "perl", "ruby", "node", "ph
 /// Runtimes that take code inline after a word of their own, as well as
 /// after an option: `deno eval`, `bun x`.
 const RUNTIMES: &[&str] = &["deno", "bun"];
-const RUNTIME_INLINE: &[&str] = &["eval", "x", "-e", "--eval", "-p", "--print"];
+const RUNTIME_INLINE: &[&str] = &["eval", "x", "-e", "--eval", "-p", "--print", "create"];
 /// Package managers whose `publish` sends out what can't be taken back,
-/// and whose `dlx` or `exec` runs a package, as npx does.
+/// and whose `dlx`, `exec`, `x` or `create` runs a package, as npx does.
 const PUBLISHERS: &[&str] = &["npm", "pnpm", "yarn", "cargo"];
-const PACKAGE_RUNNING: &[&str] = &["publish", "dlx", "exec"];
+const PACKAGE_RUNNING: &[&str] = &["publish", "dlx", "exec", "x", "create"];
 
 /// One program of a command line: its words, and whether any of them has an
 /// unquoted `*`, `?` or `[`, which bash replaces with file names.
@@ -302,8 +302,11 @@ fn is_everyday(whole: &Program) -> bool {
             .first()
             .is_some_and(|first| !first.starts_with('-') || first == "-m"),
         name if RUNTIMES.contains(&name) => !uses_any(args, RUNTIME_INLINE),
-        name if PUBLISHERS.contains(&name) => !uses_any(args, PACKAGE_RUNNING),
+        name if PUBLISHERS.contains(&name) => {
+            !uses_any(args, PACKAGE_RUNNING) && !initializes_from_a_package(args)
+        }
         "pipx" => !uses_any(args, &["run"]),
+        "uv" => !(uses_any(args, &["tool"]) && uses_any(args, &["run"])),
         _ => true,
     }
 }
@@ -327,6 +330,12 @@ fn git_is_everyday(args: &[String]) -> bool {
 
 /// Whether any argument is one of `words`: an option as matches_option
 /// reads it, anything else by itself.
+/// `npm init vite` runs the package create-vite; a bare `init` writes a manifest.
+fn initializes_from_a_package(args: &[String]) -> bool {
+    args.windows(2)
+        .any(|pair| pair[0] == "init" && !pair[1].starts_with('-'))
+}
+
 fn uses_any(args: &[String], words: &[&str]) -> bool {
     args.iter().any(|arg| {
         words.iter().any(|word| {
@@ -604,6 +613,9 @@ mod tests {
             "cargo test 2>&1 | tail -20",
             "cd src && make test",
             "npm install",
+            "npm init -y",
+            "cargo init",
+            "uv run pytest",
             "mkdir -p build && cp a.txt build/",
             "git add -A && git commit -m 'Fix the parser'",
             "git switch main",
@@ -687,6 +699,12 @@ mod tests {
             "npm exec some-package",
             "uvx some-tool",
             "pipx run some-tool",
+            "npm x some-package",
+            "npm init vite",
+            "yarn create vite",
+            "pnpm create vite",
+            "bun create vite",
+            "uv tool run some-tool",
             "git rm -r src",
             "git switch -f main",
             "git switch --discard-changes main",
