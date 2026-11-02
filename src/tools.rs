@@ -4,7 +4,7 @@
 
 use std::env;
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -22,6 +22,8 @@ use crate::{allowlist, config, diff, gitconfig, interrupt, layout, style, text};
 const OUTPUT_LIMIT: usize = 12_000;
 /// How much of a file one read gives the model; a longer one says where to read on.
 const FILE_LIMIT: usize = 30_000;
+/// The most of a file read into memory, for a part of it or a change to it.
+const READ_CAP: u64 = 64 * 1024 * 1024;
 /// With less room than this left in the context, an output would be too
 /// little to use.
 const LEAST_ROOM: usize = 1_000;
@@ -372,11 +374,41 @@ fn read_file(args: &Value, room: Option<usize>) -> Result<Outcome, String> {
             "Not read: there's no room left in the context for it. {CONTEXT_FULL}"
         )));
     }
-    let bytes =
-        fs::read(&path).map_err(|error| format!("can't read {}: {error}", path.display()))?;
-    let contents =
-        String::from_utf8(bytes).map_err(|_| format!("{} isn't a text file.", path.display()))?;
+    let contents = read_text(&path)?.ok_or_else(|| no_such_file(&path))?;
     read_part(&contents, from, to, limit).map(Outcome::Done)
+}
+
+/// A text file's contents, or None when there's no such file. Anything but
+/// a regular file is refused before it's opened: a device or a pipe could
+/// never end, or never begin. So is one too big to hold in memory.
+fn read_text(path: &Path) -> Result<Option<String>, String> {
+    match fs::metadata(path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("can't read {}: {error}", path.display())),
+        Ok(file) if !file.is_file() => {
+            return Err(format!("{} isn't a regular file.", path.display()));
+        }
+        Ok(_) => {}
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .and_then(|file| file.take(READ_CAP + 1).read_to_end(&mut bytes))
+        .map_err(|error| format!("can't read {}: {error}", path.display()))?;
+    if bytes.len() as u64 > READ_CAP {
+        return Err(format!(
+            "{} is over {} MB, too big to read here. Use a command on it instead: \
+             grep -n, head or tail.",
+            path.display(),
+            READ_CAP / 1024 / 1024
+        ));
+    }
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|_| format!("{} isn't a text file.", path.display()))
+}
+
+fn no_such_file(path: &Path) -> String {
+    format!("can't read {}: there's no such file.", path.display())
 }
 
 /// The lines from `from` to `to`, or the whole file, as many whole lines as
@@ -443,11 +475,7 @@ fn write_file(
 ) -> Result<Outcome, String> {
     let path = writable_path(args)?;
     let content = text_arg(args, "content")?;
-    let old = match fs::read_to_string(&path) {
-        Ok(old) => Some(old),
-        Err(error) if error.kind() == ErrorKind::NotFound => None,
-        Err(error) => return Err(format!("can't read {}: {error}", path.display())),
-    };
+    let old = read_text(&path)?;
     let step = if old.is_some() {
         text::STEP_EDIT
     } else {
@@ -477,8 +505,7 @@ fn edit_file(
     if old_text.is_empty() {
         return Err("old_text is empty.".into());
     }
-    let old = fs::read_to_string(&path)
-        .map_err(|error| format!("can't read {}: {error}", path.display()))?;
+    let old = read_text(&path)?.ok_or_else(|| no_such_file(&path))?;
     match old.matches(old_text).count() {
         0 => {
             return Err(format!(
@@ -1042,6 +1069,30 @@ mod tests {
             current_notes(&path)
                 .unwrap_err()
                 .contains("nothing changed")
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn only_a_regular_file_is_read() {
+        assert!(read_text(Path::new("/dev/zero")).is_err());
+        let dir = env::temp_dir().join(format!("lokal-read-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let pipe = dir.join("pipe");
+        let name = std::ffi::CString::new(pipe.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: a valid C string; mkfifo only creates the pipe.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        // Opened, a pipe with no writer would block for good.
+        assert!(
+            read_text(&pipe)
+                .unwrap_err()
+                .contains("isn't a regular file")
+        );
+        assert_eq!(read_text(&dir.join("missing")).unwrap(), None);
+        fs::write(dir.join("a.txt"), "hi\n").unwrap();
+        assert_eq!(
+            read_text(&dir.join("a.txt")).unwrap().as_deref(),
+            Some("hi\n")
         );
         fs::remove_dir_all(&dir).unwrap();
     }
