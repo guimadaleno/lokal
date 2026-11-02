@@ -155,6 +155,14 @@ pub const GIT_SETTINGS_UNREAD: &str =
 pub const GIT_ELSEWHERE: &str = "git may run in another repository here, or with other settings, \
     and Lokal read only this folder's, so it asks first.";
 
+/// In auto, before a git command the judge would otherwise see.
+pub fn git_unusual_setting(setting: &str) -> String {
+    format!(
+        "This repository sets {setting} in its own git settings, and git may run a program for it, \
+         so Lokal asks first."
+    )
+}
+
 pub fn git_runs_program(setting: &str) -> String {
     format!(
         "This repository's git settings name a program for git to run ({setting}), so Lokal asks first."

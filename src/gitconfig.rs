@@ -4,9 +4,11 @@
 //! settings are files in .git that anything could have written, so a git
 //! command runs unasked only where the repository names none of them, with
 //! fsmonitor off and kept out of submodules, whose settings are their own.
-//! As git writes, it also runs the repository's hooks, and the programs
-//! settings like an alias or an editor name, which auto's judge can't see:
-//! there, a git command asks when the repository has any.
+//! As git writes, it also runs the repository's hooks, and programs that a
+//! long and growing list of settings can name (an alias, an editor, a merge
+//! tool…), which auto's judge can't see. So in auto, a git command asks when
+//! the repository has a hook, or sets anything beyond the plain settings
+//! git writes itself.
 
 use std::fs;
 use std::io::{ErrorKind, Read};
@@ -29,12 +31,57 @@ pub const UNASKED: [(&str, &str); 2] = [
 
 /// Settings that name a program git runs while reading.
 const PROGRAMS: &str = r"^(core\.fsmonitor|diff\.external|diff\..+\.(command|textconv)|filter\..+\.(clean|smudge|process)|gpg\.(.+\.)?program)$";
-/// Settings that have git run a program as it writes or reaches a remote:
-/// where its hooks are, what it runs to connect or to ask for a password,
-/// an editor, a merge, diff or merge tool, a trailer command, a submodule's
-/// update command, the `ext::` transport, and an alias, which can be a shell
-/// command or bring options of its own.
-const WRITE_PROGRAMS: &str = r"^(core\.(hookspath|sshcommand|askpass|editor|gitproxy|alternaterefscommand)|sequence\.editor|credential\.(.+\.)?helper|merge\..+\.driver|(difftool|mergetool)\..+\.cmd|trailer\..+\.(command|cmd)|submodule\..+\.update|protocol\.(.+\.)?allow|alias\..+|remote\..+\.(uploadpack|receivepack))$";
+/// The settings a repository holds that can't have git run anything: what
+/// `git init`, `clone`, `remote`, `branch` and `submodule` write, and a few
+/// choices among git's own behaviors. Anything else is asked about in auto,
+/// since the settings that name a program have no fixed end.
+const PLAIN_CORE: &[&str] = &[
+    "repositoryformatversion",
+    "filemode",
+    "bare",
+    "logallrefupdates",
+    "ignorecase",
+    "precomposeunicode",
+    "symlinks",
+    "autocrlf",
+    "eol",
+    "safecrlf",
+    "sparsecheckout",
+    "sparsecheckoutcone",
+    "untrackedcache",
+    "quotepath",
+    "longpaths",
+];
+const PLAIN_REMOTE: &[&str] = &[
+    "url",
+    "pushurl",
+    "fetch",
+    "push",
+    "tagopt",
+    "prune",
+    "mirror",
+    "promisor",
+    "partialclonefilter",
+];
+const PLAIN_SUBMODULE: &[&str] = &["url", "active", "branch", "shallow", "ignore"];
+/// A submodule's `update` can also be `!command`.
+const SUBMODULE_UPDATES: &[&str] = &["checkout", "rebase", "merge", "none"];
+const PLAIN_OTHER: &[&str] = &[
+    "pull.rebase",
+    "pull.ff",
+    "push.default",
+    "push.autosetupremote",
+    "fetch.prune",
+    "init.defaultbranch",
+    "merge.ff",
+    "rebase.autostash",
+    "commit.gpgsign",
+    "tag.gpgsign",
+];
+/// Sections whose every setting is plain: branches, who commits, git's own
+/// format extensions, Git LFS's own settings (its filters are `filter.lfs`),
+/// colors.
+const PLAIN_SECTIONS: &[&str] = &["branch", "user", "extensions", "lfs", "color"];
 /// core.fsmonitor as a yes or a no: git's own daemon, or none.
 const SWITCHES: &[&str] = &["", "true", "false", "yes", "no", "on", "off", "1", "0"];
 /// Reading settings is quick; a file they include could be one that never ends.
@@ -49,12 +96,17 @@ pub fn program_setting() -> Result<Option<String>, ()> {
     repository_setting(PROGRAMS)
 }
 
-/// What of the repository's own git would run as it does more than read:
-/// a hook in `.git/hooks`, or a setting that names a program. Auto's judge
-/// sees only the command, so a git command it would let through is asked
-/// about instead. Err when git couldn't say.
+/// What of the repository's own could have git run a program as it does
+/// more than read: a hook in `.git/hooks`, or a setting beyond the plain
+/// ones. Auto's judge sees only the command, so a git command it would let
+/// through is asked about instead. Err when git couldn't say.
 pub fn write_program() -> Result<Option<WriteProgram>, ()> {
-    if let Some(setting) = repository_setting(WRITE_PROGRAMS)? {
+    let listing = match git(&["config", "--show-scope", "--get-regexp", "."])? {
+        None | Some((1, _)) => String::new(),
+        Some((0, listing)) => listing,
+        Some(_) => return Err(()),
+    };
+    if let Some(setting) = first_beyond_the_plain(&listing) {
         return Ok(Some(WriteProgram::Setting(setting)));
     }
     let paths = match git(&["rev-parse", "--git-common-dir", "--git-path", "hooks"])? {
@@ -168,6 +220,40 @@ fn first_of_the_repository(listing: &str) -> Option<String> {
     })
 }
 
+/// From the same listing, the first setting of the repository's own that
+/// isn't a plain one.
+fn first_beyond_the_plain(listing: &str) -> Option<String> {
+    listing.lines().find_map(|line| {
+        let (scope, setting) = line.split_once('\t')?;
+        let (name, value) = setting.split_once(' ').unwrap_or((setting, ""));
+        (matches!(scope, "local" | "worktree") && !is_plain(name, value)).then(|| name.to_string())
+    })
+}
+
+/// Whether a setting, as git lists it (section and key in lowercase, a
+/// subsection between them as written), can't have git run anything.
+fn is_plain(name: &str, value: &str) -> bool {
+    let Some((section, rest)) = name.split_once('.') else {
+        return false;
+    };
+    let (subsection, key) = match rest.rsplit_once('.') {
+        Some((subsection, key)) => (Some(subsection), key),
+        None => (None, rest),
+    };
+    match (section, subsection, key) {
+        ("core", None, "fsmonitor") => {
+            SWITCHES.contains(&value.trim().to_ascii_lowercase().as_str())
+        }
+        ("core", None, key) => PLAIN_CORE.contains(&key),
+        ("remote", Some(_), key) => PLAIN_REMOTE.contains(&key),
+        ("submodule", Some(_), "update") => SUBMODULE_UPDATES.contains(&value.trim()),
+        ("submodule", Some(_), key) => PLAIN_SUBMODULE.contains(&key),
+        (section, _, _) if PLAIN_SECTIONS.contains(&section) => true,
+        (section, None, key) => PLAIN_OTHER.contains(&format!("{section}.{key}").as_str()),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,46 +284,43 @@ mod tests {
     }
 
     #[test]
-    fn settings_that_run_a_program_as_git_writes_are_found() {
-        let dir = std::env::temp_dir().join(format!("lokal-write-programs-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("config");
-        fs::write(
-            &file,
-            "[core]\n\thooksPath = h\n\taskPass = a\n\teditor = e\n\tbare = false\n\
-             [alias]\n\tst = !sh x\n[credential \"https://example.com\"]\n\thelper = c\n\
-             [merge \"ours\"]\n\tdriver = d\n[difftool \"x\"]\n\tcmd = t\n\
-             [submodule \"lib\"]\n\tupdate = !sh u\n\turl = s\n[protocol \"ext\"]\n\tallow = always\n\
-             [remote \"origin\"]\n\turl = u\n\tuploadpack = p\n[user]\n\tname = Ana\n",
-        )
-        .unwrap();
-        let output = Command::new("git")
-            .args(["config", "--file"])
-            .arg(&file)
-            .args(["--get-regexp", WRITE_PROGRAMS])
-            .output()
-            .unwrap();
-        let listing = String::from_utf8(output.stdout).unwrap();
-        let keys: Vec<&str> = listing
-            .lines()
-            .filter_map(|line| line.split(' ').next())
-            .collect();
-        assert_eq!(
-            keys,
-            [
-                "core.hookspath",
-                "core.askpass",
-                "core.editor",
-                "alias.st",
+    fn only_plain_settings_of_the_repository_pass() {
+        // What `git init` and `git clone` write, and a submodule set up.
+        let plain = "global\tcore.editor vim\n\
+                     local\tcore.repositoryformatversion 0\n\
+                     local\tcore.filemode true\n\
+                     local\tcore.bare false\n\
+                     local\tremote.origin.url https://example.com/repo.git\n\
+                     local\tremote.origin.fetch +refs/heads/*:refs/remotes/origin/*\n\
+                     local\tbranch.main.remote origin\n\
+                     local\tbranch.main.merge refs/heads/main\n\
+                     local\tsubmodule.lib.url https://example.com/lib.git\n\
+                     local\tsubmodule.lib.active true\n\
+                     local\tsubmodule.lib.update rebase\n\
+                     local\tuser.email ana@example.com\n\
+                     local\tpull.rebase true\n";
+        assert_eq!(first_beyond_the_plain(plain), None);
+        for (setting, name) in [
+            ("alias.st !sh x", "alias.st"),
+            ("core.editor e", "core.editor"),
+            ("core.hookspath h", "core.hookspath"),
+            ("submodule.lib.update !sh u", "submodule.lib.update"),
+            ("difftool.x.path /tmp/t", "difftool.x.path"),
+            ("gpg.ssh.defaultkeycommand k", "gpg.ssh.defaultkeycommand"),
+            ("man.x.cmd m", "man.x.cmd"),
+            (
+                "credential.https://example.com.helper c",
                 "credential.https://example.com.helper",
-                "merge.ours.driver",
-                "difftool.x.cmd",
-                "submodule.lib.update",
-                "protocol.ext.allow",
-                "remote.origin.uploadpack",
-            ]
-        );
-        fs::remove_dir_all(&dir).unwrap();
+            ),
+            ("remote.origin.uploadpack p", "remote.origin.uploadpack"),
+            ("protocol.ext.allow always", "protocol.ext.allow"),
+            ("something.new value", "something.new"),
+        ] {
+            let listing = format!("{plain}worktree\t{setting}\n");
+            assert_eq!(first_beyond_the_plain(&listing).as_deref(), Some(name));
+        }
+        assert!(is_plain("core.fsmonitor", "false"));
+        assert!(!is_plain("core.fsmonitor", "/tmp/watch"));
     }
 
     #[test]

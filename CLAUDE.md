@@ -36,12 +36,13 @@ dependencies.
     - **Nor git's hooks:** the judge sees the command, never what the
       repository has git run as it writes. So a git command it would judge
       asks instead, on No and with it named, when the repository has an
-      active hook in `.git/hooks`, or sets a program git may run: its
-      hooks path, ssh, proxy or password command, an editor, a credential
-      helper, a merge driver, a diff or merge tool, a trailer command, a
-      submodule's update command, the `ext::` transport, an alias, or a remote's
-      `uploadpack` or `receivepack` (`gitconfig::write_program`). The
-      person's own global settings and hooks don't count.
+      active hook in `.git/hooks`, or sets anything beyond the plain
+      settings git writes itself (`gitconfig::write_program`). The settings
+      that name a program (an alias, an editor, a credential helper, a
+      merge or diff tool, a submodule's `!` update…) have no fixed end, so
+      what's let through is the short list that can't run anything, not a
+      list of what can. The person's own global settings and hooks don't
+      count.
     - **What it reads is the person's or Lokal's own:** the person's last
       three requests as they typed them, the command, the model's
       explanation, the working folder and the files written this turn. The

@@ -119,7 +119,7 @@ fn git_warning(command: &str) -> Option<String> {
 fn write_warning() -> Option<String> {
     match gitconfig::write_program() {
         Ok(None) => None,
-        Ok(Some(WriteProgram::Setting(setting))) => Some(text::git_runs_program(&setting)),
+        Ok(Some(WriteProgram::Setting(setting))) => Some(text::git_unusual_setting(&setting)),
         Ok(Some(WriteProgram::Hook(hook))) => Some(text::git_runs_hook(&hook)),
         Err(()) => Some(text::GIT_SETTINGS_UNREAD.to_string()),
     }
