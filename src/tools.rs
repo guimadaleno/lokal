@@ -34,14 +34,15 @@ const CONTEXT_FULL: &str = "Answer with what you have, or, if that isn't enough,
     the context is full: /new starts a fresh conversation.";
 /// The longest line `remember` adds to user.md.
 const NOTE_LIMIT: usize = 200;
-/// How a file change's result starts, for the model and for `written_path`.
-const WROTE: &str = "Wrote";
 /// A file change that changes nothing, which isn't put to the person.
 const UNCHANGED: &str = "Nothing to do: the file already has that content.";
 
 pub enum Outcome {
     /// The result for the model.
     Done(String),
+    /// A file of the project's was written: the result for the model, and
+    /// the path as the model gave it, for auto's judge.
+    Wrote { result: String, path: PathBuf },
     /// The person said no: the result for the model, and the turn ends so
     /// they can say what to do instead.
     Declined(String),
@@ -580,7 +581,7 @@ fn remember(args: &Value, input: &mut Input) -> Result<Outcome, String> {
         ));
     };
     // On No, in every mode: it changes what every conversation starts with.
-    propose(
+    let outcome = propose(
         &path,
         text::STEP_REMEMBER,
         &old,
@@ -588,7 +589,12 @@ fn remember(args: &Value, input: &mut Input) -> Result<Outcome, String> {
         input,
         Asking::OnNo,
         None,
-    )
+    )?;
+    // user.md is Lokal's, not among the files the turn wrote.
+    Ok(match outcome {
+        Outcome::Wrote { result, .. } => Outcome::Done(result),
+        other => other,
+    })
 }
 
 /// What user.md holds now, or nothing when it isn't there yet. One Lokal
@@ -829,19 +835,10 @@ fn propose(
     if let Some(peers) = peers {
         peers.wrote(path);
     }
-    Ok(Outcome::Done(format!("{WROTE} {}.", path.display())))
-}
-
-/// The file a call wrote, if it wrote one, as auto's judge hears of it.
-pub fn written_path(call: &ToolCall, outcome: &Outcome) -> Option<String> {
-    let Outcome::Done(result) = outcome else {
-        return None;
-    };
-    if !matches!(call.name.as_str(), "write_file" | "edit_file") || !result.starts_with(WROTE) {
-        return None;
-    }
-    let args = serde_json::from_str::<Value>(&call.arguments).ok()?;
-    path_arg(&args).ok().map(|path| path.display().to_string())
+    Ok(Outcome::Wrote {
+        result: format!("Wrote {}.", path.display()),
+        path: path.to_path_buf(),
+    })
 }
 
 /// Whether a file change's question may open on Yes: only for a file in the

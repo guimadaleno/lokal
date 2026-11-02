@@ -413,13 +413,14 @@ impl Conversation {
                 };
                 let peers = self.peers.as_ref();
                 let outcome = tools::run(call, input, mode, &case, room, scratch, peers);
-                if let Some(path) = tools::written_path(call, &outcome) {
-                    self.written.push(path);
-                }
                 // A blank line after each step, so its output doesn't run into what follows.
                 eprintln!();
                 match outcome {
                     Outcome::Done(result) => result,
+                    Outcome::Wrote { result, path } => {
+                        self.written.push(path.display().to_string());
+                        result
+                    }
                     Outcome::Declined(result) => {
                         declined = true;
                         result
