@@ -82,15 +82,17 @@ const GIT_BRANCH_LISTING: &[&str] = &[
 const DOCKER_READ_ONLY: &[&str] = &["images", "info", "inspect", "logs", "ps", "version"];
 
 /// Programs whose question opens on No, where Enter by a slip costs the
-/// most. These reach past the person.
-const PAST_THE_PERSON: &[&str] = &["sudo", "su", "doas", "pkexec", "run0", "sudoedit"];
-/// A shell, or a program that runs the one in its arguments: code Lokal
-/// can't see.
+/// most. These reach past the person, or past the machine.
+const PAST_THE_PERSON: &[&str] = &["sudo", "su", "doas", "pkexec", "run0", "sudoedit", "ssh"];
+/// A shell, a program that runs the one in its arguments, or one whose
+/// script can run commands (awk's `system`, sed's `e`): code Lokal can't
+/// see. npx runs a package it fetches.
 const RUN_OTHERS: &[&str] = &[
-    "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "eval", "source", ".", "exec",
-    "xargs", "env", "nice", "nohup", "timeout", "time", "command", "builtin", "watch", "setsid",
-    "stdbuf", "ionice", "taskset", "chroot", "unshare", "nsenter", "flock", "parallel", "script",
-    "strace",
+    "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "pwsh", "busybox", "toybox", "eval",
+    "source", ".", "exec", "xargs", "env", "nice", "nohup", "timeout", "time", "command",
+    "builtin", "watch", "setsid", "stdbuf", "ionice", "taskset", "chroot", "unshare", "nsenter",
+    "flock", "parallel", "script", "strace", "awk", "gawk", "mawk", "nawk", "sed", "npx", "pnpx",
+    "bunx",
 ];
 const DELETE_OR_OVERWRITE: &[&str] = &[
     "rm", "rmdir", "unlink", "shred", "dd", "wipefs", "truncate", "mv",
@@ -102,6 +104,7 @@ const STOP_THINGS: &[&str] = &[
 /// change what later git commands run: `git status` runs unasked, and
 /// core.fsmonitor in the config runs a program of its choosing.
 const GIT_OPENS_ON_NO: &[&str] = &[
+    "rm",
     "push",
     "reset",
     "clean",
@@ -119,12 +122,17 @@ const GIT_BRANCH_DISCARDING: &[&str] = &[
     "-d", "-D", "--delete", "-f", "--force", "-m", "-M", "--move",
 ];
 const GIT_TAG_DISCARDING: &[&str] = &["-d", "--delete", "-f", "--force"];
+/// A switch that throws local changes away, or moves a branch that exists.
+const GIT_SWITCH_DISCARDING: &[&str] = &["-f", "--force", "--discard-changes", "-C"];
 /// What makes a container command remove or stop something, or reach the
 /// machine from inside a container: the daemon is root.
 const CONTAINER_OPENS_ON_NO: &[&str] = &[
     "rm",
     "rmi",
     "kill",
+    "stop",
+    "restart",
+    "pause",
     "prune",
     "down",
     "-v",
@@ -137,6 +145,10 @@ const CONTAINER_OPENS_ON_NO: &[&str] = &[
 ];
 /// They run code given inline or piped in as readily as a script.
 const INTERPRETERS: &[&str] = &["python", "python3", "perl", "ruby", "node", "php", "lua"];
+/// Runtimes that take code inline after a word of their own, as well as
+/// after an option: `deno eval`, `bun x`.
+const RUNTIMES: &[&str] = &["deno", "bun"];
+const RUNTIME_INLINE: &[&str] = &["eval", "x", "-e", "--eval", "-p", "--print"];
 /// Package managers whose `publish` sends out what can't be taken back.
 const PUBLISHERS: &[&str] = &["npm", "pnpm", "yarn", "cargo"];
 
@@ -287,6 +299,7 @@ fn is_everyday(whole: &Program) -> bool {
         name if INTERPRETERS.contains(&name) => args
             .first()
             .is_some_and(|first| !first.starts_with('-') || first == "-m"),
+        name if RUNTIMES.contains(&name) => !uses_any(args, RUNTIME_INLINE),
         name if PUBLISHERS.contains(&name) => !uses_any(args, &["publish"]),
         _ => true,
     }
@@ -301,6 +314,8 @@ fn git_is_everyday(args: &[String]) -> bool {
         sub if sub.starts_with('-') => false,
         "branch" => !uses_any(rest, GIT_BRANCH_DISCARDING),
         "tag" => !uses_any(rest, GIT_TAG_DISCARDING),
+        "switch" => !uses_any(rest, GIT_SWITCH_DISCARDING),
+        "commit" => !uses_any(rest, &["--amend"]),
         "stash" => !uses_any(rest, &["drop", "clear"]),
         "worktree" => !uses_any(rest, &["remove", "prune"]),
         sub => !GIT_OPENS_ON_NO.contains(&sub),
@@ -576,6 +591,9 @@ mod tests {
             "docker run --rm -p 8080:80 nginx",
             "python3 manage.py migrate",
             "python3 -m pytest",
+            "deno run main.ts",
+            "bun test",
+            "git commit -m 'Fix it'",
             "touch notes.txt",
         ] {
             assert!(opens_on_yes(command), "should open on Yes: {command}");
@@ -629,6 +647,24 @@ mod tests {
             "shutdown now",
             "npm publish",
             "cargo publish",
+            "ssh host uptime",
+            "awk 'BEGIN { system(\"rm -rf x\") }'",
+            "sed -i s/a/b/ file",
+            "sed -n 1e\\ rm\\ x file",
+            "busybox sh -c make",
+            "pwsh -c Remove-Item x",
+            "npx some-package",
+            "bunx some-package",
+            "deno eval 'Deno.exit()'",
+            "bun -e 'process.exit()'",
+            "bun x some-package",
+            "git rm -r src",
+            "git switch -f main",
+            "git switch --discard-changes main",
+            "git commit --amend -m x",
+            "docker stop web",
+            "docker compose stop",
+            "podman restart web",
             "echo $HOME",
             "echo hi > file",
             "make\nrm -rf x",

@@ -97,10 +97,12 @@ dependencies.
   a stray key never approves. Saying no ends the turn, so the person says
   what to do instead.
   - **On No:** anything the rule can't read whole; commands that reach past
-    the person (sudo), run code Lokal can't see (a shell, xargs, `curl | sh`,
-    a Windows program), delete or overwrite (rm, mv, dd, `git push`, `reset`,
-    `clean`), change what later git commands run (`git config`: `git status`
-    runs unasked), or stop things; a file outside the working and scratch
+    the person (sudo, ssh), run code Lokal can't see (a shell, xargs, awk,
+    sed, npx, `deno eval`, `curl | sh`, a Windows program), delete or
+    overwrite (rm, mv, dd, `git rm`, `push`, `reset`, `clean`,
+    `commit --amend`, `switch -f`), change what later git commands run
+    (`git config`: `git status` runs unasked), or stop things (kill,
+    `docker stop`); a file outside the working and scratch
     folders, or in a hidden file or folder on the way (.git, .env, CI); and
     `remember`, which changes what every conversation starts with.
   - **The rule only picks where the question starts,** never whether there is
