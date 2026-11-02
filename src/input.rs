@@ -27,7 +27,7 @@ use crate::approvals::ProjectApprovals;
 use crate::peers::{Directory, Inbox};
 use crate::{config, diff, menu, mode, style, text};
 
-const PROMPT: &str = "> ";
+pub const PROMPT: &str = "> ";
 /// How long after Esc another key makes it part of one, like an arrow
 /// key's. Without it, rustyline waits for the next key, and a lone Esc does
 /// nothing until then.

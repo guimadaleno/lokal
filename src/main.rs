@@ -105,7 +105,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Args::Version => {
-            println!("lokal {}", text::VERSION);
+            println!("{}", text::VERSION_LINE);
             ExitCode::SUCCESS
         }
         Args::Install => match install::install() {
@@ -428,7 +428,7 @@ fn ask_first_question(input: &mut Input) -> Option<String> {
         return None;
     }
     eprintln!("{}", text::FIRST_QUESTION);
-    let contents = match input.answer("> ") {
+    let contents = match input.answer(input::PROMPT) {
         Some(answer)
             if is_command(&answer) || own_command(&answer).is_some() || answer.starts_with('@') =>
         {

@@ -2,7 +2,11 @@
 
 use std::time::Duration;
 
+/// The product's name, as the header and /about show it.
+pub const NAME: &str = "Lokal";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// What `lokal --version` prints: the command's name, then the version.
+pub const VERSION_LINE: &str = concat!(env!("CARGO_PKG_NAME"), " ", env!("CARGO_PKG_VERSION"));
 pub const DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
 pub const AUTHOR: &str = env!("CARGO_PKG_AUTHORS");
 pub const WEBSITE: &str = env!("CARGO_PKG_HOMEPAGE");

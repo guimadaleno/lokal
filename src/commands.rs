@@ -16,7 +16,7 @@ const LONG_USER_MD: usize = 30;
 pub fn print_header(server: &server::Server) {
     eprintln!(
         "{} {}  {}",
-        style::bold("Lokal"),
+        style::bold(text::NAME),
         text::VERSION,
         style::gray(&server.model)
     );
@@ -155,7 +155,7 @@ pub fn run_command(
 fn print_about() {
     eprintln!(
         "  {} {}  {}",
-        style::bold("Lokal"),
+        style::bold(text::NAME),
         text::VERSION,
         style::gray(text::DESCRIPTION)
     );
