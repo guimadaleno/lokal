@@ -11,8 +11,7 @@ use crate::input::Input;
 use crate::menu::{self, Item};
 use crate::report::{self, Answer, Field, Kind, Report};
 use crate::server::Server;
-use crate::spinner::Spinner;
-use crate::{style, system, text, update};
+use crate::{spinner, style, system, text, update};
 
 const APP: &str = "lokal";
 
@@ -121,32 +120,35 @@ pub fn run(
             return Some(typed);
         }
     }
+    if is_sent(&report) { None } else { Some(typed) }
+}
+
+/// Sends the report and says how it went. False keeps the draft.
+fn is_sent(report: &Report) -> bool {
     let Ok(body) = report.body() else {
         eprintln!("  {}", style::red(text::FEEDBACK_REFUSED));
-        return Some(typed);
+        return false;
     };
-    match send(&body) {
-        Some((status, answer)) => match report::answer(status, &answer) {
-            Answer::Sent(reference) => {
-                eprintln!("  {}", style::gray(&text::feedback_sent(&reference)));
-                None
-            }
-            Answer::Invalid(field) => {
-                eprintln!("  {}", style::red(&text::feedback_field(field_name(field))));
-                Some(typed)
-            }
-            Answer::Later(seconds) => {
-                eprintln!("  {}", style::gray(&text::feedback_later(seconds)));
-                Some(typed)
-            }
-            Answer::Refused => {
-                eprintln!("  {}", style::red(text::FEEDBACK_REFUSED));
-                Some(typed)
-            }
-        },
-        None => {
-            eprintln!("  {}", style::red(text::FEEDBACK_UNREACHABLE));
-            Some(typed)
+    let Some((status, answer)) = send(&body) else {
+        eprintln!("  {}", style::red(text::FEEDBACK_UNREACHABLE));
+        return false;
+    };
+    match report::answer(status, &answer) {
+        Answer::Sent(reference) => {
+            eprintln!("  {}", style::gray(&text::feedback_sent(&reference)));
+            true
+        }
+        Answer::Invalid(field) => {
+            eprintln!("  {}", style::red(&text::feedback_field(field_name(field))));
+            false
+        }
+        Answer::Later(seconds) => {
+            eprintln!("  {}", style::gray(&text::feedback_later(seconds)));
+            false
+        }
+        Answer::Refused => {
+            eprintln!("  {}", style::red(text::FEEDBACK_REFUSED));
+            false
         }
     }
 }
@@ -253,13 +255,10 @@ fn send(body: &[u8]) -> Option<(u16, Vec<u8>)> {
         .spawn()
         .ok()?;
     child.stdin.take()?.write_all(body).ok()?;
-    let mut spinner = Spinner::new();
-    while child.try_wait().ok()?.is_none() {
-        spinner.tick();
-        std::thread::sleep(std::time::Duration::from_millis(40));
-    }
-    spinner.clear();
-    let output = child.wait_with_output().ok()?;
+    // The answer is read while curl runs, so a long one can't fill the pipe and stall it.
+    let output = spinner::while_running(move || child.wait_with_output())
+        .ok()?
+        .ok()?;
     let split = output.stdout.iter().rposition(|byte| *byte == b'\n')?;
     let status: u16 = std::str::from_utf8(&output.stdout[split + 1..])
         .ok()?
