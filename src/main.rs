@@ -204,15 +204,16 @@ struct Session {
     feedback_draft: Option<feedback::Draft>,
 }
 
-/// The conversation, from `first`, a command typed at the first question.
+/// The conversation, from `first`, a line typed at the first question that
+/// wasn't an answer to it.
 fn talk(
     conversation: &mut Conversation,
     input: &mut Input,
     session: &mut Session,
     first: Option<String>,
 ) {
-    if let Some(command) = first
-        && !run_command(&command, conversation, input, session)
+    if let Some(line) = first
+        && !take_line(&line, conversation, input, session)
     {
         return;
     }
@@ -229,38 +230,49 @@ fn talk(
             }
             Line::Quit => break,
         };
-        let line = line.trim();
-        if line.is_empty() {
-            pass_on_messages(conversation, input);
-            continue;
+        if !take_line(&line, conversation, input, session) {
+            break;
         }
-        if is_command(line) {
-            if !run_command(line, conversation, input, session) {
-                break;
-            }
-            continue;
-        }
-        if let Some(command) = own_command(line) {
-            // A blank line between the line and what follows, as after a request.
-            eprintln!();
-            if let Some(peers) = conversation.peers() {
-                peers.inbox().person_acted(None);
-            }
-            conversation.run_own(command);
-            print_separator(input);
-            continue;
-        }
-        if mail_from_person(line, conversation) {
-            continue;
-        }
-        // A blank line between the request and what follows, to breathe.
+    }
+}
+
+/// What the person typed at the `>`: a slash command, a command of their
+/// own, mail for another session or a request. False when it's time to quit.
+fn take_line(
+    line: &str,
+    conversation: &mut Conversation,
+    input: &mut Input,
+    session: &mut Session,
+) -> bool {
+    let line = line.trim();
+    if line.is_empty() {
+        pass_on_messages(conversation, input);
+        return true;
+    }
+    if is_command(line) {
+        return run_command(line, conversation, input, session);
+    }
+    if let Some(command) = own_command(line) {
+        // A blank line between the line and what follows, as after a request.
         eprintln!();
         if let Some(peers) = conversation.peers() {
-            peers.inbox().person_acted(Some(line));
+            peers.inbox().person_acted(None);
         }
-        let request = with_news(conversation, line);
-        turn(conversation, input, &request, Some(line));
+        conversation.run_own(command);
+        print_separator(input);
+        return true;
     }
+    if mail_from_person(line, conversation) {
+        return true;
+    }
+    // A blank line between the request and what follows, to breathe.
+    eprintln!();
+    if let Some(peers) = conversation.peers() {
+        peers.inbox().person_acted(Some(line));
+    }
+    let request = with_news(conversation, line);
+    turn(conversation, input, &request, Some(line));
+    true
 }
 
 /// One turn on `request`, which the person `asked` in their own words, or
@@ -521,8 +533,9 @@ fn print_about() {
 
 /// On the first launch, asks one question; skipping it is fine. Either way
 /// user.md then exists, so the question isn't asked again. A slash
-/// command typed instead answers nothing: it's returned to run, and the
-/// question comes back at the next launch.
+/// command, a `!` command or mail typed instead answers nothing: it's
+/// returned to take as at the `>`, and the question comes back at the next
+/// launch.
 fn ask_first_question(input: &mut Input) -> Option<String> {
     // Whether it exists, not whether it reads: one saved in another
     // encoding doesn't, and the answer would replace the person's notes.
@@ -531,7 +544,11 @@ fn ask_first_question(input: &mut Input) -> Option<String> {
     }
     eprintln!("{}", text::FIRST_QUESTION);
     let contents = match input.answer("> ") {
-        Some(answer) if is_command(&answer) => return Some(answer),
+        Some(answer)
+            if is_command(&answer) || own_command(&answer).is_some() || answer.starts_with('@') =>
+        {
+            return Some(answer);
+        }
         Some(answer) => format!("{} {answer}\n", text::PREFS_HEADING),
         None => String::new(),
     };
