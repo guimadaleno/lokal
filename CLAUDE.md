@@ -90,7 +90,7 @@ dependencies.
   - **Accept edits is the one exception, and the person picks it** with
     Shift+Tab (`src/mode.rs`), at the `>` or while Lokal works, from the
     next step on, and auto after it includes it. Then a change whose
-    question would open on Yes (`tools::write_opens_on_yes`) is written once
+    question would open on Yes (`files::write_opens_on_yes`) is written once
     its diff shows, with a faint line saying so, since that rule already
     calls it day to day.
     - **Everything else asks as always:** a file outside the working and
@@ -107,7 +107,7 @@ dependencies.
       applies there.
 - **Approve on a guess where a slip costs much.** A question opens on Yes,
   so Enter alone approves, only for what Lokal's own rule sees as day to day
-  (`allowlist::opens_on_yes`, `tools::write_opens_on_yes`), never the
+  (`allowlist::opens_on_yes`, `files::write_opens_on_yes`), never the
   model's judgement, except in the modes the person picks on Shift+Tab
   (above), where what opens on Yes may need no Enter at all. Esc is always
   No, and a key or a number only moves to its option, for Enter to pick, so
@@ -304,6 +304,7 @@ dependencies.
 | `server.rs`, `http.rs` | Finding the server and its model; plain-HTTP requests |
 | `tools.rs`, `shell.rs`, `diff.rs` | The model's tools, running a command, showing a change |
 | `tools/command.rs` | run_command and the person's `!` commands: who decides, what the model hears |
+| `tools/files.rs` | read_file, write_file and edit_file, and where a change may open on Yes |
 | `allowlist.rs` | Which commands run without asking, and which questions open on Yes |
 | `gitconfig.rs` | What a repository's own git settings would have git run |
 | `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it |

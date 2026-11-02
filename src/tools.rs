@@ -3,9 +3,8 @@
 //! mail one. Anything that changes something asks first, but where the
 //! person chose a mode that asks less (`mode.rs`).
 
-use std::env;
 use std::fs;
-use std::io::{ErrorKind, Read};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -18,15 +17,12 @@ use crate::peers::{self, Peers, Then, Undelivered};
 use crate::{config, diff, layout, style, text};
 
 mod command;
+mod files;
 
 pub use command::run_own;
 
 /// How much command output the model gets; longer output loses its middle.
 pub const OUTPUT_LIMIT: usize = 12_000;
-/// How much of a file one read gives the model; a longer one says where to read on.
-const FILE_LIMIT: usize = 30_000;
-/// The most of a file read into memory, for a part of it or a change to it.
-const READ_CAP: u64 = 64 * 1024 * 1024;
 /// With less room than this left in the context, an output would be too
 /// little to use.
 const LEAST_ROOM: usize = 1_000;
@@ -36,9 +32,6 @@ const CONTEXT_FULL: &str = "Answer with what you have, or, if that isn't enough,
     the context is full: /new starts a fresh conversation.";
 /// The longest line `remember` adds to user.md.
 const NOTE_LIMIT: usize = 200;
-/// A file change that changes nothing, which isn't put to the person.
-const UNCHANGED: &str = "Nothing to do: the file already has that content.";
-
 pub enum Outcome {
     /// The result for the model.
     Done(String),
@@ -169,9 +162,9 @@ pub fn run(
     let result = match serde_json::from_str::<Value>(&call.arguments) {
         Ok(args) => match (call.name.as_str(), peers) {
             ("run_command", _) => command::run_command(&args, input, room, judge),
-            ("read_file", _) => read_file(&args, room),
-            ("write_file", _) => write_file(&args, input, mode, scratch, peers),
-            ("edit_file", _) => edit_file(&args, input, mode, scratch, peers),
+            ("read_file", _) => files::read_file(&args, room),
+            ("write_file", _) => files::write_file(&args, input, mode, scratch, peers),
+            ("edit_file", _) => files::edit_file(&args, input, mode, scratch, peers),
             ("remember", _) => remember(&args, input),
             ("list_sessions", Some(peers)) => Ok(list_sessions(peers)),
             ("mail", Some(peers)) => mail(&args, peers),
@@ -186,188 +179,6 @@ pub fn run(
 /// A path the model gave, as the person reads it.
 fn shown(path: &Path) -> String {
     layout::printable(&config::shown(path)).into_owned()
-}
-
-fn read_file(args: &Value, room: Option<usize>) -> Result<Outcome, String> {
-    let path = path_arg(args)?;
-    let from = args["from_line"].as_u64().map(|line| line.max(1) as usize);
-    let to = args["to_line"].as_u64().map(|line| line as usize);
-    let range = match (from, to) {
-        (None, None) => String::new(),
-        _ => format!(
-            " {}-{}",
-            from.unwrap_or(1),
-            to.map_or(String::new(), |to| to.to_string())
-        ),
-    };
-    eprintln!(
-        "{} {}{}",
-        style::accent(text::STEP_READ),
-        shown(&path),
-        style::gray(&range)
-    );
-    let limit = limit(room, FILE_LIMIT);
-    if limit < LEAST_ROOM {
-        return Ok(Outcome::Done(format!(
-            "Not read: there's no room left in the context for it. {CONTEXT_FULL}"
-        )));
-    }
-    let contents = read_text(&path)?.ok_or_else(|| no_such_file(&path))?;
-    read_part(&contents, from, to, limit).map(Outcome::Done)
-}
-
-/// A text file's contents, or None when there's no such file. Anything but
-/// a regular file is refused before it's opened: a device or a pipe could
-/// never end, or never begin. So is one too big to hold in memory.
-fn read_text(path: &Path) -> Result<Option<String>, String> {
-    match fs::metadata(path) {
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("can't read {}: {error}", path.display())),
-        Ok(file) if !file.is_file() => {
-            return Err(format!("{} isn't a regular file.", path.display()));
-        }
-        Ok(_) => {}
-    }
-    let mut bytes = Vec::new();
-    fs::File::open(path)
-        .and_then(|file| file.take(READ_CAP + 1).read_to_end(&mut bytes))
-        .map_err(|error| format!("can't read {}: {error}", path.display()))?;
-    if bytes.len() as u64 > READ_CAP {
-        return Err(format!(
-            "{} is over {} MB, too big to read here. Use a command on it instead: \
-             grep -n, head or tail.",
-            path.display(),
-            READ_CAP / 1024 / 1024
-        ));
-    }
-    String::from_utf8(bytes)
-        .map(Some)
-        .map_err(|_| format!("{} isn't a text file.", path.display()))
-}
-
-fn no_such_file(path: &Path) -> String {
-    format!("can't read {}: there's no such file.", path.display())
-}
-
-/// The lines from `from` to `to`, or the whole file, as many whole lines as
-/// fit in `limit` characters. A part cut short says where to read on, so the
-/// model reads the rest instead of guessing at it.
-fn read_part(
-    contents: &str,
-    from: Option<usize>,
-    to: Option<usize>,
-    limit: usize,
-) -> Result<String, String> {
-    if from.is_none() && to.is_none() && contents.len() <= limit {
-        return Ok(contents.to_string());
-    }
-    let lines: Vec<&str> = contents.lines().collect();
-    let total = lines.len();
-    let from = from.unwrap_or(1);
-    if from > total {
-        return Err(format!(
-            "the file has {total} lines, so line {from} is past its end."
-        ));
-    }
-    let to = to.unwrap_or(total).min(total);
-    if to < from {
-        return Err(format!("to_line {to} comes before from_line {from}."));
-    }
-    let part = &lines[from - 1..to];
-    let mut size = 0;
-    let fitting = part
-        .iter()
-        .take_while(|line| {
-            size += line.len() + 1;
-            size <= limit
-        })
-        .count();
-    if fitting == part.len() {
-        return Ok(format!(
-            "Lines {from}-{to} of {total}:\n{}",
-            part.join("\n")
-        ));
-    }
-    if fitting == 0 {
-        let start = &part[0][..part[0].floor_char_boundary(limit)];
-        return Ok(format!(
-            "Line {from} of {total} is too long to show whole; here's its start:\n{start}"
-        ));
-    }
-    let last = from + fitting - 1;
-    Ok(format!(
-        "Lines {from}-{last} of {total}; the rest doesn't fit in one read. These lines get dropped \
-         as the context fills and your reasoning isn't kept: write down in your reply the facts \
-         from them your answer needs, then read on from line {}:\n{}",
-        last + 1,
-        part[..fitting].join("\n")
-    ))
-}
-
-fn write_file(
-    args: &Value,
-    input: &mut Input,
-    mode: Mode,
-    scratch: Option<&Path>,
-    peers: Option<&Peers>,
-) -> Result<Outcome, String> {
-    let path = writable_path(args)?;
-    let content = text_arg(args, "content")?;
-    let old = read_text(&path)?;
-    if old.as_deref() == Some(content) {
-        return Ok(Outcome::Done(UNCHANGED.into()));
-    }
-    let step = if old.is_some() {
-        text::STEP_EDIT
-    } else {
-        text::STEP_CREATE
-    };
-    propose(
-        &path,
-        step,
-        old.as_deref().unwrap_or(""),
-        content,
-        input,
-        asking(write_opens_on_yes(&path, scratch), mode),
-        peers,
-    )
-}
-
-fn edit_file(
-    args: &Value,
-    input: &mut Input,
-    mode: Mode,
-    scratch: Option<&Path>,
-    peers: Option<&Peers>,
-) -> Result<Outcome, String> {
-    let path = writable_path(args)?;
-    let old_text = text_arg(args, "old_text")?;
-    let new_text = text_arg(args, "new_text")?;
-    if old_text.is_empty() {
-        return Err("old_text is empty.".into());
-    }
-    let old = read_text(&path)?.ok_or_else(|| no_such_file(&path))?;
-    match old.matches(old_text).count() {
-        0 => {
-            return Err(format!(
-                "old_text isn't in {}. Read the file again and copy the text exactly.",
-                path.display()
-            ));
-        }
-        1 => {}
-        count => {
-            return Err(format!(
-                "old_text appears {count} times in {}. Include more surrounding lines so it appears once.",
-                path.display()
-            ));
-        }
-    }
-    let new = old.replacen(old_text, new_text, 1);
-    if new == old {
-        return Ok(Outcome::Done(UNCHANGED.into()));
-    }
-    let asking = asking(write_opens_on_yes(&path, scratch), mode);
-    propose(&path, text::STEP_EDIT, &old, &new, input, asking, peers)
 }
 
 /// The one way the model changes user.md: a line the person asked it to
@@ -660,36 +471,6 @@ fn propose(
     })
 }
 
-/// Whether a file change's question may open on Yes: only for a file in the
-/// working folder or the scratch folder. A working folder that is the home
-/// folder or / would hold everything, so then it doesn't count.
-fn write_opens_on_yes(path: &Path, scratch: Option<&Path>) -> bool {
-    let home = config::resolved(&config::home());
-    let working = env::current_dir()
-        .ok()
-        .map(|folder| config::resolved(&folder))
-        .filter(|folder| *folder != home && folder.parent().is_some());
-    let folders: Vec<PathBuf> = working
-        .into_iter()
-        .chain(scratch.map(config::resolved))
-        .collect();
-    is_everyday_place(&config::resolved(path), &folders)
-}
-
-/// Inside one of `folders`, with no hidden file or folder on the way there.
-/// Hidden ones are mostly settings that change what other programs run
-/// (git's config and hooks, CI, a shell's start-up, an editor's tasks), or
-/// they hold secrets, like .env.
-fn is_everyday_place(path: &Path, folders: &[PathBuf]) -> bool {
-    folders.iter().any(|folder| {
-        path.strip_prefix(folder).is_ok_and(|inside| {
-            !inside
-                .components()
-                .any(|part| part.as_os_str().as_encoded_bytes().starts_with(b"."))
-        })
-    })
-}
-
 /// None if the person approved; otherwise what to tell the model.
 fn refused(approval: Approval) -> Option<Outcome> {
     match approval {
@@ -714,30 +495,6 @@ fn text_arg<'a>(args: &'a Value, name: &str) -> Result<&'a str, String> {
     args[name]
         .as_str()
         .ok_or_else(|| format!("the \"{name}\" argument is missing."))
-}
-
-/// The path argument, when it's somewhere the model may write.
-fn writable_path(args: &Value) -> Result<PathBuf, String> {
-    let path = path_arg(args)?;
-    if config::is_lokal_own(&path) {
-        return Err(format!(
-            "{} is one of Lokal's own files (its settings, user.md, its saved state), \
-             which you can't change. To keep something the user asked you to remember, use \
-             remember; the user edits these files with /prefs and /config.",
-            path.display()
-        ));
-    }
-    Ok(path)
-}
-
-/// The path argument, with ~ expanded. Relative paths start at the working directory.
-fn path_arg(args: &Value) -> Result<PathBuf, String> {
-    let path = text_arg(args, "path")?;
-    Ok(match path.strip_prefix("~/") {
-        Some(rest) => config::home().join(rest),
-        None if path == "~" => config::home(),
-        None => PathBuf::from(path),
-    })
 }
 
 /// What an output may take: the tool's own limit, or the room left in the
@@ -771,6 +528,7 @@ fn clip(text: &str, limit: usize, hidden_lines: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
 
     #[test]
     fn clip_keeps_head_and_tail_whole_lines() {
@@ -827,48 +585,6 @@ mod tests {
         assert_eq!(clip(&kept, 2000, 200), whole);
     }
 
-    fn numbered(count: usize) -> String {
-        (1..=count).map(|n| format!("line {n}\n")).collect()
-    }
-
-    #[test]
-    fn read_part_gives_a_file_that_fits_as_it_is() {
-        let file = numbered(3);
-        assert_eq!(read_part(&file, None, None, 1000).unwrap(), file);
-        assert_eq!(
-            read_part(&file, Some(2), None, 1000).unwrap(),
-            "Lines 2-3 of 3:\nline 2\nline 3"
-        );
-    }
-
-    #[test]
-    fn read_part_cuts_at_a_line_and_says_where_to_read_on() {
-        // Each line is 7 or 8 characters with its newline: 25 fit in 200.
-        let file = numbered(100);
-        let part = read_part(&file, None, None, 200).unwrap();
-        let (header, body) = part.split_once('\n').unwrap();
-        let last = body.lines().count();
-        assert!(header.starts_with(&format!("Lines 1-{last} of 100; the rest doesn't fit")));
-        assert!(header.ends_with(&format!("read on from line {}:", last + 1)));
-        assert_eq!(body.lines().last().unwrap(), format!("line {last}"));
-        assert!(body.len() <= 200);
-        let next = read_part(&file, Some(last + 1), None, 200).unwrap();
-        assert!(next.starts_with(&format!("Lines {}-", last + 1)));
-    }
-
-    #[test]
-    fn read_part_shows_the_start_of_a_line_too_long_for_the_room() {
-        let file = format!("{}\nshort\n", "x".repeat(500));
-        let part = read_part(&file, None, None, 100).unwrap();
-        assert_eq!(
-            part,
-            format!(
-                "Line 1 of 2 is too long to show whole; here's its start:\n{}",
-                "x".repeat(100)
-            )
-        );
-    }
-
     #[test]
     fn remember_adds_a_note_once() {
         let old = "How I like answers: short\n- uses vim\n";
@@ -905,30 +621,6 @@ mod tests {
     }
 
     #[test]
-    fn only_a_regular_file_is_read() {
-        assert!(read_text(Path::new("/dev/zero")).is_err());
-        let dir = env::temp_dir().join(format!("lokal-read-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        let pipe = dir.join("pipe");
-        let name = std::ffi::CString::new(pipe.as_os_str().as_encoded_bytes()).unwrap();
-        // SAFETY: a valid C string; mkfifo only creates the pipe.
-        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
-        // Opened, a pipe with no writer would block for good.
-        assert!(
-            read_text(&pipe)
-                .unwrap_err()
-                .contains("isn't a regular file")
-        );
-        assert_eq!(read_text(&dir.join("missing")).unwrap(), None);
-        fs::write(dir.join("a.txt"), "hi\n").unwrap();
-        assert_eq!(
-            read_text(&dir.join("a.txt")).unwrap().as_deref(),
-            Some("hi\n")
-        );
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
     fn remember_replaces_a_line_and_its_copies() {
         let old = "- uses vim\n- works in Rust\n- uses vim\n";
         assert_eq!(
@@ -956,31 +648,6 @@ mod tests {
     }
 
     #[test]
-    fn writes_open_on_yes_only_in_plain_files_of_the_folders() {
-        let folders = [
-            PathBuf::from("/home/ana/project"),
-            PathBuf::from("/tmp/lokal-1000/42"),
-        ];
-        for path in [
-            "/home/ana/project/src/main.rs",
-            "/home/ana/project/README.md",
-            "/tmp/lokal-1000/42/download.html",
-        ] {
-            assert!(is_everyday_place(Path::new(path), &folders), "{path}");
-        }
-        for path in [
-            "/home/ana/.bashrc",
-            "/home/ana/project-other/x",
-            "/home/ana/project/.env",
-            "/home/ana/project/.git/config",
-            "/home/ana/project/.github/workflows/ci.yml",
-            "/etc/hosts",
-        ] {
-            assert!(!is_everyday_place(Path::new(path), &folders), "{path}");
-        }
-    }
-
-    #[test]
     fn accept_edits_skips_only_the_questions_that_open_on_yes() {
         assert!(asking(true, Mode::Manual) == Asking::OnYes);
         assert!(asking(true, Mode::AcceptEdits) == Asking::Not);
@@ -988,19 +655,5 @@ mod tests {
         assert!(asking(false, Mode::AcceptEdits) == Asking::OnNo);
         assert!(asking(true, Mode::Auto) == Asking::Not);
         assert!(asking(false, Mode::Auto) == Asking::OnNo);
-    }
-
-    #[test]
-    fn read_part_refuses_lines_past_the_end() {
-        let file = numbered(125);
-        assert_eq!(
-            read_part(&file, Some(400), Some(750), 1000).unwrap_err(),
-            "the file has 125 lines, so line 400 is past its end."
-        );
-        assert!(read_part(&file, Some(10), Some(5), 1000).is_err());
-        assert_eq!(
-            read_part(&file, Some(124), Some(750), 1000).unwrap(),
-            "Lines 124-125 of 125:\nline 124\nline 125"
-        );
     }
 }
