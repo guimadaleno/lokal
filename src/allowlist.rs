@@ -303,7 +303,9 @@ fn is_everyday(whole: &Program) -> bool {
             .is_some_and(|first| !first.starts_with('-') || first == "-m"),
         name if RUNTIMES.contains(&name) => !uses_any(args, RUNTIME_INLINE),
         name if PUBLISHERS.contains(&name) => {
-            !uses_any(args, PACKAGE_RUNNING) && !initializes_from_a_package(args)
+            // `cargo init <folder>` only makes a crate there.
+            !uses_any(args, PACKAGE_RUNNING)
+                && !(name != "cargo" && initializes_from_a_package(args))
         }
         "pipx" => !uses_any(args, &["run"]),
         "uv" => !(uses_any(args, &["tool"]) && uses_any(args, &["run"])),
@@ -328,14 +330,17 @@ fn git_is_everyday(args: &[String]) -> bool {
     }
 }
 
-/// Whether any argument is one of `words`: an option as matches_option
-/// reads it, anything else by itself.
-/// `npm init vite` runs the package create-vite; a bare `init` writes a manifest.
+/// `npm init vite` and `npm init -y vite` run the package create-vite; a
+/// bare `init` writes a manifest.
 fn initializes_from_a_package(args: &[String]) -> bool {
-    args.windows(2)
-        .any(|pair| pair[0] == "init" && !pair[1].starts_with('-'))
+    args.iter()
+        .skip_while(|arg| *arg != "init")
+        .skip(1)
+        .any(|arg| !arg.starts_with('-'))
 }
 
+/// Whether any argument is one of `words`: an option as matches_option
+/// reads it, anything else by itself.
 fn uses_any(args: &[String], words: &[&str]) -> bool {
     args.iter().any(|arg| {
         words.iter().any(|word| {
@@ -615,6 +620,7 @@ mod tests {
             "npm install",
             "npm init -y",
             "cargo init",
+            "cargo init mycrate",
             "uv run pytest",
             "mkdir -p build && cp a.txt build/",
             "git add -A && git commit -m 'Fix the parser'",
@@ -701,6 +707,8 @@ mod tests {
             "pipx run some-tool",
             "npm x some-package",
             "npm init vite",
+            "npm init -y vite",
+            "npm init --yes vite",
             "yarn create vite",
             "pnpm create vite",
             "bun create vite",
