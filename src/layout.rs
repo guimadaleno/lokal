@@ -8,11 +8,12 @@ use std::borrow::Cow;
 /// shown in caret notation (ESC as `^[`, a lone `\r` as `^M`). Otherwise a
 /// file or a command could hide a line of a diff or a command's real text
 /// from the person asked about it, by moving the cursor and writing over
-/// what was printed.
+/// what was printed. The bidi controls that reorder text are shown by
+/// their code (`<U+202E>`), for the same reason.
 pub fn printable(text: &str) -> Cow<'_, str> {
     if !text
         .chars()
-        .any(|c| c.is_control() && c != '\n' && c != '\t')
+        .any(|c| (c.is_control() && c != '\n' && c != '\t') || is_bidi(c))
     {
         return Cow::Borrowed(text);
     }
@@ -23,10 +24,17 @@ pub fn printable(text: &str) -> Cow<'_, str> {
             '\n' | '\t' => out.push(c),
             '\r' if matches!(chars.peek(), None | Some('\n')) => {}
             c if c.is_control() => out.push_str(&caret(c)),
+            c if is_bidi(c) => out.push_str(&format!("<U+{:04X}>", c as u32)),
             c => out.push(c),
         }
     }
     Cow::Owned(out)
+}
+
+/// The embeddings, overrides and isolates that make a terminal that
+/// applies bidi show text in another order than it runs.
+fn is_bidi(c: char) -> bool {
+    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 /// A control character in caret notation: `^@` to `^_` for C0, `^?` for
@@ -180,6 +188,18 @@ mod tests {
         assert_eq!(printable("bell\x07 del\x7f nul\0"), "bell^G del^? nul^@");
         // C1's CSI, which some terminals read as ESC [.
         assert_eq!(printable("a\u{9b}31mb"), "a^[[31mb");
+    }
+
+    #[test]
+    fn bidi_controls_show_by_their_code() {
+        // Shown reversed by a terminal that applies bidi: "rm -rf ~ #sl".
+        assert_eq!(printable("ls #\u{202E}~ fr- mr"), "ls #<U+202E>~ fr- mr");
+        assert_eq!(
+            printable("\u{202A}a\u{2066}b\u{2069}"),
+            "<U+202A>a<U+2066>b<U+2069>"
+        );
+        // Arabic and Hebrew text, without controls, stays.
+        assert!(matches!(printable("שלום مرحبا"), Cow::Borrowed(_)));
     }
 
     #[test]
