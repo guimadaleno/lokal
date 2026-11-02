@@ -24,7 +24,9 @@ Lokal runs itself again as `lokal --box <profile> -- bash -c <command>`. A fresh
    - a tmpfs over `/run` and `/var/run`;
    - a fresh tmpfs at `/tmp`, with the scratch folder bound back into it;
    - empty folders over the secrets above;
-   - `.git` bound read-only;
+   - in the work box, read-only binds over what would have something run or
+    steer the model later: `.git`, `.vscode`, `.idea`, `.envrc`, shell rc
+    files, `.gitconfig`, `LOKAL.md` and `AGENTS.md`;
    - an empty `binfmt_misc` of its own, so WSL's interop doesn't apply inside.
 3. **Applies Landlock**, then `no_new_privs`:
    - writes are allowed beneath the writable folders above only;
@@ -51,7 +53,7 @@ Everything is syscalls through `libc`: no bubblewrap and no new crate. Setting i
   - `docker` read-only commands (they need the socket) and `wslpath` stay outside the box, as today.
 - **The work box**, for what auto's judge lets through. It also makes the project writable.
   - Only in a git repository, and never with a working folder of `~` or `/`.
-  - Writes go straight in. After the command, Lokal lists the files it changed, from `git status`. That was chosen over an overlay to review first, which would be slower to apply for builds.
+  - Writes go straight in, except to the read-only files above. After the command, Lokal lists the files it changed, from `git status`. That was chosen over an overlay to review first, which would be slower to apply for builds.
 
 **What the person approves runs outside the box, as today.** It may need the network (`git push`, `npm install`).
 
@@ -63,7 +65,8 @@ Everything is syscalls through `libc`: no bubblewrap and no new crate. Setting i
 
 ## What stays open
 
-- **A command in the work box changes project files without a diff.** It could plant a line in a `Makefile` that runs when the person later approves `make` outside the box. The read-only `.git` stops hooks, and the list of changed files shows the rest. The box bounds the machine, not the project.
+- **A command in the work box changes project files without a diff.** It could plant a line in a `Makefile` that runs when the person later approves `make` outside the box. The read-only files stop the quiet routes (hooks, editor tasks, the project's notes for the model), and the list of changed files shows the rest. The box bounds the machine, not the project.
+- **Nested namespaces:** a command inside can make its own user namespace. Mounts it inherits are locked there, and Landlock forbids changing the mount topology, so it can't uncover what's hidden. The escape tests check it.
 - **Reading isn't hidden** beyond the masked secrets. With no network, nothing leaves from inside, but what's read reaches the model.
 - **A kernel bug** in namespaces or Landlock would void the box.
 
@@ -87,3 +90,6 @@ Where the box can't be set up, the tests say so and pass.
 2. The read-only list runs in the read box.
 3. Auto runs what its judge lets through in the work box, and lists the files changed.
 4. After real use, decide whether the box replaces the judge, which was this issue's first idea.
+5. Maybe: network to chosen domains through a proxy, as Claude Code's sandbox does. Its own docs warn that domain fronting gets past such a list, so the box stays with no network until there's a real need.
+
+Claude Code's sandbox (bubblewrap, a network proxy with allowed domains, protected files in the working folder) was read for comparison. The protected files came from it.
