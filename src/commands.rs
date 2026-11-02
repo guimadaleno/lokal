@@ -180,8 +180,13 @@ fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
         _ => text::NOTHING_YET.to_string(),
     };
     let session_time = text::duration(session.started.elapsed());
-    let user_md = config::user_md_path();
-    let user_md_lines = config::read_user_md().map_or(0, |text| text.lines().count());
+    let user_md = config::shown(&config::user_md_path());
+    // One that doesn't read, saved in another encoding, never reaches the model.
+    let user_md = match config::read_user_md() {
+        Some(contents) => text::file_lines(&user_md, contents.lines().count()),
+        None if config::user_md_path().exists() => text::unreadable_file(&user_md),
+        None => text::file_lines(&user_md, 0),
+    };
     let settings = config::settings_path();
     let mut rows = vec![
         (text::INFO_VERSION, format!("{} · {updates}", text::VERSION)),
@@ -191,10 +196,7 @@ fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
             text::INFO_IN_USE,
             format!("{in_use} · {} {session_time}", text::THIS_SESSION),
         ),
-        (
-            text::INFO_ABOUT_ME,
-            text::file_lines(&config::shown(&user_md), user_md_lines),
-        ),
+        (text::INFO_ABOUT_ME, user_md),
         (
             text::INFO_SETTINGS,
             text::settings_file(&config::shown(&settings), settings.exists()),

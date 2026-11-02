@@ -537,6 +537,11 @@ pub fn file_lines(path: &str, lines: usize) -> String {
     }
 }
 
+/// /info's user.md row, when the file isn't UTF-8.
+pub fn unreadable_file(path: &str) -> String {
+    format!("{path} · not UTF-8 text, so the model doesn't get it")
+}
+
 pub fn settings_file(path: &str, exists: bool) -> String {
     if exists {
         path.to_string()
