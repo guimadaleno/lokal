@@ -483,7 +483,7 @@ fn remember(args: &Value, input: &mut Input) -> Result<Outcome, String> {
         .as_str()
         .filter(|line| !line.trim().is_empty());
     let path = config::user_md_path();
-    let old = config::read_user_md().unwrap_or_default();
+    let old = current_notes(&path)?;
     let Some(new) = remembered(&old, &note, replaces)? else {
         eprintln!(
             "{} {}",
@@ -505,6 +505,21 @@ fn remember(args: &Value, input: &mut Input) -> Result<Outcome, String> {
         Asking::OnNo,
         None,
     )
+}
+
+/// What user.md holds now, or nothing when it isn't there yet. One Lokal
+/// can't read, such as one saved in another encoding, is never taken for
+/// empty: the change would then put one line in place of all of them.
+fn current_notes(path: &Path) -> Result<String, String> {
+    match fs::read_to_string(path) {
+        Ok(old) => Ok(old),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(format!(
+            "can't read {} ({error}), so nothing changed. Tell the user: they can fix it \
+             with /prefs.",
+            path.display()
+        )),
+    }
 }
 
 /// user.md with `note` added at its end, or in place of the line `replaces`
@@ -979,6 +994,21 @@ mod tests {
             remembered("", "uses vim", None).unwrap().unwrap(),
             "- uses vim\n"
         );
+    }
+
+    #[test]
+    fn remember_never_takes_a_user_md_it_cant_read_for_empty() {
+        let dir = env::temp_dir().join(format!("lokal-notes-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("user.md");
+        assert_eq!(current_notes(&path).unwrap(), "");
+        fs::write(&path, b"- caf\xe9 com leite\n").unwrap();
+        assert!(
+            current_notes(&path)
+                .unwrap_err()
+                .contains("nothing changed")
+        );
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
