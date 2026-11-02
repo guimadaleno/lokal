@@ -1,6 +1,6 @@
 //! `/feedback`: a problem or an idea, filed as an issue for the developer
 //! through issues.guimadaleno.com, as every app here does it. guimadaleno/
-//! issues' README is the authority; report.rs is its client. Nothing goes
+//! base/issues' README is the authority; report.rs is its client. Nothing goes
 //! unless the person asks, sees all of it and says send. The conversation is
 //! never part of it: it can hold files and secrets the model read.
 
