@@ -183,7 +183,7 @@ fn run_command(
     judge: Option<&judge::Case>,
 ) -> Result<Outcome, String> {
     let command = text_arg(args, "command")?;
-    eprintln!("{} {}", style::accent("$"), command.replace('\n', "\n  "));
+    print_command(command);
     // git also runs what the repository's own settings name: then even a
     // read is asked about, on No, whatever was approved before.
     let git_warning = if allowlist::git_elsewhere(command) {
@@ -265,6 +265,11 @@ fn judged(command: &str, explanation: &str, case: &judge::Case) -> Option<Verdic
     Some(verdict)
 }
 
+/// The `$` line a command's step starts with, its later lines indented.
+fn print_command(command: &str) {
+    eprintln!("{} {}", style::accent("$"), command.replace('\n', "\n  "));
+}
+
 /// A line in a step, going on under its own start where it doesn't fit,
 /// each row painted on its own.
 fn print_indented(text: &str, paint: fn(&str) -> String) {
@@ -279,7 +284,7 @@ fn print_indented(text: &str, paint: fn(&str) -> String) {
 /// which guards only what runs unasked. What it gave, for the model; None
 /// when there's nothing to give, as when the person stopped it.
 pub fn run_own(command: &str, room: Option<usize>) -> Option<String> {
-    eprintln!("{} {}", style::accent("$"), command.replace('\n', "\n  "));
+    print_command(command);
     interrupt::clear();
     let result = match shell::run(command, &[]) {
         Ok(Run::Finished { output, code }) => {
