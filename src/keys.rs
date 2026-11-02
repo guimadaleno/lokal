@@ -64,6 +64,7 @@ fn pipe() -> Option<(OwnedFd, File)> {
 /// whatever is running checks.
 fn read_keys(fd: i32, stopped: &OwnedFd) {
     let mut buffer = [0u8; 64];
+    let mut tail = Vec::new();
     loop {
         let mut polls = [
             libc::pollfd {
@@ -96,13 +97,30 @@ fn read_keys(fd: i32, stopped: &OwnedFd) {
             interrupt::raise();
         }
         // From the next step on; the spinner's label shows it.
-        for _ in keys
-            .windows(SHIFT_TAB.len())
-            .filter(|keys| *keys == SHIFT_TAB)
-        {
+        for _ in 0..shift_tabs(&mut tail, keys) {
             mode::next();
         }
     }
+}
+
+/// How many Shift+Tabs `keys` holds, with the start of one the last read
+/// ended on (`tail`): a sequence can arrive in two reads. `tail` keeps the
+/// end of these keys for the next.
+fn shift_tabs(tail: &mut Vec<u8>, keys: &[u8]) -> usize {
+    let mut seen = std::mem::take(tail);
+    seen.extend_from_slice(keys);
+    let count = seen
+        .windows(SHIFT_TAB.len())
+        .filter(|keys| *keys == SHIFT_TAB)
+        .count();
+    // The longest end that could still become one, never a whole one.
+    if let Some(length) = (1..SHIFT_TAB.len())
+        .rev()
+        .find(|length| seen.ends_with(&SHIFT_TAB[..*length]))
+    {
+        tail.extend_from_slice(&seen[seen.len() - length..]);
+    }
+    count
 }
 
 /// Esc alone stops; an arrow key is Esc followed by the rest of its
@@ -117,5 +135,25 @@ impl Drop for KeyWatch {
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_shift_tab_split_across_reads_still_counts() {
+        let mut tail = Vec::new();
+        assert_eq!(shift_tabs(&mut tail, b"\x1b[Z\x1b[Z"), 2);
+        assert!(tail.is_empty());
+        // Esc in one read, the rest in the next.
+        assert_eq!(shift_tabs(&mut tail, b"\x1b"), 0);
+        assert_eq!(shift_tabs(&mut tail, b"[Z"), 1);
+        assert_eq!(shift_tabs(&mut tail, b"x\x1b["), 0);
+        assert_eq!(shift_tabs(&mut tail, b"Z"), 1);
+        // An arrow key isn't one, and leaves nothing behind.
+        assert_eq!(shift_tabs(&mut tail, b"\x1b[A"), 0);
+        assert!(tail.is_empty());
     }
 }
