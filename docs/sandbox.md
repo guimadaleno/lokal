@@ -37,9 +37,13 @@ Lokal runs itself again as `lokal --box <read|work> <folder> <scratch> <command>
        that name a program git runs later have no fixed end (an alias, a
        filter, a pager, a diff tool, a hooks folder, an include…);
      - in the person's own settings, a path that leads into the project
-       (`core.hooksPath = .hooks`, an alias's `sh tools/x.sh`) is kept
-       read-only, and one that isn't there yet refuses the box, since a
-       command could make it; `~/` is the home folder, as for git;
+       (`core.hooksPath = .hooks`, an alias's `sh tools/x.sh`, an include
+       of a file in the tree) is kept read-only. One that isn't there yet
+       refuses the box when it surely means a file of the project: a
+       hooks folder, `./x`, or a path whose first folder is the project's.
+       A ref like `origin/main` doesn't. Values are split as a shell
+       would, so `"/mnt/c/Program Files/…"` stays one path, and `~/` is
+       the home folder, as for git;
      - git that can't list them (a broken include) refuses the box too;
    - an empty read-only tmpfs (or `/dev/null`, for a file) over every
      **second door** to the files of the home folder, Lokal's own folders
@@ -99,6 +103,7 @@ Everything is syscalls through `libc`: no bubblewrap and no new crate. Setting i
 ## What stays open
 
 - **A command in the work box changes project files without a diff.** It could plant a line in a `Makefile` that runs when the person later approves `make` outside the box. The read-only files stop the quiet routes (hooks, editor tasks, the project's notes for the model), and the list of changed files shows the rest. The box bounds the machine, not the project.
+- **A path in the person's own git settings built from several words** (`!cd tools && sh t.sh`) isn't seen as one, so that script stays writable. It's the person's own alias, of the same kind as the `Makefile` above.
 - **Nested namespaces:** a command inside can make its own user namespace. Mounts it inherits are locked there, and Landlock forbids changing the mount topology, so it can't uncover what's hidden. The escape tests check it.
 - **Reading isn't hidden** beyond the masked secrets. With no network, nothing leaves from inside, but what's read reaches the model.
 - **A kernel bug** in namespaces or Landlock would void the box.
@@ -125,7 +130,8 @@ Where the box can't be set up, the tests say so and pass.
    - The first review found five ways out: second doors, protected names not there yet, vsock, inherited descriptors, and keys through the second doors. All are closed or handed to phase 3.
    - The second found that the first door rule broke the box where /tmp or /home has a file system of its own, and two ways around the hooks folder: one named but not there, and one set through an include.
    - The third found that a list of the settings that run a program kept missing some, and that git failing to list them let everything through. The rule above, the plain list for the repository's own, replaced it.
-   - 25 escape tests and 5 unit tests pass here. Taking out any one layer makes one fail: the hidden `/run`, seccomp and its socket list, the scopes, the hidden keys, the read-only folder under /tmp, the second doors and how they're told apart, the closed descriptors, what git's settings name, the writable scratch folder, and the home check.
+   - The fourth found the person's everyday settings refusing the box (a ref in an alias, a Windows program with a space under WSL), now told apart.
+   - 27 escape tests and 5 unit tests pass here. Taking out any one layer makes one fail: the hidden `/run`, seccomp and its socket list, the scopes, the hidden keys, the read-only folder under /tmp, the second doors and how they're told apart, the closed descriptors, what git's settings name, the writable scratch folder, and the home check.
    - About 7 ms a command, bash included, with the release build.
 2. The read-only list runs in the read box.
 3. Auto runs what its judge lets through in the work box, lists the files changed, and asks about new protected names.

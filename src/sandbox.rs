@@ -294,17 +294,16 @@ fn named_by_git(project: &Path, home: &Path) -> Result<Vec<PathBuf>, String> {
             }
             continue;
         }
-        // An include of the person's points at their own files.
-        if key.starts_with("include") {
-            continue;
+        for (path, surely) in paths_in(project, home, &key, value) {
+            if path.exists() {
+                named.push(path);
+            } else if surely {
+                return Err(format!(
+                    "git's settings name {}, which isn't there yet",
+                    path.display()
+                ));
+            }
         }
-        named.extend(paths_in(project, home, &key, value));
-    }
-    if let Some(missing) = named.iter().find(|path| !path.exists()) {
-        return Err(format!(
-            "git's settings name {}, which isn't there yet",
-            missing.display()
-        ));
     }
     Ok(named)
 }
@@ -312,19 +311,59 @@ fn named_by_git(project: &Path, home: &Path) -> Result<Vec<PathBuf>, String> {
 /// The words of a setting's value that name a path inside the project, as
 /// git would read them: `~/` is the home folder, a relative path is the
 /// project's. A bare word is a program on the PATH, but for a hooks folder.
-fn paths_in(project: &Path, home: &Path, key: &str, value: &str) -> Vec<PathBuf> {
-    value
-        .split_whitespace()
-        .map(|word| word.trim_start_matches('!').trim_matches(['"', '\'']))
+/// Each comes with whether it surely means a file of the project, so that
+/// one not there yet refuses the box: a hooks folder, a word starting with
+/// `./`, or one whose first folder is the project's (`tools/t.sh` where
+/// `tools` is). `origin/main` in an alias is a ref, not a path. An include
+/// of the person's counts only by a full path (`~/p/.gitconfig`): a
+/// relative one is read from their own folder.
+fn paths_in(project: &Path, home: &Path, key: &str, value: &str) -> Vec<(PathBuf, bool)> {
+    let include = key.starts_with("include");
+    words(value)
+        .into_iter()
+        .map(|word| word.trim_start_matches('!').to_string())
         .filter(|word| !word.is_empty() && !word.starts_with('-') && !word.contains("://"))
         .filter(|word| key == "core.hookspath" || word.contains('/') || word.starts_with('.'))
-        .map(|word| match word.strip_prefix("~/") {
-            Some(rest) => home.join(rest),
-            None => project.join(word),
+        .filter(|word| !include || word.starts_with('/') || word.starts_with("~/"))
+        .filter_map(|word| {
+            let path = lexical(&match word.strip_prefix("~/") {
+                Some(rest) => home.join(rest),
+                None => project.join(&word),
+            });
+            let first = path.strip_prefix(project).ok()?.components().next()?;
+            let surely = key == "core.hookspath"
+                || include
+                || word.starts_with("./")
+                || (word.contains('/') && project.join(first).is_dir());
+            Some((path, surely))
         })
-        .map(|path| lexical(&path))
-        .filter(|path| path.starts_with(project))
         .collect()
+}
+
+/// A value split as a shell would: quotes and a backslash keep a space in
+/// a word ("/mnt/c/Program Files/…").
+fn words(value: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quote = None;
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        match (c, quote) {
+            ('\\', _) => word.extend(chars.next()),
+            ('"' | '\'', None) => quote = Some(c),
+            (c, Some(open)) if c == open => quote = None,
+            (c, None) if c.is_whitespace() => {
+                if !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                }
+            }
+            (c, _) => word.push(c),
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
 }
 
 /// `path` with its `.` and `..` worked out on the text alone.
@@ -856,30 +895,38 @@ mod tests {
 
     #[test]
     fn paths_in_a_setting_are_the_projects_or_homes() {
-        let project = Path::new("/home/ana/p");
-        let home = Path::new("/home/ana");
+        let project = Path::new("/nonexistent/ana/p");
+        let home = Path::new("/nonexistent/ana");
+        let found = |key, value| paths_in(project, home, key, value);
         assert_eq!(
-            paths_in(project, home, "alias.t", "!sh tools/t.sh --flag"),
-            [PathBuf::from("/home/ana/p/tools/t.sh")]
+            found("alias.t", "!sh ./t.sh --flag"),
+            [(PathBuf::from("/nonexistent/ana/p/t.sh"), true)]
         );
         assert_eq!(
-            paths_in(project, home, "core.hookspath", "hooks"),
-            [PathBuf::from("/home/ana/p/hooks")]
+            found("core.hookspath", "hooks"),
+            [(PathBuf::from("/nonexistent/ana/p/hooks"), true)]
         );
-        // ~/ is home's, outside the project; a bare program is the PATH's.
-        assert!(paths_in(project, home, "core.hookspath", "~/hooks").is_empty());
-        assert!(paths_in(project, home, "core.pager", "less -R").is_empty());
-        assert!(
-            paths_in(
-                project,
-                home,
-                "credential.helper",
-                "!/usr/bin/gh auth git-credential"
-            )
-            .is_empty()
+        // A ref, or a path whose first folder isn't the project's.
+        assert_eq!(
+            found("alias.up", "!git fetch && git rebase origin/main"),
+            [(PathBuf::from("/nonexistent/ana/p/origin/main"), false)]
         );
-        assert!(paths_in(project, home, "url.x.insteadof", "https://example.com/").is_empty());
-        assert!(paths_in(project, home, "core.hookspath", "../../..").is_empty());
+        // ~/ is home's, outside the project; a bare program is the PATH's;
+        // a quoted or escaped space stays in its word.
+        assert!(found("core.hookspath", "~/hooks").is_empty());
+        assert!(found("core.pager", "less -R").is_empty());
+        assert!(found("credential.helper", "!/usr/bin/gh auth git-credential").is_empty());
+        assert!(found("core.editor", "\"/mnt/c/Program Files/Code/code\" --wait").is_empty());
+        assert!(found("credential.helper", "/mnt/c/Program\\ Files/Git/gcm.exe").is_empty());
+        assert!(found("url.x.insteadof", "https://example.com/").is_empty());
+        assert!(found("core.hookspath", "../../..").is_empty());
+        // The person's include counts by a full path only.
+        assert_eq!(
+            found("includeif.gitdir:~/p/.path", "~/p/.gitconfig"),
+            [(PathBuf::from("/nonexistent/ana/p/.gitconfig"), true)]
+        );
+        assert!(found("include.path", "local.gitconfig").is_empty());
+        assert_eq!(words("a \"b c\" d\\ e 'f g'"), ["a", "b c", "d e", "f g"]);
         assert_eq!(lexical(Path::new("/p/./a/../b")), PathBuf::from("/p/b"));
     }
 }

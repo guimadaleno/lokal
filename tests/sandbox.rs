@@ -529,6 +529,51 @@ fn a_path_the_persons_settings_name_that_isnt_there_keeps_the_work_box_shut() {
 }
 
 #[test]
+fn everyday_settings_of_the_persons_dont_keep_the_work_box_shut() {
+    // Refs in an alias, and Windows programs under WSL, as Git Credential
+    // Manager's own instructions set it.
+    let place = Place::new("everyday-global");
+    if place.run("read", "true").is_none() {
+        return;
+    }
+    let global = place.global(
+        "[alias]\n\tup = !git fetch && git rebase origin/main\n\
+         [core]\n\teditor = \\\"/mnt/c/Program Files/Microsoft VS Code/bin/code\\\" --wait\n\
+         [credential]\n\thelper = /mnt/c/Program\\\\ Files/Git/mingw64/bin/git-credential-manager.exe\n",
+    );
+    assert!(!place.work_refused("touch made", Some(&global)));
+    assert!(place.project.join("made").exists());
+}
+
+#[test]
+fn a_file_the_persons_settings_include_from_the_tree_stays_read_only() {
+    let place = Place::new("person-include");
+    fs::write(
+        place.project.join("team.gitconfig"),
+        "[user]\n\tname = Ana\n",
+    )
+    .unwrap();
+    let global = place.global(&format!(
+        "[include]\n\tpath = {}/team.gitconfig\n",
+        place.project.display()
+    ));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lokal"));
+    command
+        .args(["--box", "work"])
+        .arg(&place.project)
+        .arg(&place.scratch)
+        .arg("echo '[core] hooksPath = x' >> team.gitconfig; true")
+        .env("GIT_CONFIG_GLOBAL", &global);
+    if command.output().unwrap().status.code() == Some(UNAVAILABLE) {
+        return;
+    }
+    assert_eq!(
+        fs::read_to_string(place.project.join("team.gitconfig")).unwrap(),
+        "[user]\n\tname = Ana\n"
+    );
+}
+
+#[test]
 fn nothing_outside_can_be_signalled() {
     let place = Place::new("signals");
     let line = format!("kill -0 {} && echo SIGNALLED", std::process::id());
