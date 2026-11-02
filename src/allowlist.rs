@@ -86,13 +86,13 @@ const DOCKER_READ_ONLY: &[&str] = &["images", "info", "inspect", "logs", "ps", "
 const PAST_THE_PERSON: &[&str] = &["sudo", "su", "doas", "pkexec", "run0", "sudoedit", "ssh"];
 /// A shell, a program that runs the one in its arguments, or one whose
 /// script can run commands (awk's `system`, sed's `e`): code Lokal can't
-/// see. npx runs a package it fetches.
+/// see. npx and uvx run a package they fetch.
 const RUN_OTHERS: &[&str] = &[
     "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "pwsh", "busybox", "toybox", "eval",
     "source", ".", "exec", "xargs", "env", "nice", "nohup", "timeout", "time", "command",
     "builtin", "watch", "setsid", "stdbuf", "ionice", "taskset", "chroot", "unshare", "nsenter",
     "flock", "parallel", "script", "strace", "awk", "gawk", "mawk", "nawk", "sed", "npx", "pnpx",
-    "bunx",
+    "bunx", "uvx",
 ];
 const DELETE_OR_OVERWRITE: &[&str] = &[
     "rm", "rmdir", "unlink", "shred", "dd", "wipefs", "truncate", "mv",
@@ -149,8 +149,10 @@ const INTERPRETERS: &[&str] = &["python", "python3", "perl", "ruby", "node", "ph
 /// after an option: `deno eval`, `bun x`.
 const RUNTIMES: &[&str] = &["deno", "bun"];
 const RUNTIME_INLINE: &[&str] = &["eval", "x", "-e", "--eval", "-p", "--print"];
-/// Package managers whose `publish` sends out what can't be taken back.
+/// Package managers whose `publish` sends out what can't be taken back,
+/// and whose `dlx` or `exec` runs a package, as npx does.
 const PUBLISHERS: &[&str] = &["npm", "pnpm", "yarn", "cargo"];
+const PACKAGE_RUNNING: &[&str] = &["publish", "dlx", "exec"];
 
 /// One program of a command line: its words, and whether any of them has an
 /// unquoted `*`, `?` or `[`, which bash replaces with file names.
@@ -300,7 +302,8 @@ fn is_everyday(whole: &Program) -> bool {
             .first()
             .is_some_and(|first| !first.starts_with('-') || first == "-m"),
         name if RUNTIMES.contains(&name) => !uses_any(args, RUNTIME_INLINE),
-        name if PUBLISHERS.contains(&name) => !uses_any(args, &["publish"]),
+        name if PUBLISHERS.contains(&name) => !uses_any(args, PACKAGE_RUNNING),
+        "pipx" => !uses_any(args, &["run"]),
         _ => true,
     }
 }
@@ -658,6 +661,11 @@ mod tests {
             "deno eval 'Deno.exit()'",
             "bun -e 'process.exit()'",
             "bun x some-package",
+            "pnpm dlx some-package",
+            "yarn dlx some-package",
+            "npm exec some-package",
+            "uvx some-tool",
+            "pipx run some-tool",
             "git rm -r src",
             "git switch -f main",
             "git switch --discard-changes main",
