@@ -4,15 +4,16 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
+/// Kept in `MODE` as its number, which `current` reads back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     /// Every step that isn't read-only asks.
-    Manual,
+    Manual = 0,
     /// File changes whose question would open on Yes go through without it.
-    AcceptEdits,
+    AcceptEdits = 1,
     /// Accept edits, and commands whose question would open on Yes run
     /// when the judge says yes (`judge.rs`).
-    Auto,
+    Auto = 2,
 }
 
 static MODE: AtomicU8 = AtomicU8::new(0);
