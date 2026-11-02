@@ -524,7 +524,9 @@ fn print_about() {
 /// command typed instead answers nothing: it's returned to run, and the
 /// question comes back at the next launch.
 fn ask_first_question(input: &mut Input) -> Option<String> {
-    if config::read_user_md().is_some() {
+    // Whether it exists, not whether it reads: one saved in another
+    // encoding doesn't, and the answer would replace the person's notes.
+    if config::user_md_path().exists() {
         return None;
     }
     eprintln!("{}", text::FIRST_QUESTION);
