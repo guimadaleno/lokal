@@ -233,50 +233,14 @@ impl Conversation {
     /// session's mail, and then what the person's own commands gave waits
     /// for one of theirs.
     pub fn send(&mut self, request: &str, input: &mut Input, asked: Option<&str>) -> Turn {
-        interrupt::clear();
         let on_mail = asked.is_none();
-        if let Some(asked) = asked {
-            self.asked.push(asked.to_string());
-            let extra = self.asked.len().saturating_sub(judge::REQUESTS_KEPT);
-            self.asked.drain(..extra);
-        }
-        self.written.clear();
+        self.begin_turn(asked);
         let mut end = Turn::Answered;
-        // Other sessions hear it's working: their mail waits for the turn to end.
-        if let Some(peers) = &self.peers {
-            peers.set_busy(true);
-        }
-        // Notes edited since the last turn count from this one on.
-        if self.refresh_notes() {
-            eprintln!("{}\n", style::gray(text::NOTES_CHANGED));
-        }
-        // Chosen at the `>`, auto's warning shows here, before it acts.
-        if !on_mail && mode::warn_of_auto() {
-            let width = style::terminal_width().unwrap_or(80);
-            for line in layout::indented(text::AUTO_WARNING, 0, width).lines() {
-                eprintln!("{}", style::gray(line));
-            }
-            eprintln!();
-        }
         let turn_start = self.messages.len();
         let mut model_time = Duration::ZERO;
         let (mut generated, mut generating) = (0, Duration::ZERO);
         let mut asked_again = false;
-        // In the request's own message: some chat templates refuse two from
-        // the user in a row.
-        let own = if on_mail {
-            Vec::new()
-        } else {
-            std::mem::take(&mut self.own)
-        };
-        let content = own
-            .iter()
-            .map(String::as_str)
-            .chain([request])
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        self.messages
-            .push(json!({"role": "user", "content": content}));
+        let own = self.open_request(request, on_mail);
         loop {
             self.free_context();
             let started = Instant::now();
@@ -295,13 +259,7 @@ impl Conversation {
                 Err(Failure::Error(message)) => {
                     end = Turn::Failed;
                     eprintln!("{}", style::red(&message));
-                    // Nothing came of the request, so trying again won't send
-                    // it twice; what the person's commands gave goes with it.
-                    // In a turn mail started, that's still waiting untouched.
-                    if self.messages.len() == turn_start + 1 {
-                        self.messages.pop();
-                        self.own.splice(0..0, own);
-                    }
+                    self.take_back_request(turn_start, own);
                     break;
                 }
             };
@@ -371,6 +329,67 @@ impl Conversation {
             peers.set_busy(false);
         }
         end
+    }
+
+    /// What a turn starts with: the person's request kept for auto's judge,
+    /// the other sessions told it's working, and anything the person should
+    /// know before it acts.
+    fn begin_turn(&mut self, asked: Option<&str>) {
+        interrupt::clear();
+        if let Some(asked) = asked {
+            self.asked.push(asked.to_string());
+            let extra = self.asked.len().saturating_sub(judge::REQUESTS_KEPT);
+            self.asked.drain(..extra);
+        }
+        self.written.clear();
+        // Other sessions hear it's working: their mail waits for the turn to end.
+        if let Some(peers) = &self.peers {
+            peers.set_busy(true);
+        }
+        // Notes edited since the last turn count from this one on.
+        if self.refresh_notes() {
+            eprintln!("{}\n", style::gray(text::NOTES_CHANGED));
+        }
+        // Chosen at the `>`, auto's warning shows here, before it acts.
+        if asked.is_some() && mode::warn_of_auto() {
+            let width = style::terminal_width().unwrap_or(80);
+            for line in layout::indented(text::AUTO_WARNING, 0, width).lines() {
+                eprintln!("{}", style::gray(line));
+            }
+            eprintln!();
+        }
+    }
+
+    /// Adds the request to the conversation, with what the person's own
+    /// commands gave ahead of it, and returns those, to put back if the
+    /// request is taken back. A turn mail started leaves them waiting.
+    fn open_request(&mut self, request: &str, on_mail: bool) -> Vec<String> {
+        let own = if on_mail {
+            Vec::new()
+        } else {
+            std::mem::take(&mut self.own)
+        };
+        // In the request's own message: some chat templates refuse two from
+        // the user in a row.
+        let content = own
+            .iter()
+            .map(String::as_str)
+            .chain([request])
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        self.messages
+            .push(json!({"role": "user", "content": content}));
+        own
+    }
+
+    /// When nothing came of the request, it's taken back, so trying again
+    /// won't send it twice; what the person's commands gave waits again,
+    /// ahead of any that came since.
+    fn take_back_request(&mut self, turn_start: usize, own: Vec<String>) {
+        if self.messages.len() == turn_start + 1 {
+            self.messages.pop();
+            self.own.splice(0..0, own);
+        }
     }
 
     /// Runs the tools the model asked for, each in the mode chosen when it
@@ -716,6 +735,27 @@ mod tests {
         let mut conversation = conversation(8192);
         conversation.server.context = None;
         assert_eq!(conversation.room_for_output(), None);
+    }
+
+    #[test]
+    fn a_request_taken_back_leaves_the_persons_commands_waiting() {
+        let mut conversation = conversation(8192);
+        conversation.own = vec!["ran ls".to_string()];
+        let before = conversation.messages.clone();
+        // The person's request carries them, and puts them back.
+        let start = conversation.messages.len();
+        let own = conversation.open_request("why?", false);
+        assert!(conversation.own.is_empty());
+        assert_eq!(conversation.messages[start]["content"], "ran ls\n\nwhy?");
+        conversation.take_back_request(start, own);
+        assert_eq!(conversation.own, ["ran ls"]);
+        assert_eq!(conversation.messages, before);
+        // Mail leaves them waiting, and taken back, still there.
+        let own = conversation.open_request("from a session", true);
+        assert_eq!(conversation.messages[start]["content"], "from a session");
+        conversation.take_back_request(start, own);
+        assert_eq!(conversation.own, ["ran ls"]);
+        assert_eq!(conversation.messages, before);
     }
 
     #[test]
