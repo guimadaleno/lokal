@@ -299,6 +299,7 @@ dependencies.
 | `scratch.rs` | The session's folder for temporary files |
 | `peers.rs` | Mail between the person's sessions: listening, listing them, sending, what waits, what each is doing |
 | `config.rs` | The settings file, user.md, the state files |
+| `layout.rs` | Text made safe and laid out for the terminal: control characters out, lines broken to fit |
 | `spinner.rs`, `style.rs`, `interrupt.rs`, `text.rs` | Spinner, colors, Ctrl+C flag, every word on screen |
 | `site/` | The page at guimadaleno.com/lokal/, published by `.github/workflows/site.yml` |
 | `README.md` | What a person reads first in the repository: what Lokal is, setting up a model, what it won't do |

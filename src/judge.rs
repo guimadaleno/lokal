@@ -15,7 +15,7 @@ use serde_json::json;
 use crate::chat::{self, Event};
 use crate::server::Server;
 use crate::spinner::Spinner;
-use crate::{interrupt, keys, recon, style, text};
+use crate::{interrupt, keys, layout, style, text};
 
 /// Enough for "yes" or "no" and a line of why; a server that reasons anyway
 /// runs out here, and then the person is asked.
@@ -107,11 +107,11 @@ fn question(command: &str, explanation: &str, case: &Case) -> String {
         let paths: Vec<String> = case
             .written
             .iter()
-            .map(|path| recon::clean(path, PATH_LIMIT))
+            .map(|path| layout::clean(path, PATH_LIMIT))
             .collect();
         paths.join(", ")
     };
-    let explanation = recon::clean(explanation, EXPLANATION_LIMIT);
+    let explanation = layout::clean(explanation, EXPLANATION_LIMIT);
     let fence = fence_for(command);
     format!(
         "The user asked: {asked}\nWorking folder: {}\nFiles the assistant wrote this turn: \
@@ -137,7 +137,7 @@ fn verdict(reply: &str) -> Verdict {
     let word = reply[..end].to_lowercase();
     let reason =
         reply[end..].trim_start_matches(|c: char| c.is_whitespace() || ",.:;—–-".contains(c));
-    let reason = recon::clean(reason, REASON_LIMIT);
+    let reason = layout::clean(reason, REASON_LIMIT);
     match word.as_str() {
         "yes" => Verdict::Yes(reason),
         "no" => Verdict::No(reason),

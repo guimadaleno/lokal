@@ -15,7 +15,7 @@ use crate::judge::{self, Verdict};
 use crate::mode::{self, Mode};
 use crate::peers::{self, Peers, Then, Undelivered};
 use crate::shell::{self, Run};
-use crate::{allowlist, config, diff, gitconfig, interrupt, style, text};
+use crate::{allowlist, config, diff, gitconfig, interrupt, layout, style, text};
 
 /// How much command output the model gets; longer output loses its middle.
 const OUTPUT_LIMIT: usize = 12_000;
@@ -269,7 +269,7 @@ fn judged(command: &str, explanation: &str, case: &judge::Case) -> Option<Verdic
 /// each row painted on its own.
 fn print_indented(text: &str, paint: fn(&str) -> String) {
     let width = style::terminal_width().unwrap_or(80);
-    for line in peers::indented(text, 2, width).lines() {
+    for line in layout::indented(text, 2, width).lines() {
         eprintln!("{}", paint(line));
     }
 }
@@ -624,7 +624,7 @@ fn list_sessions(peers: &Peers) -> Outcome {
         if !session.files.is_empty() {
             line.push_str(&format!("; it changed {}", session.files.join(", ")));
         }
-        for (index, part) in peers::broken(&shown, room).iter().enumerate() {
+        for (index, part) in layout::broken(&shown, room).iter().enumerate() {
             let name = if index == 0 {
                 session.name.as_str()
             } else {
@@ -656,7 +656,7 @@ fn mail(args: &Value, peers: &Peers) -> Result<Outcome, String> {
     }
     eprintln!("{}", style::mention(&format!("@{to}")));
     let width = style::terminal_width().unwrap_or(80);
-    for line in peers::indented(message, 2, width).lines() {
+    for line in layout::indented(message, 2, width).lines() {
         eprintln!("{}", style::faint_italic(line));
     }
     const NO_WAITING: &str = "Any answer comes as mail: end your turn rather than wait for it.";

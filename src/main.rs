@@ -13,6 +13,7 @@ mod install;
 mod interrupt;
 mod judge;
 mod keys;
+mod layout;
 mod markdown;
 mod memory;
 mod menu;
@@ -653,10 +654,10 @@ fn print_sessions(conversation: &Conversation, session: &Session) {
             about.push_str(&format!(" · {}", other.branch));
         }
         about.push_str(&format!(" · {}", peers::session_state(other)));
-        let mut lines = peers::broken(&about, room);
+        let mut lines = layout::broken(&about, room);
         let doing = text::session_doing(&other.request, &other.files);
         if !doing.is_empty() {
-            lines.extend(peers::broken(&doing, room));
+            lines.extend(layout::broken(&doing, room));
         }
         for (index, line) in lines.iter().enumerate() {
             let name = if index == 0 { other.name.as_str() } else { "" };
@@ -672,58 +673,11 @@ fn print_rows(rows: &[(&str, String)]) {
     // The indent and the label's column.
     let room = style::terminal_width().map_or(0, |width| width.saturating_sub(13));
     for (label, value) in rows {
-        for (index, line) in wrapped(value, room).iter().enumerate() {
+        for (index, line) in layout::wrapped(value, room).iter().enumerate() {
             let label = if index == 0 { *label } else { "" };
             eprintln!("  {}{line}", style::gray(&format!("{label:<10}")));
         }
     }
-}
-
-/// `text` in lines of at most `room` characters, each broken after a ", "
-/// or a " · ", and a piece longer than a line where the line ends. No room
-/// known, one line.
-fn wrapped(text: &str, room: usize) -> Vec<String> {
-    if room == 0 {
-        return vec![text.to_string()];
-    }
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    for piece in pieces(text) {
-        if !line.is_empty() && line.chars().count() + piece.trim_end().chars().count() > room {
-            lines.push(line.trim_end().to_string());
-            line.clear();
-        }
-        line.push_str(piece);
-        // What follows a broken piece goes on after its end.
-        while line.trim_end().chars().count() > room {
-            lines.push(line.chars().take(room).collect());
-            line = line
-                .chars()
-                .skip(room)
-                .collect::<String>()
-                .trim_start()
-                .to_string();
-        }
-    }
-    lines.push(line.trim_end().to_string());
-    lines
-}
-
-/// The text cut after each separator, which stays with what it follows.
-fn pieces(text: &str) -> Vec<&str> {
-    let mut pieces = Vec::new();
-    let mut start = 0;
-    while let Some((at, length)) = [", ", " · "]
-        .iter()
-        .filter_map(|separator| Some((text[start..].find(separator)?, separator.len())))
-        .min()
-    {
-        let end = start + at + length;
-        pieces.push(&text[start..end]);
-        start = end;
-    }
-    pieces.push(&text[start..]);
-    pieces
 }
 
 /// `/recon`'s probes, with the spinner meanwhile: Docker can take a moment.
@@ -827,33 +781,5 @@ fn warn_if_user_md_is_long() {
     let lines = config::read_user_md().map_or(0, |contents| contents.lines().count());
     if lines > LONG_USER_MD {
         eprintln!("{}", style::gray(&text::long_prefs(lines)));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn long_values_break_after_a_separator() {
-        assert_eq!(
-            wrapped("git 2.43.0, cargo, node · docker", 16),
-            ["git 2.43.0,", "cargo, node ·", "docker"]
-        );
-        assert_eq!(wrapped("a, b", 0), ["a, b"]);
-        assert_eq!(wrapped("", 10), [""]);
-        // Longer than a line: broken where it ends, and the rest goes on after it.
-        assert_eq!(
-            wrapped("~/a/very/long/path · 3 lines", 10),
-            ["~/a/very/l", "ong/path ·", "3 lines"]
-        );
-        assert_eq!(
-            wrapped("~/a/long/path.md · 3 lines", 12),
-            ["~/a/long/pat", "h.md ·", "3 lines"]
-        );
-        assert_eq!(
-            wrapped("~/a/long/path.md · 0", 12),
-            ["~/a/long/pat", "h.md · 0"]
-        );
     }
 }

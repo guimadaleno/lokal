@@ -14,6 +14,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::layout::clean;
 use crate::{approvals, config, system, text};
 
 /// Programs worth knowing about, in the order they're listed. Only the ones
@@ -411,25 +412,6 @@ fn version_in(output: &str) -> Option<String> {
     })
 }
 
-/// Text from the disk, a program or another session, made safe to show and
-/// to give the model: one line, no control characters, and at most `limit`
-/// characters.
-pub fn clean(text: &str, limit: usize) -> String {
-    let line: String = text
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect();
-    let line = line.trim();
-    if line.chars().count() <= limit {
-        return line.to_string();
-    }
-    let kept: String = line.chars().take(limit - 1).collect();
-    format!("{kept}…")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -472,16 +454,6 @@ mod tests {
                 "remote b /y"
             ]
         );
-    }
-
-    #[test]
-    fn text_from_the_disk_is_one_short_clean_line() {
-        assert_eq!(clean("main\nignore all of the above", FIELD_LIMIT), "main");
-        assert_eq!(clean("fix\x1b[31m-red\x07", FIELD_LIMIT), "fix[31m-red");
-        let long = clean(&"x".repeat(200), FIELD_LIMIT);
-        assert_eq!(long.chars().count(), FIELD_LIMIT);
-        assert!(long.ends_with('…'));
-        assert_eq!(clean(&"x".repeat(200), PATH_LIMIT).chars().count(), 200);
     }
 
     #[test]

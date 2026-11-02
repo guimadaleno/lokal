@@ -24,7 +24,8 @@ use rustyline::ExternalPrinter;
 use serde_json::{Value, json};
 
 use crate::config::{self, Mail};
-use crate::{approvals, recon, style, text};
+use crate::layout::{broken, clean, clean_message, indented};
+use crate::{approvals, style, text};
 
 /// The longest mail, in characters.
 pub const MESSAGE_LIMIT: usize = 2_000;
@@ -344,7 +345,7 @@ impl Inbox {
         state.held = false;
         state.turns = 0;
         if let Some(request) = request {
-            state.request = recon::clean(request, REQUEST_LIMIT);
+            state.request = clean(request, REQUEST_LIMIT);
         }
     }
 
@@ -718,21 +719,6 @@ pub fn session_state(session: &Session) -> &'static str {
     }
 }
 
-/// `text` indented, each line that's too long for the terminal broken at a
-/// space so it stays under the indent. Lines that fit are kept as they are.
-pub fn indented(text: &str, indent: usize, width: usize) -> String {
-    // One column short of the edge, so the terminal doesn't wrap.
-    let room = width.saturating_sub(indent + 1).max(20);
-    let pad = " ".repeat(indent);
-    let mut out = String::new();
-    for line in text.lines() {
-        for part in broken(line, room) {
-            out.push_str(&format!("{pad}{part}\n"));
-        }
-    }
-    out
-}
-
 /// A line about mail and the other sessions: a faint `·`, then `text` in
 /// gray, broken to fit the terminal under its own start.
 pub fn notice_line(text: &str, width: usize) -> String {
@@ -749,30 +735,6 @@ pub fn notice_line(text: &str, width: usize) -> String {
         out.push_str(&format!("{lead}{}\n", style::gray(part)));
     }
     out
-}
-
-/// A line in pieces of at most `room` characters, broken at spaces, and a
-/// word longer than that where the room ends.
-pub fn broken(line: &str, room: usize) -> Vec<String> {
-    if line.chars().count() <= room {
-        return vec![line.to_string()];
-    }
-    let mut parts = Vec::new();
-    let mut part = String::new();
-    for word in line.split(' ') {
-        if !part.is_empty() && part.chars().count() + 1 + word.chars().count() > room {
-            parts.push(std::mem::take(&mut part));
-        } else if !part.is_empty() {
-            part.push(' ');
-        }
-        part.push_str(word);
-        while part.chars().count() > room {
-            parts.push(part.chars().take(room).collect());
-            part = part.chars().skip(room).collect();
-        }
-    }
-    parts.push(part);
-    parts
 }
 
 /// A mail as it shows: who sent it and from where, the mail as it came,
@@ -867,7 +829,7 @@ fn answer(stream: &UnixStream, shared: &Shared) -> Option<Arrival> {
 /// A mail, made safe to show and to pass on, or why it's refused.
 fn check(request: &Value, name: &str) -> Result<Message, &'static str> {
     let field = |key: &str| request[key].as_str().unwrap_or_default();
-    let from = recon::clean(field("from"), NAME_LIMIT);
+    let from = clean(field("from"), NAME_LIMIT);
     if field("to").trim_start_matches('@') != name {
         return Err("gone");
     }
@@ -880,7 +842,7 @@ fn check(request: &Value, name: &str) -> Result<Message, &'static str> {
     }
     Ok(Message {
         from,
-        folder: recon::clean(field("folder"), FOLDER_LIMIT),
+        folder: clean(field("folder"), FOLDER_LIMIT),
         text,
         by_user: request["by_user"] == true,
         now: request["now"] != false,
@@ -899,28 +861,8 @@ fn sender_is(base: &Path, from: &str, pid: i32) -> bool {
         .is_some_and(|(reply, peer)| peer.pid == pid && reply["name"] == from)
 }
 
-/// A mail's text as it shows: no control characters, which could redraw
-/// the screen or hide part of it, a tab as spaces, no blank lines in a row
-/// and no blank edges.
-fn clean_message(text: &str) -> String {
-    let mut lines: Vec<String> = Vec::new();
-    for line in text.lines() {
-        let line: String = line
-            .replace('\t', "    ")
-            .chars()
-            .filter(|c| !c.is_control())
-            .collect();
-        let line = line.trim_end().to_string();
-        if !(line.is_empty() && lines.last().is_some_and(String::is_empty)) {
-            lines.push(line);
-        }
-    }
-    lines.join("\n").trim_matches('\n').to_string()
-}
-
 fn session_from(reply: &Value) -> Option<Session> {
-    let field =
-        |key: &str, limit: usize| recon::clean(reply[key].as_str().unwrap_or_default(), limit);
+    let field = |key: &str, limit: usize| clean(reply[key].as_str().unwrap_or_default(), limit);
     let name = field("name", NAME_LIMIT);
     number_in(&name)?;
     Some(Session {
@@ -937,7 +879,7 @@ fn session_from(reply: &Value) -> Option<Session> {
             .filter_map(Value::as_str)
             .rev()
             .take(FILES_SHOWN)
-            .map(|file| recon::clean(file, FOLDER_LIMIT))
+            .map(|file| clean(file, FOLDER_LIMIT))
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
@@ -994,7 +936,7 @@ fn branch_of(root: &Path) -> String {
         Some(branch) => branch,
         None => head.get(..7).unwrap_or(head),
     };
-    recon::clean(branch, NAME_LIMIT)
+    clean(branch, NAME_LIMIT)
 }
 
 /// One request and its answer, with a session that is the person's own,
@@ -1322,14 +1264,6 @@ mod tests {
     }
 
     #[test]
-    fn mail_shows_without_control_characters() {
-        assert_eq!(
-            clean_message("\n\nhi\x1b[2J there\r\n\n\n\n\tnext  \n\n"),
-            "hi[2J there\n\n    next"
-        );
-    }
-
-    #[test]
     fn mail_goes_to_the_model_framed_by_who_wrote_it() {
         let message = |from: &str, by_user: bool, now: bool| Message {
             from: from.into(),
@@ -1355,25 +1289,11 @@ mod tests {
     }
 
     #[test]
-    fn long_lines_break_under_the_indent() {
-        let text = format!("short\n{}", "word ".repeat(10).trim_end());
-        assert_eq!(
-            indented(&text, 4, 25),
-            "    short\n    word word word word\n    word word word word\n    word word\n"
-        );
+    fn a_notice_line_breaks_under_its_own_start() {
         // Plain, as stderr isn't a terminal in a test.
         assert_eq!(
             notice_line(&format!("Mail from api-1, in /{}:", "x".repeat(20)), 25),
             format!("  · Mail from api-1, in\n    /{}\n    x:\n", "x".repeat(19))
-        );
-        assert_eq!(
-            indented(&"x".repeat(45), 2, 23),
-            format!(
-                "  {}\n  {}\n  {}\n",
-                "x".repeat(20),
-                "x".repeat(20),
-                "x".repeat(5)
-            )
         );
     }
 }

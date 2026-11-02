@@ -254,7 +254,7 @@ impl Conversation {
         // Chosen at the `>`, auto's warning shows here, before it acts.
         if !on_mail && mode::warn_of_auto() {
             let width = style::terminal_width().unwrap_or(80);
-            for line in crate::peers::indented(text::AUTO_WARNING, 0, width).lines() {
+            for line in crate::layout::indented(text::AUTO_WARNING, 0, width).lines() {
                 eprintln!("{}", style::gray(line));
             }
             eprintln!();
