@@ -32,7 +32,7 @@ mod socket;
 
 pub use inbox::{Inbox, Message, Then};
 use show::here_too;
-pub use show::{framed, session_rows, session_state};
+pub use show::{framed, session_rows};
 use socket::{ask, clear_left_behind, lock_folder, serve, session_from};
 
 /// The longest mail, in characters.

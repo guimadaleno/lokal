@@ -1,13 +1,11 @@
 //! The tools for the person's other sessions: list_sessions and mail, both
 //! shown as steps, so the person sees what this model tells the others.
 
-use std::path::Path;
-
 use serde_json::Value;
 
 use super::{Outcome, text_arg};
 use crate::peers::{self, Peers, Then, Undelivered};
-use crate::{config, layout, style, text, tty};
+use crate::{layout, style, text, tty};
 
 /// The other sessions open, on screen and for the model.
 pub(super) fn list_sessions(peers: &Peers) -> Outcome {
@@ -17,26 +15,15 @@ pub(super) fn list_sessions(peers: &Peers) -> Outcome {
         eprintln!("  {}", style::gray(text::NO_SESSIONS));
         return Outcome::Done("No other Lokal session is open.".into());
     }
-    // The names in a column, and the folders after them, a long one going
-    // on under itself.
-    let names = sessions
-        .iter()
-        .map(|s| s.name.chars().count())
-        .max()
-        .unwrap_or(0);
-    let lead = 2 + names + 2;
-    let room = tty::width().unwrap_or(80).saturating_sub(lead + 1).max(20);
+    for row in peers::session_rows(&sessions, false) {
+        eprintln!("{row}");
+    }
     let mut result = String::new();
     for session in &sessions {
-        let mut row = config::shown(Path::new(&session.folder));
         let mut line = format!("- {}, in {}", session.name, session.folder);
         if !session.branch.is_empty() {
-            row.push_str(&format!(" · {}", session.branch));
             line.push_str(&format!(", branch {}", session.branch));
         }
-        row.push_str(&format!(" · {}", peers::session_state(session)));
-        // A folder's or a branch's name can hold control characters.
-        let row = layout::printable(&row);
         line.push_str(match (session.busy, session.asking) {
             (true, true) => {
                 ", waiting for its user to approve a step: mail waits until its turn is done"
@@ -52,14 +39,6 @@ pub(super) fn list_sessions(peers: &Peers) -> Outcome {
         }
         if !session.files.is_empty() {
             line.push_str(&format!("; it changed {}", session.files.join(", ")));
-        }
-        for (index, part) in layout::broken(&row, room).iter().enumerate() {
-            let name = if index == 0 {
-                session.name.as_str()
-            } else {
-                ""
-            };
-            eprintln!("  {}", style::gray(&format!("{name:<names$}  {part}")));
         }
         result.push_str(&line);
         result.push('\n');
