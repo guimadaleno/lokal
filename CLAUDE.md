@@ -326,7 +326,7 @@ dependencies.
 | `approvals.rs` | Commands approved for a project |
 | `reasoning.rs` | The small window the reasoning shows in while the model thinks |
 | `scratch.rs` | The session's folder for temporary files |
-| `peers.rs` | Mail between the person's sessions: listening, listing them, sending, what waits, what each is doing |
+| `peers.rs` | Mail between the person's sessions: this one's name and socket, listing the others, sending, news of the ones working alongside |
 | `peers/inbox.rs` | The mail waiting, and when it starts a turn |
 | `peers/show.rs` | What the person and the model see of mail and the other sessions |
 | `peers/socket.rs` | The wire between sessions and its trust boundary: who's on the other end, who sent a mail |
