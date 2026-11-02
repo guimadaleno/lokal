@@ -4,6 +4,7 @@
 use std::env;
 use std::fs;
 use std::io::{ErrorKind, Read};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -53,17 +54,31 @@ pub(super) fn read_file(args: &Value, room: Option<usize>) -> Result<Outcome, St
 /// a regular file is refused before it's opened: a device or a pipe could
 /// never end, or never begin. So is one too big to hold in memory.
 fn read_text(path: &Path) -> Result<Option<String>, String> {
+    // A device is never opened: opening one can act on it.
     match fs::metadata(path) {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("can't read {}: {error}", path.display())),
-        Ok(file) if !file.is_file() => {
+        Ok(meta) if !meta.is_file() => {
             return Err(format!("{} isn't a regular file.", path.display()));
         }
-        Ok(_) => {}
+        _ => {}
+    }
+    // Opened without waiting, then checked again, so a pipe put in the file's
+    // place after the first check can't block either.
+    let file = match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+    {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("can't read {}: {error}", path.display())),
+        Ok(file) => file,
+    };
+    if !file.metadata().is_ok_and(|meta| meta.is_file()) {
+        return Err(format!("{} isn't a regular file.", path.display()));
     }
     let mut bytes = Vec::new();
-    fs::File::open(path)
-        .and_then(|file| file.take(READ_CAP + 1).read_to_end(&mut bytes))
+    file.take(READ_CAP + 1)
+        .read_to_end(&mut bytes)
         .map_err(|error| format!("can't read {}: {error}", path.display()))?;
     if bytes.len() as u64 > READ_CAP {
         return Err(format!(
