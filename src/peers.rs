@@ -16,7 +16,7 @@ use std::io::{self, BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -36,6 +36,9 @@ pub const TURNS: usize = 64;
 /// How long a session has to answer. Each connection is answered on a
 /// thread of its own, at once, whatever the session is doing.
 const TIMEOUT: Duration = Duration::from_secs(1);
+/// The same, to say who it is when the sessions are listed: that holds up
+/// a turn's start and Tab after `@`, so a stopped session mustn't cost more.
+const WHO_TIMEOUT: Duration = Duration::from_millis(300);
 /// The most read of one request: a mail escaped as JSON, and the rest.
 const READ_LIMIT: u64 = 64 * 1024;
 /// How long mail is on screen before Enter or Esc takes it. One that
@@ -414,18 +417,39 @@ pub struct Directory {
 
 impl Directory {
     /// The other sessions open, in the order of their numbers. A socket
-    /// nobody answers on is skipped.
+    /// nobody answers on in time is skipped. They're asked all at once:
+    /// one asked at a time, a stopped session (Ctrl+Z) would hold up every
+    /// turn and every Tab after `@` in the others by its whole timeout.
     pub fn sessions(&self) -> Vec<Session> {
         let Ok(entries) = fs::read_dir(&self.base) else {
             return Vec::new();
         };
-        let mut sessions: Vec<Session> = entries
+        let (sender, answers) = mpsc::channel();
+        let mut asked = 0;
+        for path in entries
             .flatten()
             .map(|entry| entry.path())
             .filter(|path| *path != self.own && path.extension().is_some_and(|e| e == "sock"))
-            .filter_map(|path| ask(&path, &json!({"ask": "who"})))
-            .filter_map(|(reply, _)| session_from(&reply))
-            .collect();
+        {
+            let sender = sender.clone();
+            thread::spawn(move || {
+                let session = ask(&path, &json!({"ask": "who"}), WHO_TIMEOUT)
+                    .and_then(|(reply, _)| session_from(&reply));
+                let _ = sender.send(session);
+            });
+            asked += 1;
+        }
+        // A thread still connecting by then (a stopped session whose queue
+        // is full) is left behind rather than waited for.
+        let deadline = Instant::now() + WHO_TIMEOUT * 2;
+        let mut sessions = Vec::new();
+        for _ in 0..asked {
+            match answers.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(Some(session)) => sessions.push(session),
+                Ok(None) => {}
+                Err(_) => break,
+            }
+        }
         sessions.sort_by_key(|session| number_in(&session.name));
         sessions
     }
@@ -578,7 +602,7 @@ impl Peers {
             "by_user": by_user,
         });
         let socket = self.shared.base.join(format!("{number}.sock"));
-        let (reply, _) = ask(&socket, &request).ok_or(Undelivered::NoSuch)?;
+        let (reply, _) = ask(&socket, &request, TIMEOUT).ok_or(Undelivered::NoSuch)?;
         if reply["taken"] == true {
             return Ok(reply["then"]
                 .as_str()
@@ -857,8 +881,12 @@ fn sender_is(base: &Path, from: &str, pid: i32) -> bool {
     let Some(number) = number_in(from) else {
         return false;
     };
-    ask(&base.join(format!("{number}.sock")), &json!({"ask": "who"}))
-        .is_some_and(|(reply, peer)| peer.pid == pid && reply["name"] == from)
+    ask(
+        &base.join(format!("{number}.sock")),
+        &json!({"ask": "who"}),
+        TIMEOUT,
+    )
+    .is_some_and(|(reply, peer)| peer.pid == pid && reply["name"] == from)
 }
 
 fn session_from(reply: &Value) -> Option<Session> {
@@ -941,10 +969,10 @@ fn branch_of(root: &Path) -> String {
 
 /// One request and its answer, with a session that is the person's own,
 /// and who the kernel says is listening there.
-fn ask(socket: &Path, request: &Value) -> Option<(Value, libc::ucred)> {
+fn ask(socket: &Path, request: &Value, timeout: Duration) -> Option<(Value, libc::ucred)> {
     let stream = UnixStream::connect(socket).ok()?;
-    stream.set_read_timeout(Some(TIMEOUT)).ok()?;
-    stream.set_write_timeout(Some(TIMEOUT)).ok()?;
+    stream.set_read_timeout(Some(timeout)).ok()?;
+    stream.set_write_timeout(Some(timeout)).ok()?;
     let peer = peer_of(&stream)?;
     if peer.uid != own_uid() {
         return None;
@@ -1054,6 +1082,31 @@ mod tests {
     }
 
     #[test]
+    fn sessions_that_never_answer_cost_one_short_wait_together() {
+        let base = base("stopped");
+        let (a, b) = (
+            session(&base, "repo", Mail::Auto),
+            session(&base, "web", Mail::Auto),
+        );
+        // Listening but never answering, as a session stopped with Ctrl+Z.
+        let stopped: Vec<UnixListener> = [7, 8, 9]
+            .iter()
+            .map(|n| UnixListener::bind(base.join(format!("{n}.sock"))).unwrap())
+            .collect();
+        let started = Instant::now();
+        let others = a.others();
+        assert!(
+            started.elapsed() < WHO_TIMEOUT * 2,
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(others.len(), 1);
+        assert_eq!(others[0].name, b.name());
+        drop((a, b, stopped));
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
     fn a_session_says_who_it_is_and_what_it_does() {
         let base = base("who");
         let (a, b) = (
@@ -1143,12 +1196,12 @@ mod tests {
         // A name that isn't the session's at that number, and a number nobody has.
         for from in ["other-1", "repo-9"] {
             let request = json!({"ask": "message", "from": from, "to": b.name(), "text": "hi"});
-            let (reply, _) = ask(&b.socket, &request).unwrap();
+            let (reply, _) = ask(&b.socket, &request, TIMEOUT).unwrap();
             assert_eq!(reply["why"], "sender");
         }
         // A name that isn't the session's: its number went to another one.
         let request = json!({"ask": "message", "from": a.name(), "to": "old-2", "text": "hi"});
-        assert_eq!(ask(&b.socket, &request).unwrap().0["why"], "gone");
+        assert_eq!(ask(&b.socket, &request, TIMEOUT).unwrap().0["why"], "gone");
         drop((a, b));
         fs::remove_dir_all(base).unwrap();
     }
