@@ -6,7 +6,7 @@
 use std::io::Write;
 use std::time::{Duration, Instant};
 
-use crate::style;
+use crate::{layout, style};
 
 /// How many rows of reasoning show at once.
 const ROWS: usize = 4;
@@ -86,7 +86,8 @@ fn last_rows(text: &str, width: usize, count: usize) -> Vec<String> {
         .map(str::trim_end)
         .filter(|line| !line.trim().is_empty())
     {
-        let chars: Vec<char> = line.replace('\t', " ").chars().collect();
+        // A model's text can carry escapes that would redraw the screen.
+        let chars: Vec<char> = layout::printable(line).replace('\t', " ").chars().collect();
         for chunk in chars.chunks(width) {
             rows.push(chunk.iter().collect::<String>());
         }
@@ -108,5 +109,6 @@ mod tests {
         );
         assert_eq!(last_rows("one\ntwo", 12, 4), ["one", "two"]);
         assert!(last_rows("\n \n", 12, 4).is_empty());
+        assert_eq!(last_rows("up\x1b[1A", 12, 4), ["up^[[1A"]);
     }
 }

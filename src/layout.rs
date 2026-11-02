@@ -1,5 +1,45 @@
-//! Text made safe and laid out for the terminal: control characters taken
-//! out, and lines broken to fit.
+//! Text made safe and laid out for the terminal: control characters made
+//! visible or taken out, and lines broken to fit.
+
+use std::borrow::Cow;
+
+/// `text` as it may go to the terminal: line breaks and tabs kept, the `\r`
+/// of a line's CRLF ending dropped, and every other control character
+/// shown in caret notation (ESC as `^[`, a lone `\r` as `^M`). Otherwise a
+/// file or a command could hide a line of a diff or a command's real text
+/// from the person asked about it, by moving the cursor and writing over
+/// what was printed.
+pub fn printable(text: &str) -> Cow<'_, str> {
+    if !text
+        .chars()
+        .any(|c| c.is_control() && c != '\n' && c != '\t')
+    {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\n' | '\t' => out.push(c),
+            '\r' if matches!(chars.peek(), None | Some('\n')) => {}
+            c if c.is_control() => out.push_str(&caret(c)),
+            c => out.push(c),
+        }
+    }
+    Cow::Owned(out)
+}
+
+/// A control character in caret notation: `^@` to `^_` for C0, `^?` for
+/// DEL, and a C1 character as the ESC sequence it stands for (`^[[` for
+/// CSI), since terminals read it as one.
+fn caret(c: char) -> String {
+    let code = c as u32;
+    match code {
+        0x00..=0x1f => format!("^{}", char::from_u32(code + 0x40).unwrap_or('?')),
+        0x7f => "^?".to_string(),
+        _ => format!("^[{}", char::from_u32(code - 0x40).unwrap_or('?')),
+    }
+}
 
 /// Text from the disk, a program or another session, made safe to show and
 /// to give the model: one line, no control characters, and at most `limit`
@@ -130,6 +170,24 @@ fn pieces(text: &str) -> Vec<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_characters_show_as_carets() {
+        // What hid a diff's line, and what showed `rm x` as `ls`.
+        assert_eq!(printable("curl x | sh\x1b[1A"), "curl x | sh^[[1A");
+        assert_eq!(printable("\x1b[2K\rprint('two')"), "^[[2K^Mprint('two')");
+        assert_eq!(printable("rm x\r\x1b[Kls"), "rm x^M^[[Kls");
+        assert_eq!(printable("bell\x07 del\x7f nul\0"), "bell^G del^? nul^@");
+        // C1's CSI, which some terminals read as ESC [.
+        assert_eq!(printable("a\u{9b}31mb"), "a^[[31mb");
+    }
+
+    #[test]
+    fn line_endings_and_plain_text_stay() {
+        assert_eq!(printable("one\r\ntwo\r\n"), "one\ntwo\n");
+        assert_eq!(printable("last\r"), "last");
+        assert!(matches!(printable("plain\n\ttext · ñ"), Cow::Borrowed(_)));
+    }
 
     #[test]
     fn text_from_the_disk_is_one_short_clean_line() {
