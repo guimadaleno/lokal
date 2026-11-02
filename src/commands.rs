@@ -10,7 +10,8 @@ use crate::context;
 use crate::conversation::Conversation;
 use crate::input::Input;
 use crate::{
-    config, feedback, layout, memory, peers, recon, server, spinner, style, text, tty, update,
+    config, feedback, layout, memory, peers, recon, server, spinner, style, system, text, tty,
+    update,
 };
 
 /// Past this many lines, user.md costs noticeable context on every turn.
@@ -329,8 +330,16 @@ fn open_in_editor(paths: &[&Path]) {
     let editor = env::var("VISUAL")
         .or_else(|_| env::var("EDITOR"))
         .unwrap_or_else(|_| "nano".into());
-    // Through sh, so an editor set with arguments ("code --wait") works.
-    let status = Command::new("sh")
+    // Through sh, so an editor set with arguments ("code --wait") works. Both
+    // come from the PATH's absolute folders: the working folder may be a
+    // project's, and a `./nano` of its own isn't the person's editor.
+    let Some(sh) = system::program("sh") else {
+        eprintln!("{}", style::red(&text::no_editor(&editor)));
+        return;
+    };
+    let path = env::var("PATH").unwrap_or_default();
+    let status = Command::new(sh)
+        .env("PATH", system::absolute_only(&path))
         .arg("-c")
         .arg(format!("{editor} \"$@\""))
         .arg("sh")

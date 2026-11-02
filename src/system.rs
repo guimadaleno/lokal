@@ -71,6 +71,14 @@ pub fn program(name: &str) -> Option<PathBuf> {
         .find(|candidate| is_program(candidate))
 }
 
+/// A PATH with only its absolute folders.
+pub fn absolute_only(path: &str) -> String {
+    path.split(':')
+        .filter(|folder| folder.starts_with('/'))
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
 pub fn is_program(path: &Path) -> bool {
     fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
 }
@@ -148,6 +156,14 @@ mod tests {
                       eth0\t00000000\t0130A8C0\t0003\n";
         assert_eq!(gateway_in(routes), Some(Ipv4Addr::new(192, 168, 48, 1)));
         assert_eq!(gateway_in("Iface\tDestination\tGateway\n"), None);
+    }
+
+    #[test]
+    fn a_path_keeps_its_absolute_folders_only() {
+        assert_eq!(
+            absolute_only("/usr/local/bin:.:/usr/bin::bin:/home/ana/.cargo/bin:"),
+            "/usr/local/bin:/usr/bin:/home/ana/.cargo/bin"
+        );
     }
 
     #[test]
