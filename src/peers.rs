@@ -197,6 +197,23 @@ impl State {
         }
     }
 
+    /// Prints the mail not shown yet, each saying what `then` says becomes
+    /// of it, and spaced as one block. True when any printed.
+    fn show_unshown(&mut self, then: impl Fn(&State, &Message) -> Then) -> bool {
+        let mut printed = false;
+        for index in 0..self.waiting.len() {
+            if self.waiting[index].shown.is_none() {
+                let fate = then(self, &self.waiting[index]);
+                let footer = self.footer(fate);
+                let notice = notice(&self.waiting[index], footer.as_deref());
+                eprint!("{}", spaced(&notice, printed));
+                self.waiting[index].shown = Some(Instant::now());
+                printed = true;
+            }
+        }
+        printed
+    }
+
     /// What a notice says under a mail: what becomes of it.
     fn footer(&mut self, then: Then) -> Option<String> {
         match then {
@@ -261,18 +278,7 @@ impl Inbox {
             .waiting
             .iter()
             .any(|message| state.then(message) == Then::Now);
-        let mut printed = false;
-        for index in 0..state.waiting.len() {
-            if state.waiting[index].shown.is_none() {
-                let then = state.then(&state.waiting[index]);
-                let footer = state.footer(then);
-                let notice = notice(&state.waiting[index], footer.as_deref());
-                eprint!("{}", spaced(&notice, printed));
-                state.waiting[index].shown = Some(Instant::now());
-                printed = true;
-            }
-        }
-        state.printed = printed;
+        state.printed = state.show_unshown(State::then);
         state.at_prompt = !start;
         start
     }
@@ -296,18 +302,7 @@ impl Inbox {
 
     /// Mail that ended the `>`, shown before its turn starts.
     pub fn show_arrived(&self) {
-        let mut guard = self.lock();
-        let state = &mut *guard;
-        let mut printed = false;
-        for index in 0..state.waiting.len() {
-            if state.waiting[index].shown.is_none() {
-                let footer = state.footer(Then::Now);
-                let notice = notice(&state.waiting[index], footer.as_deref());
-                eprint!("{}", spaced(&notice, printed));
-                state.waiting[index].shown = Some(Instant::now());
-                printed = true;
-            }
-        }
+        self.lock().show_unshown(|_, _| Then::Now);
     }
 
     /// Takes the mail that has been on screen a moment, for Enter to pass
