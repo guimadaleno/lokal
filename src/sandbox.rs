@@ -9,7 +9,7 @@ use std::ffi::CString;
 use std::fs;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -130,11 +130,19 @@ fn set_up(profile: Profile, folder: &Path, scratch: &Path) -> Result<(), String>
     }
     let home = config::home();
     let project = approvals::project_root(folder);
-    // Read while git still runs as it would outside: where the repository
-    // keeps hooks of its own, if inside it.
-    let hooks = (profile == Profile::Work)
-        .then(|| hooks_path(&project))
-        .flatten();
+    // Read while git still runs as it would outside. One that isn't there
+    // yet can't be covered, and a command could make it.
+    let named = if profile == Profile::Work {
+        named_by_git(&project)
+    } else {
+        Vec::new()
+    };
+    if let Some(missing) = named.iter().find(|path| !path.exists()) {
+        return Err(format!(
+            "git's settings name {}, which isn't there yet",
+            missing.display()
+        ));
+    }
     if profile == Profile::Work
         && (!project.join(".git").exists()
             || home.starts_with(&project)
@@ -151,6 +159,23 @@ fn set_up(profile: Profile, folder: &Path, scratch: &Path) -> Result<(), String>
     write("/proc/self/uid_map", &format!("{uid} {uid} 1"))?;
     write("/proc/self/gid_map", &format!("{gid} {gid} 1"))?;
     mount(None, "/", None, libc::MS_REC | libc::MS_PRIVATE, None)?;
+    // Found before the box mounts anything of its own.
+    let mut restricted = vec![home.as_path()];
+    let own = config::own_folders();
+    restricted.extend(own.iter().map(PathBuf::as_path));
+    if profile == Profile::Work {
+        restricted.push(&project);
+    }
+    let doors = doors(&mounts()?, &restricted);
+    if let Some(door) = doors
+        .iter()
+        .find(|door| folder.starts_with(door) || scratch.starts_with(door))
+    {
+        return Err(format!(
+            "working through a second mount, {}",
+            door.display()
+        ));
+    }
     // Under /tmp, the folder the command works in and the scratch folder
     // are taken before /tmp is covered, to be put back in the box's own:
     // the folder first, read-only in the read box, and the scratch folder
@@ -210,16 +235,11 @@ fn set_up(profile: Profile, folder: &Path, scratch: &Path) -> Result<(), String>
         }
     }
     if profile == Profile::Work {
-        for path in protected(&project, folder).into_iter().chain(hooks) {
+        for path in protected(&project, folder).into_iter().chain(named) {
             read_only(&path)?;
         }
     }
-    let devices = [Path::new("/"), &home, &project, folder, scratch]
-        .iter()
-        .filter_map(|path| fs::metadata(path).ok())
-        .map(|meta| device_numbers(meta.dev()))
-        .collect::<Vec<_>>();
-    cover_other_doors(&devices)?;
+    shut(&doors)?;
     // A second door to Windows shut: WSL's interop is a binfmt_misc entry,
     // and a namespace's own instance starts empty. Landlock already keeps
     // /init from running, so a kernel without it loses nothing.
@@ -233,68 +253,181 @@ fn set_up(profile: Profile, folder: &Path, scratch: &Path) -> Result<(), String>
     // Only `lo` exists here; up, a project's tests can still listen on it.
     let _ = loopback_up();
 
-    landlock(profile, &project, &home)?;
+    landlock(profile, &project, scratch, &home)?;
     seccomp()
 }
 
-/// core.hooksPath as the repository sets it, when it's inside the project.
-fn hooks_path(project: &Path) -> Option<PathBuf> {
-    let output = Command::new(system::program("git")?)
+/// Whether a git setting names a program for git to run, or a file of
+/// settings for it to read: what a command must not plant or rewrite in
+/// the tree, for git to run later, outside the box.
+fn names_a_program(key: &str) -> bool {
+    let ends = |suffixes: &[&str]| suffixes.iter().any(|suffix| key.ends_with(suffix));
+    matches!(
+        key,
+        "core.hookspath"
+            | "core.fsmonitor"
+            | "core.sshcommand"
+            | "core.askpass"
+            | "core.editor"
+            | "sequence.editor"
+            | "diff.external"
+            | "include.path"
+    ) || (key.starts_with("gpg.") && ends(&[".program"]))
+        || (key.starts_with("includeif.") && ends(&[".path"]))
+        || (key.starts_with("filter.") && ends(&[".clean", ".smudge", ".process"]))
+        || (key.starts_with("diff.") && ends(&[".textconv", ".command"]))
+        || (key.starts_with("merge.") && ends(&[".driver"]))
+        || (key.starts_with("credential.") && ends(&["helper"]))
+        || key.starts_with("alias.")
+}
+
+/// The files and folders inside the project that git's settings name for
+/// it to run or read, there yet or not. Read with git itself, includes
+/// followed and every scope: a global `core.hooksPath = .hooks` names a
+/// folder in each repository.
+fn named_by_git(project: &Path) -> Vec<PathBuf> {
+    let Some(git) = system::program("git") else {
+        return Vec::new();
+    };
+    let Ok(output) = Command::new(git)
         .arg("-C")
         .arg(project)
-        .args(["config", "--local", "--get", "core.hooksPath"])
+        .args(["config", "--includes", "--null", "--list"])
+        .stderr(std::process::Stdio::null())
         .output()
-        .ok()?;
-    let value = String::from_utf8(output.stdout).ok()?;
-    let path = project.join(value.trim());
-    (!value.trim().is_empty() && path.starts_with(project) && path.exists()).then_some(path)
+    else {
+        return Vec::new();
+    };
+    let git_dir = project.join(".git");
+    String::from_utf8_lossy(&output.stdout)
+        .split('\0')
+        .filter_map(|entry| {
+            let (key, value) = entry.split_once('\n')?;
+            let key = key.to_ascii_lowercase();
+            if !names_a_program(&key) {
+                return None;
+            }
+            let word = value
+                .trim()
+                .trim_start_matches('!')
+                .split_whitespace()
+                .next()?;
+            // A hooks folder or an include is always a path; for a program,
+            // a bare name is one on the PATH.
+            let always_a_path = key == "core.hookspath" || key.starts_with("include");
+            if !always_a_path && !word.contains('/') && !word.starts_with('.') {
+                return None;
+            }
+            // An include is read relative to the file that names it.
+            let base = if key.starts_with("include") {
+                &git_dir
+            } else {
+                project
+            };
+            let path = lexical(&base.join(word));
+            path.starts_with(project).then_some(path)
+        })
+        .collect()
+}
+
+/// `path` with its `.` and `..` worked out on the text alone.
+fn lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// A line of /proc/self/mountinfo: the file system's device, the folder of
+/// it the mount shows, and where.
+struct Mount {
+    device: (u32, u32),
+    root: PathBuf,
+    at: PathBuf,
+}
+
+fn mounts() -> Result<Vec<Mount>, String> {
+    let mountinfo = fs::read_to_string("/proc/self/mountinfo")
+        .map_err(|error| format!("mountinfo: {error}"))?;
+    Ok(mountinfo.lines().filter_map(mount_line).collect())
+}
+
+fn mount_line(line: &str) -> Option<Mount> {
+    let mut fields = line.split(' ').skip(2);
+    let (major, minor) = fields.next()?.split_once(':')?;
+    Some(Mount {
+        device: (major.parse().ok()?, minor.parse().ok()?),
+        root: PathBuf::from(unescape(fields.next()?)),
+        at: PathBuf::from(unescape(fields.next()?)),
+    })
+}
+
+/// The mount `path` is reached through, the last of the deepest, and the
+/// path inside its file system.
+fn resolve<'a>(mounts: &'a [Mount], path: &Path) -> Option<(&'a Mount, PathBuf)> {
+    let mount = mounts
+        .iter()
+        .filter(|mount| path.starts_with(&mount.at))
+        .max_by_key(|mount| mount.at.components().count())?;
+    Some((mount, mount.root.join(path.strip_prefix(&mount.at).ok()?)))
 }
 
 /// The same files can be reached through a second mount of their file
 /// system: WSL mounts the whole distribution again at /mnt/wslg/distro,
 /// and Docker Desktop binds folders of home under /mnt/wsl. Landlock's
 /// rules follow the files, not the path, and the hidden keys are hidden
-/// at one path only. So every mount of these file systems that shows a
-/// folder somewhere else than where it lives is covered, the shortest
-/// first, as covering one covers what's beneath it.
-fn cover_other_doors(devices: &[(u32, u32)]) -> Result<(), String> {
-    let mountinfo = fs::read_to_string("/proc/self/mountinfo")
-        .map_err(|error| format!("mountinfo: {error}"))?;
-    let mut doors: Vec<PathBuf> = mountinfo
-        .lines()
-        .filter_map(other_door)
-        .filter(|(device, _)| devices.contains(device))
-        .map(|(_, at)| at)
-        .collect();
-    doors.sort_by_key(|at| at.as_os_str().len());
-    let mut covered: Vec<PathBuf> = Vec::new();
-    for at in doors {
-        if covered.iter().any(|done| at.starts_with(done)) {
+/// at one path only. So a mount is a door when it shows the files of a
+/// `restricted` path somewhere else than that path's own mount does. A
+/// mount of a folder at its own place, like /snap, isn't one, nor is a file
+/// system mounted once, as a /home partition is.
+fn doors(mounts: &[Mount], restricted: &[&Path]) -> Vec<PathBuf> {
+    let mut doors = Vec::new();
+    for path in restricted {
+        let Some((own, inside)) = resolve(mounts, path) else {
             continue;
+        };
+        for other in mounts {
+            if std::ptr::eq(other, own) || other.device != own.device {
+                continue;
+            }
+            let overlaps = inside.starts_with(&other.root) || other.root.starts_with(&inside);
+            let in_place = other
+                .root
+                .strip_prefix(&own.root)
+                .is_ok_and(|rest| own.at.join(rest) == other.at);
+            if overlaps && !in_place && !doors.contains(&other.at) {
+                doors.push(other.at.clone());
+            }
         }
-        tmpfs(&at, libc::MS_RDONLY)?;
-        covered.push(at);
     }
-    Ok(())
+    doors.sort_by_key(|at| at.as_os_str().len());
+    doors
 }
 
-/// From a mountinfo line, the file system's device and where it's mounted,
-/// when what it shows lives somewhere else ("/home/ana/sites" mounted at
-/// "/mnt/wsl/…"). A mount of a folder at its own place, like /snap, isn't
-/// one.
-fn other_door(line: &str) -> Option<((u32, u32), PathBuf)> {
-    let mut fields = line.split(' ');
-    let (_, _, device, root, at) = (
-        fields.next()?,
-        fields.next()?,
-        fields.next()?,
-        fields.next()?,
-        fields.next()?,
-    );
-    let (major, minor) = device.split_once(':')?;
-    let device = (major.parse().ok()?, minor.parse().ok()?);
-    let (root, at) = (unescape(root), unescape(at));
-    (root != at && at != "/").then(|| (device, PathBuf::from(at)))
+/// Each door shut, the shortest first, as covering one covers what's
+/// beneath it: a folder with an empty read-only tmpfs, a file with
+/// /dev/null. One that can't be reached any more is shut already.
+fn shut(doors: &[PathBuf]) -> Result<(), String> {
+    let mut shut: Vec<&PathBuf> = Vec::new();
+    for at in doors {
+        if shut.iter().any(|done| at.starts_with(done)) {
+            continue;
+        }
+        match fs::symlink_metadata(at) {
+            Err(_) => continue,
+            Ok(meta) if meta.is_dir() => tmpfs(at, libc::MS_RDONLY)?,
+            Ok(_) => mount(Some(Path::new("/dev/null")), at, None, libc::MS_BIND, None)?,
+        }
+        shut.push(at);
+    }
+    Ok(())
 }
 
 /// mountinfo writes a space, a tab, a newline and a backslash as \040, \011, \012, \134.
@@ -315,10 +448,6 @@ fn unescape(field: &str) -> String {
         }
     }
     out
-}
-
-fn device_numbers(device: u64) -> (u32, u32) {
-    (libc::major(device), libc::minor(device))
 }
 
 /// What stays read-only in the work box: the protected names at the
@@ -385,7 +514,7 @@ struct PathBeneathAttr {
 /// Writes only beneath the box's own folders, programs only from where
 /// programs live, and no signal or abstract socket past the box. Reading
 /// is left alone: the read-only list reads anywhere already.
-fn landlock(profile: Profile, project: &Path, home: &Path) -> Result<(), String> {
+fn landlock(profile: Profile, project: &Path, scratch: &Path, home: &Path) -> Result<(), String> {
     let abi = unsafe {
         libc::syscall(
             libc::SYS_landlock_create_ruleset,
@@ -413,7 +542,12 @@ fn landlock(profile: Profile, project: &Path, home: &Path) -> Result<(), String>
     check(ruleset as i32, "landlock")?;
     let ruleset = unsafe { OwnedFd::from_raw_fd(ruleset as i32) };
 
-    let mut writable = vec![PathBuf::from("/tmp"), PathBuf::from("/dev/shm")];
+    // The scratch folder by name too: under a TMPDIR elsewhere, it isn't in /tmp.
+    let mut writable = vec![
+        PathBuf::from("/tmp"),
+        PathBuf::from("/dev/shm"),
+        scratch.to_path_buf(),
+    ];
     if profile == Profile::Work {
         writable.push(project.to_path_buf());
     }
@@ -651,5 +785,103 @@ fn check(result: i32, step: &str) -> Result<(), String> {
         Err(format!("{step}: {}", std::io::Error::last_os_error()))
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(device: u32, root: &str, at: &str) -> Mount {
+        Mount {
+            device: (8, device),
+            root: PathBuf::from(root),
+            at: PathBuf::from(at),
+        }
+    }
+
+    #[test]
+    fn a_second_mount_of_the_same_files_is_a_door() {
+        // WSL with Docker Desktop: the disk again at /mnt/wslg/distro, and
+        // a folder of home bound under /mnt/wsl.
+        let wsl = [
+            at(48, "/", "/"),
+            at(48, "/", "/mnt/wslg/distro"),
+            at(48, "/snap", "/snap"),
+            at(48, "/home/ana/sites", "/mnt/wsl/docker/1"),
+            at(48, "/var/lib/docker", "/mnt/wsl/docker/2"),
+            at(9, "/", "/mnt/c"),
+        ];
+        let home = Path::new("/home/ana");
+        assert_eq!(
+            doors(&wsl, &[home]),
+            [
+                PathBuf::from("/mnt/wslg/distro"),
+                PathBuf::from("/mnt/wsl/docker/1")
+            ]
+        );
+    }
+
+    #[test]
+    fn a_file_system_mounted_once_has_no_door() {
+        // /home and /tmp of their own, as on many distributions.
+        let own = [
+            at(1, "/", "/"),
+            at(2, "/", "/home"),
+            at(3, "/", "/tmp"),
+            at(1, "/srv/data", "/srv/data"),
+        ];
+        assert!(
+            doors(
+                &own,
+                &[Path::new("/home/ana"), Path::new("/home/ana/project")]
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn the_last_of_the_deepest_mount_is_the_one_a_path_goes_through() {
+        let stacked = [at(1, "/", "/"), at(2, "/", "/home"), at(3, "/", "/home")];
+        let (mount, inside) = resolve(&stacked, Path::new("/home/ana")).unwrap();
+        assert_eq!((mount.device, inside), ((8, 3), PathBuf::from("/ana")));
+    }
+
+    #[test]
+    fn mountinfo_fields_are_read_unescaped() {
+        let line =
+            "36 35 98:0 /my\\040dir /mnt/my\\040mount rw,noatime master:1 - ext3 /dev/root rw";
+        let mount = mount_line(line).unwrap();
+        assert_eq!(mount.device, (98, 0));
+        assert_eq!(mount.root, PathBuf::from("/my dir"));
+        assert_eq!(mount.at, PathBuf::from("/mnt/my mount"));
+    }
+
+    #[test]
+    fn settings_that_name_a_program_are_known() {
+        for key in [
+            "core.hookspath",
+            "core.fsmonitor",
+            "include.path",
+            "includeif.gitdir:~/work/.path",
+            "filter.lfs.smudge",
+            "diff.pdf.textconv",
+            "merge.ours.driver",
+            "credential.https://example.com.helper",
+            "alias.st",
+            "gpg.ssh.program",
+        ] {
+            assert!(names_a_program(key), "{key}");
+        }
+        for key in [
+            "user.name",
+            "branch.main.merge",
+            "remote.origin.url",
+            "core.bare",
+        ] {
+            assert!(!names_a_program(key), "{key}");
+        }
+        assert_eq!(lexical(Path::new("/p/./a/../b")), PathBuf::from("/p/b"));
+        assert_eq!(lexical(Path::new("/p/../../x")), PathBuf::from("/x"));
     }
 }

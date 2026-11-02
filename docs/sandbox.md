@@ -26,16 +26,27 @@ Lokal runs itself again as `lokal --box <read|work> <folder> <scratch> <command>
    - empty folders over the secrets above;
    - in the work box, read-only binds over what would have something run or
      steer the model later: `.git`, the hook managers kept in the tree
-     (`.husky`, `.githooks`, `.pre-commit-config.yaml`, lefthook's files,
-     and the folder `core.hooksPath` names), `.vscode`, `.idea`, `.envrc`,
-     shell rc files, `.gitconfig`, `LOKAL.md` and `AGENTS.md`;
-   - an empty read-only tmpfs over every **second door** to the same files:
-     a mount of a file system the box restricts that shows a folder
-     somewhere else than where it lives. WSL mounts the whole distribution
-     again at `/mnt/wslg/distro`, and Docker Desktop binds folders of home
-     under `/mnt/wsl`. Landlock's rules follow the files, not the path, so
-     through such a door the work box could write `.git` and the read box
-     could read `~/.ssh`;
+     (`.husky`, `.githooks`, `.pre-commit-config.yaml`, lefthook's files),
+     `.vscode`, `.idea`, `.envrc`, shell rc files, `.gitconfig`, `LOKAL.md`
+     and `AGENTS.md`;
+   - also read-only in the work box, whatever in the tree git's settings
+     name for git to run or read: the hooks folder, a file the config
+     includes, an fsmonitor, filter, diff, merge or credential program, an
+     alias's script. git itself lists them (`git config --includes --list`,
+     every scope), before the box is set up. If one isn't there yet, the
+     work box isn't set up at all, since a command could make it;
+   - an empty read-only tmpfs (or `/dev/null`, for a file) over every
+     **second door** to the files of the home folder, Lokal's own folders
+     and, in the work box, the project. A door is another mount of the same
+     file system that shows those files somewhere else than their own mount
+     does. WSL mounts the whole distribution again at `/mnt/wslg/distro`,
+     and Docker Desktop binds folders of home under `/mnt/wsl`. Landlock's
+     rules follow the files, not the path, so through such a door the work
+     box could write `.git` and the read box could read `~/.ssh`. A file
+     system mounted once (a `/home` partition, `/tmp` on a tmpfs) and a
+     folder mounted at its own place (`/snap`) have none. The doors are
+     found before the box mounts anything of its own, and a working folder
+     reached through one is refused;
    - an empty `binfmt_misc` of its own, so WSL's interop doesn't apply inside.
 3. **Applies Landlock**, then `no_new_privs`:
    - writes are allowed beneath the writable folders above only;
@@ -104,7 +115,11 @@ Where the box can't be set up, the tests say so and pass.
 
 ## Phases
 
-1. `sandbox.rs`, `lokal --box` and the escape tests (`tests/sandbox.rs`), with no change in behavior. **Done, and reviewed once:** the review found five ways out (second doors, protected names not there yet, vsock, inherited descriptors, keys through the second doors), all closed or handed to phase 3. The 18 tests pass here. Taking out any one layer makes one fail: the hidden `/run`, seccomp and its socket list, the scopes, the hidden keys, the read-only folder under /tmp, the second doors, the closed descriptors, the hook folder, and the home check. About 7 ms a command, bash included, with the release build.
+1. `sandbox.rs`, `lokal --box` and the escape tests (`tests/sandbox.rs`), with no change in behavior. **Done, and reviewed twice:**
+   - The first review found five ways out: second doors, protected names not there yet, vsock, inherited descriptors, and keys through the second doors. All are closed or handed to phase 3.
+   - The second found that the first door rule broke the box where /tmp or /home has a file system of its own, and two ways around the hooks folder: one named but not there, and one set through an include.
+   - 24 escape tests and 5 unit tests pass here. Taking out any one layer makes one fail: the hidden `/run`, seccomp and its socket list, the scopes, the hidden keys, the read-only folder under /tmp, the second doors and how they're told apart, the closed descriptors, what git's settings name, the writable scratch folder, and the home check.
+   - About 7 ms a command, bash included, with the release build.
 2. The read-only list runs in the read box.
 3. Auto runs what its judge lets through in the work box, lists the files changed, and asks about new protected names.
 4. After real use, decide whether the box replaces the judge, which was this issue's first idea.

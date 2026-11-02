@@ -322,6 +322,178 @@ fn hooks_kept_in_the_tree_stay_read_only() {
     assert!(place.project.join("tools/other").exists());
 }
 
+/// `inside` run by `lokal --box <profile>` from a shell in a namespace of
+/// its own, after `setup` there; None where that can't be had.
+fn in_namespace(
+    setup: &str,
+    profile: &str,
+    folder: &str,
+    scratch: &str,
+    inside: &str,
+) -> Option<String> {
+    if !has("unshare") {
+        return None;
+    }
+    let line = format!(
+        "{setup} && exec {} --box {profile} {folder} {scratch} \"$0\"",
+        env!("CARGO_BIN_EXE_lokal")
+    );
+    let output = Command::new("unshare")
+        .args(["-Urm", "sh", "-c", &line, inside])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    if output.status.code() == Some(UNAVAILABLE) && text.contains("unshare")
+        || text.contains("unshare:")
+    {
+        eprintln!("no namespace here, skipped: {text}");
+        return None;
+    }
+    Some(text)
+}
+
+#[test]
+fn a_scratch_folder_on_its_own_tmpfs_stays_writable() {
+    // Fedora, Arch and Debian 13 keep /tmp on a tmpfs of its own.
+    let place = Place::new("tmpfs");
+    let mount = place.base.join("tmpfs");
+    fs::create_dir_all(&mount).unwrap();
+    let setup = format!(
+        "mount -t tmpfs none {m} && mkdir {m}/scratch",
+        m = mount.display()
+    );
+    let scratch = format!("{}/scratch", mount.display());
+    let Some(text) = in_namespace(
+        &setup,
+        "read",
+        &place.project.display().to_string(),
+        &scratch,
+        &format!("touch {scratch}/x && echo WROTE"),
+    ) else {
+        return;
+    };
+    assert!(text.contains("WROTE"), "{text}");
+}
+
+#[test]
+fn a_home_on_its_own_file_system_works() {
+    // A /home partition: home and the project on a file system mounted once.
+    let place = Place::new("partition");
+    let mount = place.base.join("partition");
+    fs::create_dir_all(&mount).unwrap();
+    let m = mount.display();
+    let setup = format!(
+        "mount -t tmpfs none {m} && mkdir -p {m}/ana/project && git init -q {m}/ana/project && export HOME={m}/ana"
+    );
+    let Some(text) = in_namespace(
+        &setup,
+        "work",
+        &format!("{m}/ana/project"),
+        &place.scratch.display().to_string(),
+        "touch made && echo WROTE",
+    ) else {
+        return;
+    };
+    assert!(text.contains("WROTE"), "{text}");
+}
+
+#[test]
+fn a_folder_on_a_windows_drive_can_use_the_read_box() {
+    let windows = Path::new("/mnt/c/Windows");
+    if !windows.is_dir() {
+        return;
+    }
+    let place = Place::new("drive");
+    let output = Command::new(env!("CARGO_BIN_EXE_lokal"))
+        .args(["--box", "read"])
+        .arg(windows)
+        .arg(&place.scratch)
+        .arg("ls >/dev/null && echo LISTED")
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(text.contains("LISTED"), "{text}");
+}
+
+#[test]
+fn what_gits_settings_name_in_the_tree_stays_read_only() {
+    let place = Place::new("named");
+    let git = |args: &[&str]| {
+        let done = Command::new("git")
+            .args(args)
+            .current_dir(&place.project)
+            .status()
+            .unwrap();
+        assert!(done.success());
+    };
+    // An include from the tree, a hooks folder named there, and a script
+    // git runs as it reads.
+    fs::write(
+        place.project.join("shared.gitconfig"),
+        "[core]\n\thooksPath = hk\n",
+    )
+    .unwrap();
+    fs::create_dir_all(place.project.join("hk")).unwrap();
+    fs::write(place.project.join("fsmonitor.sh"), "#!/bin/sh\n").unwrap();
+    git(&["config", "include.path", "../shared.gitconfig"]);
+    git(&["config", "core.fsmonitor", "./fsmonitor.sh"]);
+    let Some(_) = place.run(
+        "work",
+        "echo x > hk/pre-commit; echo '[core] fsmonitor = x' >> shared.gitconfig; \
+         echo evil >> fsmonitor.sh; touch other; true",
+    ) else {
+        return;
+    };
+    assert!(!place.project.join("hk/pre-commit").exists());
+    assert_eq!(
+        fs::read_to_string(place.project.join("shared.gitconfig")).unwrap(),
+        "[core]\n\thooksPath = hk\n"
+    );
+    assert_eq!(
+        fs::read_to_string(place.project.join("fsmonitor.sh")).unwrap(),
+        "#!/bin/sh\n"
+    );
+    assert!(place.project.join("other").exists());
+}
+
+#[test]
+fn what_gits_settings_name_but_isnt_there_keeps_the_work_box_shut() {
+    let place = Place::new("unnamed");
+    let configured = Command::new("git")
+        .args(["config", "core.hooksPath", "tools/hooks"])
+        .current_dir(&place.project)
+        .status()
+        .unwrap();
+    assert!(configured.success());
+    let output = Command::new(env!("CARGO_BIN_EXE_lokal"))
+        .args(["--box", "work"])
+        .arg(&place.project)
+        .arg(&place.scratch)
+        .arg("mkdir -p tools/hooks && echo x > tools/hooks/pre-commit")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(UNAVAILABLE));
+    assert!(!place.project.join("tools/hooks").exists());
+}
+
+#[test]
+fn a_hooks_path_outside_the_project_is_left_to_the_rest_of_the_box() {
+    let place = Place::new("upward");
+    let configured = Command::new("git")
+        .args(["config", "core.hooksPath", "../../.."])
+        .current_dir(&place.project)
+        .status()
+        .unwrap();
+    assert!(configured.success());
+    let Some((code, text)) = place.run("work", "touch made && echo WROTE") else {
+        return;
+    };
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("WROTE"), "{text}");
+}
+
 #[test]
 fn nothing_outside_can_be_signalled() {
     let place = Place::new("signals");
