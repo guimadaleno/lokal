@@ -10,8 +10,17 @@ A command inside it:
 - **Has no network:** no TCP, no UDP, no DNS.
 - **Reaches no socket** outside it: `docker.sock` (root on the machine), the ssh and gpg agents, dbus, other Lokal or Claude sessions, and the Windows host's vsock.
 - **Runs nothing of Windows':** no `.exe`, nothing on `/mnt/<drive>`, no `wslpath`, which is `/init`.
-- **Signals no process outside it,** Lokal included.
-- **Doesn't see the person's keys:** `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config/gh`, `~/.kube`, `~/.docker`, `~/.netrc` and `~/.git-credentials`, nor Lokal's own files. They're covered by empty mounts.
+- **Signals no process outside it,** Lokal included, and shares no IPC with them: no SysV queue, memory or semaphore, no POSIX queue.
+- **Reaches none of the person's terminals,** nor a device's settings (an ioctl): not another terminal's keys, not WSL's GPU channel to Windows (`/dev/dxg`).
+- **Doesn't see the person's keys:**
+  - `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.kube` and `~/.docker`;
+  - `~/.config/gh`, `gcloud`, `rclone`, `op` and `git/credentials`;
+  - `~/.password-store` and the keyrings;
+  - Claude Code's `~/.claude` and `~/.claude.json`;
+  - `~/.netrc`, `~/.git-credentials`, cargo's, npm's and PyPI's credentials;
+  - Lokal's own files.
+
+  They're covered by empty mounts. Variables whose name says they hold a secret (a token, a password, a key, `AWS_*`) are dropped.
 
 One hole voids the promise, so each line has a test that tries to get out (below).
 
@@ -19,16 +28,27 @@ One hole voids the promise, so each line has a test that tries to get out (below
 
 Lokal runs itself again as `lokal --box <read|work> <folder> <scratch> <command>`. A fresh process with one thread can set up mounts safely, which the forked child of a threaded Lokal can't. That process:
 
-1. **Unshares** the user, mount and network namespaces, and maps the person's uid to itself. Only `lo` exists in the new network namespace.
+1. **Unshares** the user, mount, network and IPC namespaces, and maps the person's uid to itself. Only `lo` exists in the new network namespace.
 2. **Mounts:**
-   - a tmpfs over `/run` and `/var/run`;
+   - a tmpfs over `/run` and `/var/run`, and an empty one over `/dev/pts`;
    - a fresh tmpfs at `/tmp`, with the scratch folder bound back into it;
    - empty folders over the secrets above;
-   - in the work box, read-only binds over what would have something run or
-     steer the model later: `.git`, the hook managers kept in the tree
-     (`.husky`, `.githooks`, `.pre-commit-config.yaml`, lefthook's files),
-     `.vscode`, `.idea`, `.envrc`, shell rc files, `.gitconfig`, `LOKAL.md`
-     and `AGENTS.md`;
+   - in the work box, read-only binds over what a tool runs or reads on its
+     own later, at the project's root (`sandbox::PROTECTED`, after Claude
+     Code's own list):
+     - git's `.git`, `.gitmodules` and `.gitconfig`, and the hook managers
+       kept in the tree (`.husky`, `.githooks`, `.pre-commit-config.yaml`,
+       lefthook's files);
+     - editors' and agents' settings: `.vscode`, `.idea`, `.claude`,
+       `.mcp.json`, dev containers;
+     - shell rc files and `.envrc`;
+     - package managers' and build tools' settings and loaders (`.npmrc`,
+       `.pnp.cjs`, `.yarnrc.yml`, bazel's, the gradle and maven wrappers);
+     - `LOKAL.md` and `AGENTS.md` from the root down to the working
+       folder;
+     - and every `.git` of a repository inside the project, found by
+       walking it (no links, no `node_modules`), about 9 ms for 6,600
+       entries;
    - git's settings, as git itself lists them (`git config --includes
      --list`, every scope) before the box is set up, decide whether the
      work box is set up at all:
@@ -61,7 +81,8 @@ Lokal runs itself again as `lokal --box <read|work> <folder> <scratch> <command>
 3. **Applies Landlock**, then `no_new_privs`:
    - writes are allowed beneath the writable folders above only;
    - execution is allowed beneath `/usr`, `/bin`, `/sbin`, `/lib*`, `/opt`, the home folder and the project, never `/init` or `/mnt`;
-   - the signal and abstract-socket scopes are on.
+   - the signal and abstract-socket scopes are on;
+   - an ioctl on a device is refused, but on `/dev/null`.
    - It needs Landlock ABI 6 (Linux 6.12), the first with the scopes.
 4. **Filters calls with seccomp:**
    - `socket()` makes only `AF_INET`, `AF_INET6` and `AF_NETLINK` sockets. A Unix socket could be reached by its path (Landlock doesn't cover connecting to one), and vsock reaches the Windows host past the network namespace; `socketpair` still works;
@@ -90,7 +111,7 @@ Everything is syscalls through `libc`: no bubblewrap and no new crate. Setting i
 - **The work box**, for what auto's judge lets through. It also makes the project writable.
   - Only in a git repository, and never in one that holds the home folder, or `/`.
   - Writes go straight in, except to the read-only files above. After the command, Lokal lists the files it changed, from `git status`. That was chosen over an overlay to review first, which would be slower to apply for builds.
-  - **A protected name that wasn't there can't be covered,** since a mount needs something to sit on. So right after a command in the work box, Lokal looks for protected names that weren't there before (at the project's root, and the notes from there down to the working folder). For each one it shows the file and asks whether it stays, opening on No, which removes it. That's phase 3's, the caller's, job.
+  - **A protected name that wasn't there can't be covered,** since a mount needs something to sit on. So right after a command in the work box, Lokal looks for protected names that weren't there before: at the project's root, the notes from there down to the working folder, and a new `.git` at any depth. For each one it shows the file and asks whether it stays, opening on No, which removes it. That's phase 3's, the caller's, job.
 
 **What the person approves runs outside the box, as today.** It may need the network (`git push`, `npm install`).
 
@@ -131,7 +152,8 @@ Where the box can't be set up, the tests say so and pass.
    - The second found that the first door rule broke the box where /tmp or /home has a file system of its own, and two ways around the hooks folder: one named but not there, and one set through an include.
    - The third found that a list of the settings that run a program kept missing some, and that git failing to list them let everything through. The rule above, the plain list for the repository's own, replaced it.
    - The fourth found the person's everyday settings refusing the box (a ref in an alias, a Windows program with a space under WSL), now told apart.
-   - 27 escape tests and 5 unit tests pass here. Taking out any one layer makes one fail: the hidden `/run`, seccomp and its socket list, the scopes, the hidden keys, the read-only folder under /tmp, the second doors and how they're told apart, the closed descriptors, what git's settings name, the writable scratch folder, and the home check.
+   - A fresh review then found the box sharing IPC and the person's terminals, missing tools' files Claude Code protects, and leaving nested repositories' `.git` writable.
+   - 32 escape tests and 5 unit tests pass here. Taking out any one layer makes one fail: the hidden `/run`, seccomp and its socket list, the scopes, the hidden keys, the read-only folder under /tmp, the second doors and how they're told apart, the closed descriptors, what git's settings name, the writable scratch folder, and the home check.
    - About 7 ms a command, bash included, with the release build.
 2. The read-only list runs in the read box.
 3. Auto runs what its judge lets through in the work box, lists the files changed, and asks about new protected names.

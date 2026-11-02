@@ -39,28 +39,77 @@ const SECRET_FOLDERS: &[&str] = &[
     ".docker",
     ".config/gh",
     ".config/gcloud",
+    ".config/rclone",
+    ".config/op",
+    ".password-store",
+    ".local/share/keyrings",
+    // Claude Code's own: its credentials and settings.
+    ".claude",
 ];
-const SECRET_FILES: &[&str] = &[".netrc", ".git-credentials"];
-/// In the work box, read-only: git's hooks and settings, and the hook
-/// managers that keep them in the tree, editor tasks, what a shell runs on
-/// its own, and the project's notes for the model. A name that isn't there
-/// yet can't be covered: the caller checks for new ones after the command.
+const SECRET_FILES: &[&str] = &[
+    ".netrc",
+    ".git-credentials",
+    ".config/git/credentials",
+    ".cargo/credentials",
+    ".cargo/credentials.toml",
+    ".npmrc",
+    ".pypirc",
+    ".claude.json",
+];
+/// In the work box, read-only at the project's root: what a tool runs or
+/// reads on its own later, when the person opens the folder or runs it
+/// outside the box. git's hooks, settings and submodules, and the hook
+/// managers that keep them in the tree; editor tasks and agents' settings
+/// (Claude Code's, MCP servers); what a shell runs on its own; package
+/// managers' and build tools' settings and loaders; dev containers; the
+/// project's notes for the model. Claude Code's sandbox protects the same,
+/// and the list follows its. A name that isn't there yet can't be covered:
+/// the caller checks for new ones after the command.
 pub const PROTECTED: &[&str] = &[
     ".git",
+    ".gitmodules",
+    ".gitconfig",
     ".githooks",
     ".husky",
     ".pre-commit-config.yaml",
     "lefthook.yml",
     "lefthook.yaml",
     ".lefthook.yml",
+    ".lefthook.yaml",
     ".vscode",
     ".idea",
+    ".claude",
+    ".claude.json",
+    ".mcp.json",
+    ".devcontainer",
+    ".devcontainer.json",
     ".envrc",
     ".bashrc",
-    ".zshrc",
-    ".profile",
     ".bash_profile",
-    ".gitconfig",
+    ".bash_login",
+    ".bash_logout",
+    ".bash_aliases",
+    ".profile",
+    ".zshrc",
+    ".zshenv",
+    ".zprofile",
+    ".zlogin",
+    ".zlogout",
+    ".ripgreprc",
+    ".npmrc",
+    ".yarnrc",
+    ".yarnrc.yml",
+    ".pnp.cjs",
+    ".pnp.loader.mjs",
+    ".pnpmfile.cjs",
+    "bunfig.toml",
+    ".bunfig.toml",
+    ".bazelrc",
+    ".bazelversion",
+    ".bazeliskrc",
+    "gradle/wrapper/gradle-wrapper.properties",
+    ".mvn/wrapper/maven-wrapper.properties",
+    "pyrightconfig.json",
 ];
 pub const NOTES: &[&str] = &["LOKAL.md", "AGENTS.md"];
 /// Programs run only from here, the home folder and what the box may write:
@@ -68,7 +117,8 @@ pub const NOTES: &[&str] = &["LOKAL.md", "AGENTS.md"];
 const PROGRAM_FOLDERS: &[&str] = &[
     "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32", "/opt", "/snap", "/nix",
 ];
-/// Variables that point at what the box hides.
+/// Variables that point at what the box hides. Those that look like they
+/// hold a secret go too (`secret_like`).
 const DROPPED: &[&str] = &[
     "SSH_AUTH_SOCK",
     "SSH_AGENT_PID",
@@ -110,6 +160,11 @@ pub fn enter(args: impl Iterator<Item = String>) -> ExitCode {
     for variable in DROPPED {
         shell.env_remove(variable);
     }
+    for (name, _) in std::env::vars_os() {
+        if secret_like(&name.to_string_lossy()) {
+            shell.env_remove(name);
+        }
+    }
     // Nothing comes in but the command's own output: a descriptor open on
     // a file or a folder outside would be a way past every layer. And no
     // terminal to type into.
@@ -146,7 +201,11 @@ fn set_up(profile: Profile, folder: &Path, scratch: &Path) -> Result<(), String>
     }
     let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
     check(
-        unsafe { libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNS | libc::CLONE_NEWNET) },
+        unsafe {
+            libc::unshare(
+                libc::CLONE_NEWUSER | libc::CLONE_NEWNS | libc::CLONE_NEWNET | libc::CLONE_NEWIPC,
+            )
+        },
         "unshare",
     )?;
     write("/proc/self/setgroups", "deny")?;
@@ -201,6 +260,20 @@ fn set_up(profile: Profile, folder: &Path, scratch: &Path) -> Result<(), String>
     if Path::new("/dev/shm").is_dir() {
         tmpfs("/dev/shm", 0)?;
     }
+    // The person's terminals: a pty there could be read, or set up anew.
+    if Path::new("/dev/pts").is_dir() {
+        tmpfs("/dev/pts", libc::MS_RDONLY)?;
+    }
+    // POSIX message queues of the box's own IPC namespace.
+    if Path::new("/dev/mqueue").is_dir() {
+        let _ = mount(
+            Some(Path::new("mqueue")),
+            "/dev/mqueue",
+            Some("mqueue"),
+            0,
+            None,
+        );
+    }
     for (path, tree) in &kept {
         if !path.exists() {
             fs::create_dir_all(path).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -235,7 +308,11 @@ fn set_up(profile: Profile, folder: &Path, scratch: &Path) -> Result<(), String>
         }
     }
     if profile == Profile::Work {
-        for path in protected(&project, folder).into_iter().chain(named) {
+        for path in protected(&project, folder)
+            .into_iter()
+            .chain(named)
+            .chain(nested_git(&project))
+        {
             read_only(&path)?;
         }
     }
@@ -331,7 +408,8 @@ fn paths_in(project: &Path, home: &Path, key: &str, value: &str) -> Vec<(PathBuf
                 None => project.join(&word),
             });
             let first = path.strip_prefix(project).ok()?.components().next()?;
-            let surely = key == "core.hookspath"
+            let surely = RUN_BY_GIT.contains(&key)
+                || (key.starts_with("gpg.") && key.ends_with(".program"))
                 || include
                 || word.starts_with("./")
                 || (word.contains('/') && project.join(first).is_dir());
@@ -364,6 +442,66 @@ fn words(value: &str) -> Vec<String> {
         words.push(word);
     }
     words
+}
+
+/// Settings whose program git runs by itself: a path in them always means
+/// a file, even one that reads like a ref (`scripts/x`).
+const RUN_BY_GIT: &[&str] = &[
+    "core.hookspath",
+    "core.fsmonitor",
+    "core.pager",
+    "core.editor",
+    "sequence.editor",
+    "core.sshcommand",
+    "core.askpass",
+    "diff.external",
+    "gpg.program",
+];
+
+/// A variable whose name says it holds a secret: a token, a password, a
+/// key, an account's.
+fn secret_like(name: &str) -> bool {
+    let name = name.to_ascii_uppercase();
+    [
+        "TOKEN",
+        "SECRET",
+        "PASSWORD",
+        "PASSWD",
+        "CREDENTIAL",
+        "API_KEY",
+        "PRIVATE_KEY",
+    ]
+    .iter()
+    .any(|word| name.contains(word))
+        || name.starts_with("AWS_")
+        || name.ends_with("_KEY")
+}
+
+/// Repositories inside the project, each `.git` below the root: git would
+/// run what their settings name when someone works there later. Links aren't
+/// followed, and node_modules, a package manager's, is left out.
+fn nested_git(project: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut folders = vec![project.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        let Ok(entries) = fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let name = entry.file_name();
+            if name == ".git" {
+                if folder != project {
+                    found.push(entry.path());
+                }
+            } else if kind.is_dir() && name != "node_modules" {
+                folders.push(entry.path());
+            }
+        }
+    }
+    found
 }
 
 /// `path` with its `.` and `..` worked out on the text alone.
@@ -516,6 +654,9 @@ const MAKE_BLOCK: u64 = 1 << 11;
 const MAKE_SYM: u64 = 1 << 12;
 const REFER: u64 = 1 << 13;
 const TRUNCATE: u64 = 1 << 14;
+/// An ioctl on a device: a terminal's settings, or WSL's GPU channel to
+/// Windows (/dev/dxg). ABI 5.
+const IOCTL_DEV: u64 = 1 << 15;
 const WRITES: u64 = WRITE_FILE
     | REMOVE_DIR
     | REMOVE_FILE
@@ -563,7 +704,7 @@ fn landlock(profile: Profile, project: &Path, scratch: &Path, home: &Path) -> Re
         return Err(format!("landlock ABI {abi}, {LANDLOCK_ABI} needed"));
     }
     let attr = RulesetAttr {
-        handled_access_fs: WRITES | EXECUTE,
+        handled_access_fs: WRITES | EXECUTE | IOCTL_DEV,
         handled_access_net: 0,
         scoped: SCOPE_ABSTRACT_UNIX_SOCKET | SCOPE_SIGNAL,
     };
@@ -590,7 +731,11 @@ fn landlock(profile: Profile, project: &Path, scratch: &Path, home: &Path) -> Re
     for path in &writable {
         allow(&ruleset, path, WRITES | EXECUTE)?;
     }
-    allow(&ruleset, Path::new("/dev/null"), WRITE_FILE | TRUNCATE)?;
+    allow(
+        &ruleset,
+        Path::new("/dev/null"),
+        WRITE_FILE | TRUNCATE | IOCTL_DEV,
+    )?;
     for folder in PROGRAM_FOLDERS.iter().map(Path::new).chain([home]) {
         allow(&ruleset, folder, EXECUTE)?;
     }
@@ -617,7 +762,7 @@ fn allow(ruleset: &OwnedFd, path: &Path, access: u64) -> Result<(), String> {
     let access = if target.metadata().is_ok_and(|meta| meta.is_dir()) {
         access
     } else {
-        access & (EXECUTE | WRITE_FILE | TRUNCATE)
+        access & (EXECUTE | WRITE_FILE | TRUNCATE | IOCTL_DEV)
     };
     let rule = PathBeneathAttr {
         allowed_access: access,
@@ -927,6 +1072,13 @@ mod tests {
         );
         assert!(found("include.path", "local.gitconfig").is_empty());
         assert_eq!(words("a \"b c\" d\\ e 'f g'"), ["a", "b c", "d e", "f g"]);
+        // What git runs by itself means a file, even one that reads like a ref.
+        assert_eq!(
+            found("core.pager", "scripts/x"),
+            [(PathBuf::from("/nonexistent/ana/p/scripts/x"), true)]
+        );
+        assert!(secret_like("GH_TOKEN") && secret_like("AWS_REGION") && secret_like("MY_API_KEY"));
+        assert!(!secret_like("PATH") && !secret_like("LANG") && !secret_like("MONKEY"));
         assert_eq!(lexical(Path::new("/p/./a/../b")), PathBuf::from("/p/b"));
     }
 }

@@ -574,6 +574,142 @@ fn a_file_the_persons_settings_include_from_the_tree_stays_read_only() {
 }
 
 #[test]
+fn ipc_outside_is_out_of_reach() {
+    if !has("ipcmk") {
+        return;
+    }
+    let place = Place::new("ipc");
+    let made = Command::new("ipcmk").arg("-Q").output().unwrap();
+    let text = String::from_utf8_lossy(&made.stdout);
+    let Some(id) = text.split_whitespace().last().map(str::to_string) else {
+        return;
+    };
+    let inside = place.run("read", &format!("ipcrm -q {id} && echo REMOVED; true"));
+    let still_there = Command::new("ipcs")
+        .args(["-q", "-i", &id])
+        .status()
+        .is_ok_and(|status| status.success());
+    let _ = Command::new("ipcrm").args(["-q", &id]).status();
+    let Some((_, text)) = inside else {
+        return;
+    };
+    assert!(!text.contains("REMOVED"), "{text}");
+    assert!(still_there, "the box removed a queue outside");
+}
+
+#[test]
+fn the_persons_terminals_and_devices_are_out_of_reach() {
+    let place = Place::new("devices");
+    let mut line = String::from("echo PTS=$(ls -A /dev/pts | wc -l)");
+    if has("python3") {
+        line.push_str(
+            "; python3 -c 'import fcntl, termios\n\
+try:\n fcntl.ioctl(open(\"/dev/zero\"), termios.TCGETS, bytes(64))\n\
+except OSError as e: print(\"IOCTL\", e.errno)'",
+        );
+    }
+    let Some((_, text)) = place.run("read", &line) else {
+        return;
+    };
+    assert!(text.contains("PTS=0"), "{text}");
+    if has("python3") {
+        // EACCES from Landlock, where outside it's ENOTTY.
+        assert!(text.contains("IOCTL 13"), "{text}");
+    }
+}
+
+#[test]
+fn what_tools_read_on_their_own_stays_read_only() {
+    let place = Place::new("tools");
+    fs::create_dir_all(place.project.join(".claude")).unwrap();
+    for name in [
+        ".claude/settings.json",
+        ".mcp.json",
+        ".gitmodules",
+        ".npmrc",
+    ] {
+        fs::write(place.project.join(name), "kept\n").unwrap();
+    }
+    let line =
+        "for f in .claude/settings.json .mcp.json .gitmodules .npmrc; do echo x >> $f; done; true";
+    let Some(_) = place.run("work", line) else {
+        return;
+    };
+    for name in [
+        ".claude/settings.json",
+        ".mcp.json",
+        ".gitmodules",
+        ".npmrc",
+    ] {
+        assert_eq!(
+            fs::read_to_string(place.project.join(name)).unwrap(),
+            "kept\n",
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_repository_inside_the_project_stays_read_only() {
+    let place = Place::new("nested");
+    let nested = place.project.join("vendor/lib");
+    fs::create_dir_all(&nested).unwrap();
+    let initialized = Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&nested)
+        .status()
+        .unwrap();
+    assert!(initialized.success());
+    let config = fs::read_to_string(nested.join(".git/config")).unwrap();
+    let Some(_) = place.run(
+        "work",
+        "git -C vendor/lib config core.fsmonitor 'sh -c x'; touch vendor/lib/file; true",
+    ) else {
+        return;
+    };
+    assert_eq!(
+        fs::read_to_string(nested.join(".git/config")).unwrap(),
+        config
+    );
+    assert!(
+        nested.join("file").exists(),
+        "the rest of the nested folder stays writable"
+    );
+}
+
+#[test]
+fn more_of_the_persons_keys_and_tokens_stay_out() {
+    let place = Place::new("more-keys");
+    let home = place.base.join("home");
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    fs::write(home.join(".claude/.credentials.json"), "SECRET-CLAUDE\n").unwrap();
+    fs::create_dir_all(home.join(".config/git")).unwrap();
+    fs::write(home.join(".config/git/credentials"), "SECRET-GIT\n").unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lokal"));
+    command
+        .args(["--box", "read"])
+        .arg(&place.project)
+        .arg(&place.scratch)
+        .arg("cat ~/.claude/.credentials.json ~/.config/git/credentials; echo \"[$GH_TOKEN$AWS_SECRET_ACCESS_KEY$MY_API_KEY]\"; echo \"lang[$LANG]\"")
+        .env("HOME", &home)
+        .env("GH_TOKEN", "SECRET-TOKEN")
+        .env("AWS_SECRET_ACCESS_KEY", "SECRET-AWS")
+        .env("MY_API_KEY", "SECRET-API")
+        .env("LANG", "C.UTF-8");
+    let output = command.output().unwrap();
+    if output.status.code() == Some(UNAVAILABLE) {
+        return;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(!text.contains("SECRET"), "{text}");
+    assert!(
+        text.contains("[]") && text.contains("lang[C.UTF-8]"),
+        "{text}"
+    );
+}
+
+#[test]
 fn nothing_outside_can_be_signalled() {
     let place = Place::new("signals");
     let line = format!("kill -0 {} && echo SIGNALLED", std::process::id());
