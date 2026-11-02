@@ -306,6 +306,7 @@ dependencies.
 | `tools/command.rs` | run_command and the person's `!` commands: who decides, what the model hears |
 | `tools/files.rs` | read_file, write_file and edit_file, and where a change may open on Yes |
 | `tools/remember.rs` | remember: a line added to user.md, or one swapped for it |
+| `tools/mail.rs` | list_sessions and mail, shown as steps |
 | `allowlist.rs` | Which commands run without asking, and which questions open on Yes |
 | `gitconfig.rs` | What a repository's own git settings would have git run |
 | `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it |
