@@ -86,6 +86,17 @@ enum Failure {
     Error(String),
 }
 
+/// How a turn ended.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Turn {
+    /// The model answered.
+    Answered,
+    /// The person stopped the turn, or said no to a step.
+    SteppedIn,
+    /// No answer came: the server failed, or the reply ran out of room.
+    Failed,
+}
+
 impl Conversation {
     pub fn new(server: Server, facts: Facts, peers: Option<Peers>) -> Self {
         let mut conversation = Conversation {
@@ -228,12 +239,11 @@ impl Conversation {
     }
 
     /// Sends one request and works on it, tools and all, until the model
-    /// answers, the person stops it, or something fails. True when the
-    /// person stepped in: stopped the turn or said no to a step. `asked` is
-    /// what the person typed, for auto's judge; None when the request is
-    /// another session's mail, and then what the person's own commands gave
-    /// waits for one of theirs.
-    pub fn send(&mut self, request: &str, input: &mut Input, asked: Option<&str>) -> bool {
+    /// answers, the person stops it, or something fails. `asked` is what the
+    /// person typed, for auto's judge; None when the request is another
+    /// session's mail, and then what the person's own commands gave waits
+    /// for one of theirs.
+    pub fn send(&mut self, request: &str, input: &mut Input, asked: Option<&str>) -> Turn {
         interrupt::clear();
         let on_mail = asked.is_none();
         if let Some(asked) = asked {
@@ -242,7 +252,7 @@ impl Conversation {
             self.asked.drain(..extra);
         }
         self.written.clear();
-        let mut stepped_in = false;
+        let mut end = Turn::Answered;
         // Other sessions hear it's working: their mail waits for the turn to end.
         if let Some(peers) = &self.peers {
             peers.set_busy(true);
@@ -286,7 +296,7 @@ impl Conversation {
             let reply = match reply {
                 Ok(reply) => reply,
                 Err(Failure::Stopped) => {
-                    stepped_in = true;
+                    end = Turn::SteppedIn;
                     eprintln!("{}", style::gray(text::STOPPED));
                     // Otherwise the model takes the stopped request up again next turn.
                     self.messages
@@ -294,6 +304,7 @@ impl Conversation {
                     break;
                 }
                 Err(Failure::Error(message)) => {
+                    end = Turn::Failed;
                     eprintln!("{}", style::red(&message));
                     // Nothing came of the request, so trying again won't send
                     // it twice; what the person's commands gave goes with it.
@@ -326,6 +337,7 @@ impl Conversation {
                     (true, None) => text::RAN_OUT.to_string(),
                     _ => text::NO_ANSWER.to_string(),
                 };
+                end = Turn::Failed;
                 eprintln!("{}", style::red(&message));
                 // So the model doesn't take the unanswered request up again unasked.
                 self.messages
@@ -347,6 +359,7 @@ impl Conversation {
                     );
                 }
                 if asked_again {
+                    end = Turn::Failed;
                     eprintln!("{}", style::red(text::CUT_SHORT_AGAIN));
                     break;
                 }
@@ -358,7 +371,7 @@ impl Conversation {
                 break;
             }
             if !self.run_tools(&reply, input, on_mail) {
-                stepped_in = true;
+                end = Turn::SteppedIn;
                 break;
             }
         }
@@ -368,7 +381,7 @@ impl Conversation {
         if let Some(peers) = &self.peers {
             peers.set_busy(false);
         }
-        stepped_in
+        end
     }
 
     /// Runs the tools the model asked for, each in the mode chosen when it

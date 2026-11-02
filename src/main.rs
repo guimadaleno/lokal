@@ -295,7 +295,7 @@ fn take_line(
 /// no in one, mail waits for their next request: two models answering each
 /// other would otherwise start the next turn at once.
 fn turn(conversation: &mut Conversation, input: &mut Input, request: &str, asked: Option<&str>) {
-    if conversation.send(request, input, asked)
+    if conversation.send(request, input, asked) == conversation::Turn::SteppedIn
         && asked.is_none()
         && let Some(peers) = conversation.peers()
     {
