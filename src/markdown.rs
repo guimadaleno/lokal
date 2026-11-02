@@ -4,11 +4,8 @@
 //! the rest of the screen. Only the screen is styled: the conversation keeps
 //! the model's own text.
 
-const BOLD_ON: &str = "\x1b[1m";
-const BOLD_OFF: &str = "\x1b[22m";
-/// A soft blue-gray: orange already marks the person's lines and Lokal acting.
-const CODE_ON: &str = "\x1b[38;5;110m";
-const CODE_OFF: &str = "\x1b[39m";
+use crate::style::{BOLD_OFF, BOLD_ON, CODE_OFF, CODE_ON};
+
 const FENCE: &str = "```";
 /// A `[` that hasn't become a link within this many bytes is just a bracket.
 const LONGEST_LINK: usize = 300;

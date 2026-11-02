@@ -103,6 +103,15 @@ pub fn green(text: &str) -> String {
     paint("32", text)
 }
 
+/// Bold and code in an answer, switched on and off apart, since the
+/// Markdown styling opens and closes them as the answer streams; each
+/// closes only its own style. Used on a terminal only.
+pub const BOLD_ON: &str = "\x1b[1m";
+pub const BOLD_OFF: &str = "\x1b[22m";
+/// A soft blue-gray: orange already marks the person's lines and Lokal acting.
+pub const CODE_ON: &str = "\x1b[38;5;110m";
+pub const CODE_OFF: &str = "\x1b[39m";
+
 /// Columns in the terminal, asked of it each time: the window may have changed.
 pub fn terminal_width() -> Option<usize> {
     let terminal = OpenOptions::new().read(true).open("/dev/tty").ok()?;
