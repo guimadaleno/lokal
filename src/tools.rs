@@ -36,6 +36,8 @@ const CONTEXT_FULL: &str = "Answer with what you have, or, if that isn't enough,
 const NOTE_LIMIT: usize = 200;
 /// How a file change's result starts, for the model and for `written_path`.
 const WROTE: &str = "Wrote";
+/// A file change that changes nothing, which isn't put to the person.
+const UNCHANGED: &str = "Nothing to do: the file already has that content.";
 
 pub enum Outcome {
     /// The result for the model.
@@ -492,6 +494,9 @@ fn write_file(
     let path = writable_path(args)?;
     let content = text_arg(args, "content")?;
     let old = read_text(&path)?;
+    if old.as_deref() == Some(content) {
+        return Ok(Outcome::Done(UNCHANGED.into()));
+    }
     let step = if old.is_some() {
         text::STEP_EDIT
     } else {
@@ -538,6 +543,9 @@ fn edit_file(
         }
     }
     let new = old.replacen(old_text, new_text, 1);
+    if new == old {
+        return Ok(Outcome::Done(UNCHANGED.into()));
+    }
     let asking = asking(write_opens_on_yes(&path, scratch), mode);
     propose(&path, text::STEP_EDIT, &old, &new, input, asking, peers)
 }
@@ -807,11 +815,6 @@ fn propose(
     asking: Asking,
     peers: Option<&Peers>,
 ) -> Result<Outcome, String> {
-    if old == new && step == text::STEP_EDIT {
-        return Ok(Outcome::Done(
-            "Nothing to do: the file already has that content.".into(),
-        ));
-    }
     eprintln!("{} {}", style::accent(step), shown(path));
     let rest = diff::show(old, new);
     if asking != Asking::Not
