@@ -86,7 +86,10 @@ fn os_name() -> String {
 
 /// Asks Windows where Desktop and Documents really are: OneDrive can move them.
 fn windows_folders() -> Vec<(&'static str, String)> {
-    let output = Command::new("reg.exe")
+    let Some(reg) = program("reg.exe") else {
+        return Vec::new();
+    };
+    let output = Command::new(reg)
         .args([
             "query",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders",
