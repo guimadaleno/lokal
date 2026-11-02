@@ -31,3 +31,11 @@ jobs:
 
       - name: Tests
         run: cargo test
+
+      # The release is static, built with musl, whose libc differs from
+      # glibc's in types and constants: checked here rather than at the tag.
+      # LOKAL_RELEASE_BUILD compiles update.rs in, as the release does.
+      - name: The release's target compiles
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          LOKAL_RELEASE_BUILD=1 cargo check --all-targets --target x86_64-unknown-linux-musl
