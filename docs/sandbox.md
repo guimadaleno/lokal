@@ -1,6 +1,6 @@
 # The box (#2)
 
-A design, not built yet. Commands that run without the person's yes run in a box the kernel enforces. Then a hole in reading a command's text (a glob, a brace) or a judge's mistake stays inside the box.
+Phase 1 is built (below); nothing runs in the box yet. Commands that run without the person's yes run in a box the kernel enforces. Then a hole in reading a command's text (a glob, a brace) or a judge's mistake stays inside the box.
 
 ## What the box promises
 
@@ -8,7 +8,7 @@ A command inside it:
 
 - **Writes** only in the session's scratch folder and a private `/tmp`, plus the project folder in the work box (below), whose `.git` stays read-only.
 - **Has no network:** no TCP, no UDP, no DNS.
-- **Reaches no socket** outside it: `docker.sock` (root on the machine), the ssh and gpg agents, dbus, and other Lokal or Claude sessions.
+- **Reaches no socket** outside it: `docker.sock` (root on the machine), the ssh and gpg agents, dbus, other Lokal or Claude sessions, and the Windows host's vsock.
 - **Runs nothing of Windows':** no `.exe`, nothing on `/mnt/<drive>`, no `wslpath`, which is `/init`.
 - **Signals no process outside it,** Lokal included.
 - **Doesn't see the person's keys:** `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config/gh`, `~/.kube`, `~/.docker`, `~/.netrc` and `~/.git-credentials`, nor Lokal's own files. They're covered by empty mounts.
@@ -17,7 +17,7 @@ One hole voids the promise, so each line has a test that tries to get out (below
 
 ## How
 
-Lokal runs itself again as `lokal --box <profile> -- bash -c <command>`. A fresh process with one thread can set up mounts safely, which the forked child of a threaded Lokal can't. That process:
+Lokal runs itself again as `lokal --box <read|work> <folder> <scratch> <command>`. A fresh process with one thread can set up mounts safely, which the forked child of a threaded Lokal can't. That process:
 
 1. **Unshares** the user, mount and network namespaces, and maps the person's uid to itself. Only `lo` exists in the new network namespace.
 2. **Mounts:**
@@ -25,20 +25,30 @@ Lokal runs itself again as `lokal --box <profile> -- bash -c <command>`. A fresh
    - a fresh tmpfs at `/tmp`, with the scratch folder bound back into it;
    - empty folders over the secrets above;
    - in the work box, read-only binds over what would have something run or
-    steer the model later: `.git`, `.vscode`, `.idea`, `.envrc`, shell rc
-    files, `.gitconfig`, `LOKAL.md` and `AGENTS.md`;
+     steer the model later: `.git`, the hook managers kept in the tree
+     (`.husky`, `.githooks`, `.pre-commit-config.yaml`, lefthook's files,
+     and the folder `core.hooksPath` names), `.vscode`, `.idea`, `.envrc`,
+     shell rc files, `.gitconfig`, `LOKAL.md` and `AGENTS.md`;
+   - an empty read-only tmpfs over every **second door** to the same files:
+     a mount of a file system the box restricts that shows a folder
+     somewhere else than where it lives. WSL mounts the whole distribution
+     again at `/mnt/wslg/distro`, and Docker Desktop binds folders of home
+     under `/mnt/wsl`. Landlock's rules follow the files, not the path, so
+     through such a door the work box could write `.git` and the read box
+     could read `~/.ssh`;
    - an empty `binfmt_misc` of its own, so WSL's interop doesn't apply inside.
 3. **Applies Landlock**, then `no_new_privs`:
    - writes are allowed beneath the writable folders above only;
    - execution is allowed beneath `/usr`, `/bin`, `/sbin`, `/lib*`, `/opt`, the home folder and the project, never `/init` or `/mnt`;
    - the signal and abstract-socket scopes are on.
    - It needs Landlock ABI 6 (Linux 6.12), the first with the scopes.
-4. **Filters two calls with seccomp:**
-   - `socket(AF_UNIX)` is refused, since Landlock doesn't cover connecting to a socket by its path and a socket could sit anywhere; `socketpair` still works;
+4. **Filters calls with seccomp:**
+   - `socket()` makes only `AF_INET`, `AF_INET6` and `AF_NETLINK` sockets. A Unix socket could be reached by its path (Landlock doesn't cover connecting to one), and vsock reaches the Windows host past the network namespace; `socketpair` still works;
    - `io_uring_setup` is refused, since io_uring could open a socket past the filter.
    - Calls of the 32-bit and x32 ABIs are refused whole.
-5. **Drops variables** that point outside: `SSH_AUTH_SOCK`, `GPG_AGENT_INFO`, `WSL_INTEROP`, `DBUS_SESSION_BUS_ADDRESS`, `DOCKER_HOST`, `DISPLAY` and `WAYLAND_DISPLAY`.
-6. **Execs bash.** It runs as the person's uid, with no capabilities left.
+5. **Drops variables** that point outside: `SSH_AUTH_SOCK`, `SSH_AGENT_PID`, `GPG_AGENT_INFO`, `WSL_INTEROP`, `DBUS_SESSION_BUS_ADDRESS`, `DOCKER_HOST`, `DISPLAY`, `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR`.
+6. **Closes every inherited descriptor** past stdin, stdout and stderr: one open on a file or a folder outside would be a way past every layer. It also leaves the terminal's session (`setsid`).
+7. **Execs bash.** It runs as the person's uid, with no capabilities left.
 
 Everything is syscalls through `libc`: no bubblewrap and no new crate. Setting it up costs about 2–3 ms a command (measured with `unshare`).
 
@@ -57,8 +67,9 @@ Everything is syscalls through `libc`: no bubblewrap and no new crate. Setting i
   - Whatever slips past reading the text can't write or reach out.
   - `docker` read-only commands (they need the socket) and `wslpath` stay outside the box, as today.
 - **The work box**, for what auto's judge lets through. It also makes the project writable.
-  - Only in a git repository, and never with a working folder of `~` or `/`.
+  - Only in a git repository, and never in one that holds the home folder, or `/`.
   - Writes go straight in, except to the read-only files above. After the command, Lokal lists the files it changed, from `git status`. That was chosen over an overlay to review first, which would be slower to apply for builds.
+  - **A protected name that wasn't there can't be covered,** since a mount needs something to sit on. So right after a command in the work box, Lokal looks for protected names that weren't there before (at the project's root, and the notes from there down to the working folder). For each one it shows the file and asks whether it stays, opening on No, which removes it. That's phase 3's, the caller's, job.
 
 **What the person approves runs outside the box, as today.** It may need the network (`git push`, `npm install`).
 
@@ -89,13 +100,13 @@ One test per promise, run from inside the box:
 
 Where the box can't be set up, the tests say so and pass.
 
-**A working folder under /tmp comes along:** it is cloned before /tmp is covered and put back, read-only in the read box. The scratch folder goes back over it, writable. So does `/tmp` itself, the person's other files there unchanged.
+**A working folder under /tmp comes along:** it is cloned before /tmp is covered and put back, read-only in the read box. The scratch folder goes back over it, writable. So does `/tmp` itself, the person's other files there unchanged. Then what's in that folder can be read, sockets included; the seccomp filter is what keeps those sockets out of reach.
 
 ## Phases
 
-1. `sandbox.rs`, `lokal --box` and the escape tests (`tests/sandbox.rs`), with no change in behavior. **Done:** the 13 tests pass here, and taking out any one layer (the hidden `/run`, seccomp, the scopes, the hidden keys, the read-only folder under /tmp) makes one fail. About 7 ms a command, bash included, with the release build.
+1. `sandbox.rs`, `lokal --box` and the escape tests (`tests/sandbox.rs`), with no change in behavior. **Done, and reviewed once:** the review found five ways out (second doors, protected names not there yet, vsock, inherited descriptors, keys through the second doors), all closed or handed to phase 3. The 18 tests pass here. Taking out any one layer makes one fail: the hidden `/run`, seccomp and its socket list, the scopes, the hidden keys, the read-only folder under /tmp, the second doors, the closed descriptors, the hook folder, and the home check. About 7 ms a command, bash included, with the release build.
 2. The read-only list runs in the read box.
-3. Auto runs what its judge lets through in the work box, and lists the files changed.
+3. Auto runs what its judge lets through in the work box, lists the files changed, and asks about new protected names.
 4. After real use, decide whether the box replaces the judge, which was this issue's first idea.
 5. Maybe: network to chosen domains through a proxy, as Claude Code's sandbox does. Its own docs warn that domain fronting gets past such a list, so the box stays with no network until there's a real need.
 

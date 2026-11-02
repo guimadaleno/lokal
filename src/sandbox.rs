@@ -9,7 +9,7 @@ use std::ffi::CString;
 use std::fs;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -41,10 +41,18 @@ const SECRET_FOLDERS: &[&str] = &[
     ".config/gcloud",
 ];
 const SECRET_FILES: &[&str] = &[".netrc", ".git-credentials"];
-/// In the work box, read-only: git's hooks and settings, editor tasks,
-/// what a shell runs on its own, and the project's notes for the model.
-const PROTECTED: &[&str] = &[
+/// In the work box, read-only: git's hooks and settings, and the hook
+/// managers that keep them in the tree, editor tasks, what a shell runs on
+/// its own, and the project's notes for the model. A name that isn't there
+/// yet can't be covered: the caller checks for new ones after the command.
+pub const PROTECTED: &[&str] = &[
     ".git",
+    ".githooks",
+    ".husky",
+    ".pre-commit-config.yaml",
+    "lefthook.yml",
+    "lefthook.yaml",
+    ".lefthook.yml",
     ".vscode",
     ".idea",
     ".envrc",
@@ -54,7 +62,7 @@ const PROTECTED: &[&str] = &[
     ".bash_profile",
     ".gitconfig",
 ];
-const NOTES: &[&str] = &["LOKAL.md", "AGENTS.md"];
+pub const NOTES: &[&str] = &["LOKAL.md", "AGENTS.md"];
 /// Programs run only from here, the home folder and what the box may write:
 /// never `/init`, WSL's door to Windows, nor a Windows drive.
 const PROGRAM_FOLDERS: &[&str] = &[
@@ -102,6 +110,13 @@ pub fn enter(args: impl Iterator<Item = String>) -> ExitCode {
     for variable in DROPPED {
         shell.env_remove(variable);
     }
+    // Nothing comes in but the command's own output: a descriptor open on
+    // a file or a folder outside would be a way past every layer. And no
+    // terminal to type into.
+    unsafe {
+        libc::syscall(libc::SYS_close_range, 3, u32::MAX, 0);
+        libc::setsid();
+    }
     let error = shell.exec();
     eprintln!("{}", text::box_unavailable(&format!("exec: {error}")));
     ExitCode::from(UNAVAILABLE)
@@ -115,8 +130,15 @@ fn set_up(profile: Profile, folder: &Path, scratch: &Path) -> Result<(), String>
     }
     let home = config::home();
     let project = approvals::project_root(folder);
+    // Read while git still runs as it would outside: where the repository
+    // keeps hooks of its own, if inside it.
+    let hooks = (profile == Profile::Work)
+        .then(|| hooks_path(&project))
+        .flatten();
     if profile == Profile::Work
-        && (!project.join(".git").exists() || project == home || project == Path::new("/"))
+        && (!project.join(".git").exists()
+            || home.starts_with(&project)
+            || project == Path::new("/"))
     {
         return Err("the work box needs a git repository".into());
     }
@@ -188,10 +210,16 @@ fn set_up(profile: Profile, folder: &Path, scratch: &Path) -> Result<(), String>
         }
     }
     if profile == Profile::Work {
-        for path in protected(&project, folder) {
+        for path in protected(&project, folder).into_iter().chain(hooks) {
             read_only(&path)?;
         }
     }
+    let devices = [Path::new("/"), &home, &project, folder, scratch]
+        .iter()
+        .filter_map(|path| fs::metadata(path).ok())
+        .map(|meta| device_numbers(meta.dev()))
+        .collect::<Vec<_>>();
+    cover_other_doors(&devices)?;
     // A second door to Windows shut: WSL's interop is a binfmt_misc entry,
     // and a namespace's own instance starts empty. Landlock already keeps
     // /init from running, so a kernel without it loses nothing.
@@ -207,6 +235,90 @@ fn set_up(profile: Profile, folder: &Path, scratch: &Path) -> Result<(), String>
 
     landlock(profile, &project, &home)?;
     seccomp()
+}
+
+/// core.hooksPath as the repository sets it, when it's inside the project.
+fn hooks_path(project: &Path) -> Option<PathBuf> {
+    let output = Command::new(system::program("git")?)
+        .arg("-C")
+        .arg(project)
+        .args(["config", "--local", "--get", "core.hooksPath"])
+        .output()
+        .ok()?;
+    let value = String::from_utf8(output.stdout).ok()?;
+    let path = project.join(value.trim());
+    (!value.trim().is_empty() && path.starts_with(project) && path.exists()).then_some(path)
+}
+
+/// The same files can be reached through a second mount of their file
+/// system: WSL mounts the whole distribution again at /mnt/wslg/distro,
+/// and Docker Desktop binds folders of home under /mnt/wsl. Landlock's
+/// rules follow the files, not the path, and the hidden keys are hidden
+/// at one path only. So every mount of these file systems that shows a
+/// folder somewhere else than where it lives is covered, the shortest
+/// first, as covering one covers what's beneath it.
+fn cover_other_doors(devices: &[(u32, u32)]) -> Result<(), String> {
+    let mountinfo = fs::read_to_string("/proc/self/mountinfo")
+        .map_err(|error| format!("mountinfo: {error}"))?;
+    let mut doors: Vec<PathBuf> = mountinfo
+        .lines()
+        .filter_map(other_door)
+        .filter(|(device, _)| devices.contains(device))
+        .map(|(_, at)| at)
+        .collect();
+    doors.sort_by_key(|at| at.as_os_str().len());
+    let mut covered: Vec<PathBuf> = Vec::new();
+    for at in doors {
+        if covered.iter().any(|done| at.starts_with(done)) {
+            continue;
+        }
+        tmpfs(&at, libc::MS_RDONLY)?;
+        covered.push(at);
+    }
+    Ok(())
+}
+
+/// From a mountinfo line, the file system's device and where it's mounted,
+/// when what it shows lives somewhere else ("/home/ana/sites" mounted at
+/// "/mnt/wsl/…"). A mount of a folder at its own place, like /snap, isn't
+/// one.
+fn other_door(line: &str) -> Option<((u32, u32), PathBuf)> {
+    let mut fields = line.split(' ');
+    let (_, _, device, root, at) = (
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+    );
+    let (major, minor) = device.split_once(':')?;
+    let device = (major.parse().ok()?, minor.parse().ok()?);
+    let (root, at) = (unescape(root), unescape(at));
+    (root != at && at != "/").then(|| (device, PathBuf::from(at)))
+}
+
+/// mountinfo writes a space, a tab, a newline and a backslash as \040, \011, \012, \134.
+fn unescape(field: &str) -> String {
+    let mut out = String::new();
+    let mut chars = field.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            let code: String = chars.by_ref().take(3).collect();
+            if let Ok(byte) = u8::from_str_radix(&code, 8) {
+                out.push(byte as char);
+                continue;
+            }
+            out.push(c);
+            out.push_str(&code);
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn device_numbers(device: u64) -> (u32, u32) {
+    (libc::major(device), libc::minor(device))
 }
 
 /// What stays read-only in the work box: the protected names at the
@@ -356,10 +468,12 @@ fn allow(ruleset: &OwnedFd, path: &Path, access: u64) -> Result<(), String> {
     )
 }
 
-/// No new Unix socket, so none outside can be reached by its path (Landlock
-/// doesn't cover connecting to one), and no io_uring, which could open one
-/// past this filter. socketpair still works. On x86-64, a 32-bit or x32
-/// call is refused whole.
+/// Sockets of the internet's kinds only, and netlink, which some programs
+/// ask about the network with. A Unix socket outside could be reached by
+/// its path (Landlock doesn't cover connecting to one), and vsock reaches
+/// the Windows host under WSL past the network namespace. socketpair still
+/// works. No io_uring, which could open a socket past this filter. On
+/// x86-64, a 32-bit or x32 call is refused whole.
 fn seccomp() -> Result<(), String> {
     const AUDIT_ARCH_X86_64: u32 = 0xC000_003E;
     const X32_SYSCALL_BIT: u32 = 0x4000_0000;
@@ -382,9 +496,12 @@ fn seccomp() -> Result<(), String> {
         at(ret, 0, 0, deny),
         at(jeq, 0, 1, libc::SYS_io_uring_setup as u32),
         at(ret, 0, 0, deny),
-        at(jeq, 0, 3, libc::SYS_socket as u32),
+        // Not socket(): allowed, at 14.
+        at(jeq, 0, 5, libc::SYS_socket as u32),
         at(load, 0, 0, ARG0),
-        at(jeq, 0, 1, libc::AF_UNIX as u32),
+        at(jeq, 3, 0, libc::AF_INET as u32),
+        at(jeq, 2, 0, libc::AF_INET6 as u32),
+        at(jeq, 1, 0, libc::AF_NETLINK as u32),
         at(ret, 0, 0, deny),
         at(ret, 0, 0, allow),
     ];

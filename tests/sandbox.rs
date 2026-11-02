@@ -189,7 +189,9 @@ fn no_socket_outside_can_be_reached() {
         return;
     }
     let place = Place::new("sockets");
-    let path = place.base.join("service.sock");
+    // In the scratch folder, which comes into the box: a short path, and one
+    // the command can see, so only the filter stands in the way.
+    let path = place.scratch.join("s.sock");
     let _listener = UnixListener::bind(&path).unwrap();
     let line = format!(
         "python3 -c 'import socket; s = socket.socket(socket.AF_UNIX); s.connect(\"{}\")' \
@@ -206,6 +208,118 @@ fn no_socket_outside_can_be_reached() {
         "socketpair should still work: {text}"
     );
     assert!(text.contains("RUN=0"), "/run isn't hidden: {text}");
+}
+
+#[test]
+fn only_internet_sockets_can_be_made() {
+    if !has("python3") {
+        return;
+    }
+    let place = Place::new("families");
+    let line = "for family in AF_INET AF_INET6 AF_UNIX AF_VSOCK AF_PACKET; do \
+                python3 -c \"import socket; socket.socket(socket.$family)\" 2>/dev/null \
+                && echo \"$family MADE\" || echo \"$family REFUSED\"; done";
+    let Some((_, text)) = place.run("read", line) else {
+        return;
+    };
+    for made in ["AF_INET MADE", "AF_INET6 MADE"] {
+        assert!(text.contains(made), "{text}");
+    }
+    for refused in ["AF_UNIX REFUSED", "AF_VSOCK REFUSED", "AF_PACKET REFUSED"] {
+        assert!(text.contains(refused), "{text}");
+    }
+}
+
+#[test]
+fn a_descriptor_open_outside_doesnt_come_in() {
+    let place = Place::new("descriptors");
+    let victim = place.base.join("victim.txt");
+    fs::write(&victim, "").unwrap();
+    let line = format!(
+        "exec {} --box read {} {} 'echo PWNED >&7' 7>>{}",
+        env!("CARGO_BIN_EXE_lokal"),
+        place.project.display(),
+        place.scratch.display(),
+        victim.display()
+    );
+    let output = Command::new("sh").arg("-c").arg(&line).output().unwrap();
+    if output.status.code() == Some(UNAVAILABLE) {
+        return;
+    }
+    assert_eq!(fs::read_to_string(&victim).unwrap(), "");
+}
+
+#[test]
+fn a_second_mount_of_the_same_files_is_covered() {
+    if !has("unshare") {
+        return;
+    }
+    let place = Place::new("doors");
+    fs::write(place.project.join("AGENTS.md"), "notes\n").unwrap();
+    let home = place.base.join("home");
+    fs::create_dir_all(home.join(".ssh")).unwrap();
+    fs::write(home.join(".ssh/id_test"), "SECRET-KEY\n").unwrap();
+    let config = fs::read_to_string(place.project.join(".git/config")).unwrap();
+    // As Docker Desktop binds a folder of home elsewhere, and WSL the whole disk.
+    let project_door = place.base.join("project-door");
+    let home_door = place.base.join("home-door");
+    let inside = format!(
+        "echo x >> {pd}/.git/config; echo x >> {pd}/AGENTS.md; cat {hd}/.ssh/id_test; true",
+        pd = project_door.display(),
+        hd = home_door.display()
+    );
+    let line = format!(
+        "mkdir -p {pd} {hd} && mount --bind {p} {pd} && mount --bind {h} {hd} && \
+         HOME={h} exec {lokal} --box work {p} {s} \"$0\"",
+        pd = project_door.display(),
+        hd = home_door.display(),
+        p = place.project.display(),
+        h = home.display(),
+        s = place.scratch.display(),
+        lokal = env!("CARGO_BIN_EXE_lokal"),
+    );
+    let output = Command::new("unshare")
+        .args(["-Urm", "sh", "-c", &line, &inside])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() && (text.contains("couldn't be set up") || text.contains("unshare"))
+    {
+        eprintln!("no namespace for the second mount here, skipped: {text}");
+        return;
+    }
+    assert_eq!(
+        fs::read_to_string(place.project.join(".git/config")).unwrap(),
+        config
+    );
+    assert_eq!(
+        fs::read_to_string(place.project.join("AGENTS.md")).unwrap(),
+        "notes\n"
+    );
+    assert!(!text.contains("SECRET"), "{text}");
+}
+
+#[test]
+fn hooks_kept_in_the_tree_stay_read_only() {
+    let place = Place::new("hooks");
+    fs::create_dir_all(place.project.join(".husky")).unwrap();
+    fs::create_dir_all(place.project.join("tools/hooks")).unwrap();
+    let configured = Command::new("git")
+        .args(["config", "core.hooksPath", "tools/hooks"])
+        .current_dir(&place.project)
+        .status()
+        .unwrap();
+    assert!(configured.success());
+    let Some(_) = place.run(
+        "work",
+        "echo x > .husky/pre-commit; echo x > tools/hooks/pre-commit; touch tools/other; true",
+    ) else {
+        return;
+    };
+    assert!(!place.project.join(".husky/pre-commit").exists());
+    assert!(!place.project.join("tools/hooks/pre-commit").exists());
+    assert!(place.project.join("tools/other").exists());
 }
 
 #[test]
@@ -292,6 +406,23 @@ fn the_work_box_needs_a_git_repository() {
     assert_eq!(output.status.code(), Some(UNAVAILABLE));
     assert!(!plain.join("x").exists());
     fs::remove_dir_all(&plain).unwrap();
+}
+
+#[test]
+fn the_work_box_never_holds_the_home_folder() {
+    let place = Place::new("home");
+    let home = place.project.join("home");
+    fs::create_dir_all(&home).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_lokal"))
+        .args(["--box", "work"])
+        .arg(&place.project)
+        .arg(&place.scratch)
+        .arg("touch x")
+        .env("HOME", &home)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(UNAVAILABLE));
+    assert!(!place.project.join("x").exists());
 }
 
 #[test]
