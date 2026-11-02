@@ -20,69 +20,11 @@ pub(super) fn run_command(
 ) -> Result<Outcome, String> {
     let command = text_arg(args, "command")?;
     print_command(command);
-    // git also runs what the repository's own settings name: then even a
-    // read is asked about, on No, whatever was approved before.
-    let git_warning = if allowlist::git_elsewhere(command) {
-        Some(text::GIT_ELSEWHERE.to_string())
-    } else if allowlist::uses_git(command) {
-        match gitconfig::program_setting() {
-            Ok(None) => None,
-            Ok(Some(setting)) => Some(text::git_runs_program(&setting)),
-            Err(()) => Some(text::GIT_SETTINGS_UNREAD.to_string()),
-        }
-    } else {
-        None
+    let explanation = args["explanation"].as_str().map_or("", str::trim);
+    let unasked = match decide(command, explanation, input, judge) {
+        Ok(unasked) => unasked,
+        Err(outcome) => return Ok(outcome),
     };
-    let mut unasked = allowlist::is_read_only(command) && git_warning.is_none();
-    if !unasked {
-        eprintln!();
-        // A setting's name can hold any character but a line break.
-        if let Some(warning) = &git_warning {
-            eprintln!("  {}", layout::printable(warning));
-        }
-        if let Some(note) = input
-            .approved_before(command)
-            .filter(|_| git_warning.is_none())
-        {
-            eprintln!("  {}", style::faint(note));
-        } else {
-            let mut on_yes = allowlist::opens_on_yes(command) && git_warning.is_none();
-            // The judge sees the command, never the hooks or programs the
-            // repository has git run as it writes: those are the person's call.
-            if on_yes
-                && judge.is_some()
-                && allowlist::uses_git(command)
-                && let Some(warning) = write_warning()
-            {
-                eprintln!("  {}", layout::printable(&warning));
-                on_yes = false;
-            }
-            // What the model says the command does, where the person decides on it.
-            let explanation = args["explanation"].as_str().map_or("", str::trim);
-            if !explanation.is_empty() {
-                eprintln!("  {}", style::gray(&layout::printable(explanation)));
-            }
-            // The judge only ever sees what would open on Yes.
-            let verdict = match judge.filter(|_| on_yes) {
-                Some(case) => match judged(command, explanation, case) {
-                    Some(verdict) => Some(verdict),
-                    None => return Ok(Outcome::Stopped),
-                },
-                None => None,
-            };
-            if let Some(Verdict::Yes(reason)) = &verdict {
-                print_indented(&text::judge_ran(reason), style::faint);
-                unasked = true;
-            } else {
-                // The judge's no, or a verdict it couldn't read, asks on No.
-                let approval = input.approve(command, on_yes && verdict.is_none());
-                input.keep_approval(&approval, command);
-                if let Some(outcome) = refused(approval) {
-                    return Ok(outcome);
-                }
-            }
-        }
-    }
     // The output is a block of its own, after the command and any question.
     match shell::run(command, unasked).map_err(|error| format!("couldn't start bash: {error}"))? {
         Run::Finished {
@@ -96,6 +38,79 @@ pub(super) fn run_command(
             limit(room, OUTPUT_LIMIT),
         ))),
         Run::Stopped => Ok(Outcome::Stopped),
+    }
+}
+
+/// Whether a command runs: Ok, with whether it runs unasked (read-only,
+/// or let through by auto's judge), or Err with what the model hears when
+/// it doesn't.
+fn decide(
+    command: &str,
+    explanation: &str,
+    input: &mut Input,
+    judge: Option<&judge::Case>,
+) -> Result<bool, Outcome> {
+    let git_warning = git_warning(command);
+    if allowlist::is_read_only(command) && git_warning.is_none() {
+        return Ok(true);
+    }
+    eprintln!();
+    // A setting's name can hold any character but a line break.
+    if let Some(warning) = &git_warning {
+        eprintln!("  {}", layout::printable(warning));
+    }
+    if git_warning.is_none()
+        && let Some(note) = input.approved_before(command)
+    {
+        eprintln!("  {}", style::faint(note));
+        return Ok(false);
+    }
+    let mut on_yes = allowlist::opens_on_yes(command) && git_warning.is_none();
+    // The judge sees the command, never the hooks or programs the
+    // repository has git run as it writes: those are the person's call.
+    if on_yes
+        && judge.is_some()
+        && allowlist::uses_git(command)
+        && let Some(warning) = write_warning()
+    {
+        eprintln!("  {}", layout::printable(&warning));
+        on_yes = false;
+    }
+    // What the model says the command does, where the person decides on it.
+    if !explanation.is_empty() {
+        eprintln!("  {}", style::gray(&layout::printable(explanation)));
+    }
+    // The judge only ever sees what would open on Yes.
+    let verdict = match judge.filter(|_| on_yes) {
+        Some(case) => Some(judged(command, explanation, case).ok_or(Outcome::Stopped)?),
+        None => None,
+    };
+    if let Some(Verdict::Yes(reason)) = &verdict {
+        print_indented(&text::judge_ran(reason), style::faint);
+        return Ok(true);
+    }
+    // The judge's no, or a verdict it couldn't read, asks on No.
+    let approval = input.approve(command, on_yes && verdict.is_none());
+    input.keep_approval(&approval, command);
+    match refused(approval) {
+        Some(outcome) => Err(outcome),
+        None => Ok(false),
+    }
+}
+
+/// git also runs what the repository's own settings name: then even a
+/// read is asked about, on No, whatever was approved before.
+fn git_warning(command: &str) -> Option<String> {
+    if allowlist::git_elsewhere(command) {
+        Some(text::GIT_ELSEWHERE.to_string())
+    } else if allowlist::uses_git(command) {
+        match gitconfig::program_setting() {
+            Ok(None) => None,
+            Ok(Some(setting)) => Some(text::git_runs_program(&setting)),
+            Err(()) => Some(text::GIT_SETTINGS_UNREAD.to_string()),
+        }
+    } else {
+        None
     }
 }
 
