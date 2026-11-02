@@ -24,8 +24,7 @@ pub fn printable(text: &str) -> Cow<'_, str> {
             '\n' | '\t' => out.push(c),
             '\r' if matches!(chars.peek(), None | Some('\n')) => {}
             c if c.is_control() => out.push_str(&caret(c)),
-            c if is_bidi(c) => out.push_str(&format!("<U+{:04X}>", c as u32)),
-            c => out.push(c),
+            c => push_shown(&mut out, c),
         }
     }
     Cow::Owned(out)
@@ -35,6 +34,24 @@ pub fn printable(text: &str) -> Cow<'_, str> {
 /// applies bidi show text in another order than it runs.
 fn is_bidi(c: char) -> bool {
     matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
+/// `c` as it shows: a bidi control by its code, anything else as itself.
+fn push_shown(out: &mut String, c: char) {
+    if is_bidi(c) {
+        out.push_str(&format!("<U+{:04X}>", c as u32));
+    } else {
+        out.push(c);
+    }
+}
+
+/// `text` without control characters, its bidi controls shown by their code.
+fn without_controls(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars().filter(|c| !c.is_control()) {
+        push_shown(&mut out, c);
+    }
+    out
 }
 
 /// A control character in caret notation: `^@` to `^_` for C0, `^?` for
@@ -50,16 +67,10 @@ fn caret(c: char) -> String {
 }
 
 /// Text from the disk, a program or another session, made safe to show and
-/// to give the model: one line, no control characters, and at most `limit`
-/// characters.
+/// to give the model: one line, no control characters, bidi controls shown
+/// by their code, and at most `limit` characters.
 pub fn clean(text: &str, limit: usize) -> String {
-    let line: String = text
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect();
+    let line = without_controls(text.lines().next().unwrap_or_default());
     let line = line.trim();
     if line.chars().count() <= limit {
         return line.to_string();
@@ -69,16 +80,12 @@ pub fn clean(text: &str, limit: usize) -> String {
 }
 
 /// A mail's text as it shows: no control characters, which could redraw
-/// the screen or hide part of it, a tab as spaces, no blank lines in a row
-/// and no blank edges.
+/// the screen or hide part of it, bidi controls shown by their code, a tab
+/// as spaces, no blank lines in a row and no blank edges.
 pub fn clean_message(text: &str) -> String {
     let mut lines: Vec<String> = Vec::new();
     for line in text.lines() {
-        let line: String = line
-            .replace('\t', "    ")
-            .chars()
-            .filter(|c| !c.is_control())
-            .collect();
+        let line = without_controls(&line.replace('\t', "    "));
         let line = line.trim_end().to_string();
         if !(line.is_empty() && lines.last().is_some_and(String::is_empty)) {
             lines.push(line);
@@ -217,6 +224,7 @@ mod tests {
         assert_eq!(long.chars().count(), 80);
         assert!(long.ends_with('…'));
         assert_eq!(clean(&"x".repeat(200), 240).chars().count(), 200);
+        assert_eq!(clean("main\u{202E}niam", 80), "main<U+202E>niam");
     }
 
     #[test]
@@ -224,6 +232,10 @@ mod tests {
         assert_eq!(
             clean_message("\n\nhi\x1b[2J there\r\n\n\n\n\tnext  \n\n"),
             "hi[2J there\n\n    next"
+        );
+        assert_eq!(
+            clean_message("run \u{2067}ls\u{2069} now"),
+            "run <U+2067>ls<U+2069> now"
         );
     }
 

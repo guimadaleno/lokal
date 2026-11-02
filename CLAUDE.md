@@ -191,7 +191,8 @@ dependencies.
     person wrote at the other session's `>` (`@name …`), which Lokal
     sends itself and frames as theirs.
   - **What another model wrote always shows:** each mail whole, without
-    control characters, and sending as a step.
+    control characters and with the bidi controls that reorder text shown
+    by their code (`<U+202E>`), and sending as a step.
     - Lokal's own facts about the other sessions go to the model without
       showing, the way its facts about the machine do: names, folders,
       branches, what each does.
