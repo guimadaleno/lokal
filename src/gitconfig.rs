@@ -4,8 +4,9 @@
 //! settings are files in .git that anything could have written, so a git
 //! command runs unasked only where the repository names none of them, with
 //! fsmonitor off and kept out of submodules, whose settings are their own.
-//! As git writes, it also runs the repository's hooks, which auto's judge
-//! can't see: there, a git command asks when the repository has any.
+//! As git writes, it also runs the repository's hooks, and the programs
+//! settings like an alias or an editor name, which auto's judge can't see:
+//! there, a git command asks when the repository has any.
 
 use std::fs;
 use std::io::{ErrorKind, Read};
@@ -28,10 +29,11 @@ pub const UNASKED: [(&str, &str); 2] = [
 
 /// Settings that name a program git runs while reading.
 const PROGRAMS: &str = r"^(core\.fsmonitor|diff\.external|diff\..+\.(command|textconv)|filter\..+\.(clean|smudge|process)|gpg\.(.+\.)?program)$";
-/// Settings that name a program git runs as it writes or reaches a remote:
-/// where its hooks are, and what it runs to connect.
-const WRITE_PROGRAMS: &str =
-    r"^(core\.hookspath|core\.sshcommand|remote\..+\.(uploadpack|receivepack))$";
+/// Settings that have git run a program as it writes or reaches a remote:
+/// where its hooks are, what it runs to connect or to ask for a password,
+/// an editor, a merge driver, the `ext::` transport, and an alias, which can
+/// be a shell command or bring options of its own.
+const WRITE_PROGRAMS: &str = r"^(core\.(hookspath|sshcommand|askpass|editor)|sequence\.editor|credential\.(.+\.)?helper|merge\..+\.driver|protocol\.(.+\.)?allow|alias\..+|remote\..+\.(uploadpack|receivepack))$";
 /// core.fsmonitor as a yes or a no: git's own daemon, or none.
 const SWITCHES: &[&str] = &["", "true", "false", "yes", "no", "on", "off", "1", "0"];
 /// Reading settings is quick; a file they include could be one that never ends.
@@ -192,6 +194,46 @@ mod tests {
             first_of_the_repository("local\tcore.fsmonitor .git/hooks/query-watchman\n").as_deref(),
             Some("core.fsmonitor")
         );
+    }
+
+    #[test]
+    fn settings_that_run_a_program_as_git_writes_are_found() {
+        let dir = std::env::temp_dir().join(format!("lokal-write-programs-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("config");
+        fs::write(
+            &file,
+            "[core]\n\thooksPath = h\n\taskPass = a\n\teditor = e\n\tbare = false\n\
+             [alias]\n\tst = !sh x\n[credential \"https://example.com\"]\n\thelper = c\n\
+             [merge \"ours\"]\n\tdriver = d\n[protocol \"ext\"]\n\tallow = always\n\
+             [remote \"origin\"]\n\turl = u\n\tuploadpack = p\n[user]\n\tname = Ana\n",
+        )
+        .unwrap();
+        let output = Command::new("git")
+            .args(["config", "--file"])
+            .arg(&file)
+            .args(["--get-regexp", WRITE_PROGRAMS])
+            .output()
+            .unwrap();
+        let listing = String::from_utf8(output.stdout).unwrap();
+        let keys: Vec<&str> = listing
+            .lines()
+            .filter_map(|line| line.split(' ').next())
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "core.hookspath",
+                "core.askpass",
+                "core.editor",
+                "alias.st",
+                "credential.https://example.com.helper",
+                "merge.ours.driver",
+                "protocol.ext.allow",
+                "remote.origin.uploadpack",
+            ]
+        );
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
