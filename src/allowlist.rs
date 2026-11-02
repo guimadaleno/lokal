@@ -356,7 +356,7 @@ fn matches_option(arg: &str, option: &str) -> bool {
 /// Splits a command line into the words of each program, the way bash would,
 /// for programs joined by |, ||, && or ;. Returns None when the line uses
 /// anything else the shell interprets (variables, substitution, redirection
-/// other than to /dev/null, background jobs, subshells, several lines), since
+/// other than to /dev/null, background jobs, subshells, braces, several lines), since
 /// those can hide writes or other programs.
 fn split(command: &str) -> Option<Vec<Program>> {
     if command.contains(['\n', '\r']) {
@@ -428,7 +428,8 @@ fn split(command: &str) -> Option<Vec<Program>> {
                 word.clear();
                 in_word = false;
             }
-            '$' | '`' | '<' | '(' | ')' => return None,
+            // A brace expands to words this can't see: `{-delete,}` is -delete.
+            '$' | '`' | '<' | '(' | ')' | '{' => return None,
             other => {
                 in_word = true;
                 word.push(other);
@@ -503,6 +504,26 @@ mod tests {
             assert!(!is_read_only(command), "should ask: {command}");
             assert!(!opens_on_yes(command), "should open on No: {command}");
         }
+    }
+
+    #[test]
+    fn a_brace_is_never_read_as_harmless() {
+        // bash turns `{-delete,}` into -delete and `{rm,-rf,src}` into rm -rf src.
+        for command in [
+            "find . {-delete,}",
+            "sort {-o,out.txt} a.txt",
+            "rg x {--pre=bash,.}",
+            "git log {--output=x,}",
+            "{rm,-rf,src}",
+            "{sudo,reboot}",
+            "git {push,--force}",
+            "ls; {bash,x.sh}",
+        ] {
+            assert!(!is_read_only(command), "should ask: {command}");
+            assert!(!opens_on_yes(command), "should open on No: {command}");
+        }
+        assert!(is_read_only("docker ps --format '{{.Names}}'"));
+        assert!(is_read_only("grep -n '{' src/main.rs"));
     }
 
     #[test]

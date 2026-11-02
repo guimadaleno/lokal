@@ -11,7 +11,9 @@ dependencies.
 - **Run a command that may change something without a yes.** Only commands
   on the read-only list in `src/allowlist.rs` run on their own, and not
   with a glob where a file named like an option could write (`rg x *` with
-  a `--pre=bash`). That list is Lokal's code, never the model's judgement:
+  a `--pre=bash`), nor with an unquoted brace, which bash expands into
+  words the rule never sees (`find . {-delete,}`). That list is Lokal's
+  code, never the model's judgement:
   a model can be talked into anything by a file it reads.
   - **A line the person types at the `>` after a `!` is their own command,**
     and typing it was their yes, so it isn't asked about (`tools::run_own`).
