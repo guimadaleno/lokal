@@ -7,9 +7,8 @@
 //! redraws; they're dropped.
 
 use std::fs::File;
-use std::os::fd::AsRawFd;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::io::Write;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::thread::{self, JoinHandle};
 
 use crate::tty::{self, RawMode};
@@ -24,7 +23,8 @@ const SHIFT_TAB: &[u8] = b"\x1b[Z";
 /// The keyboard, read for as long as this lives; the terminal is put back as
 /// it was however it ends.
 pub struct KeyWatch {
-    stop: Arc<AtomicBool>,
+    /// Written to when the watch ends, which wakes the reader at once.
+    stop: File,
     reader: Option<JoinHandle<()>>,
     // Dropped in this order, after `drop` has joined the reader: the
     // terminal put back, then its file closed.
@@ -36,11 +36,10 @@ impl KeyWatch {
     /// None without a terminal: then Ctrl+C can only come as a signal.
     pub fn start() -> Option<KeyWatch> {
         let terminal = tty::open()?;
+        let (stopped, stop) = pipe()?;
         let raw = RawMode::enter(&terminal)?;
         let fd = terminal.as_raw_fd();
-        let stop = Arc::new(AtomicBool::new(false));
-        let reader_stop = stop.clone();
-        let reader = thread::spawn(move || read_keys(fd, &reader_stop));
+        let reader = thread::spawn(move || read_keys(fd, &stopped));
         Some(KeyWatch {
             stop,
             reader: Some(reader),
@@ -50,13 +49,41 @@ impl KeyWatch {
     }
 }
 
-/// Reads until told to stop, looking up every 50 ms; Ctrl+C raises the flag
-/// that whatever is running checks.
-fn read_keys(fd: i32, stop: &AtomicBool) {
+/// A pipe's two ends, read and write, closed on exec so no command gets them.
+fn pipe() -> Option<(OwnedFd, File)> {
+    let mut ends = [0; 2];
+    // SAFETY: an array of two descriptors for the kernel to fill.
+    if unsafe { libc::pipe2(ends.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return None;
+    }
+    // SAFETY: both were just opened, and nothing else owns them.
+    unsafe { Some((OwnedFd::from_raw_fd(ends[0]), File::from_raw_fd(ends[1]))) }
+}
+
+/// Reads until `stopped` is written to; Ctrl+C raises the flag that
+/// whatever is running checks.
+fn read_keys(fd: i32, stopped: &OwnedFd) {
     let mut buffer = [0u8; 64];
-    while !stop.load(Ordering::SeqCst) {
-        if !tty::readable(fd, 50) {
+    loop {
+        let mut polls = [
+            libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: stopped.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+        // SAFETY: two valid pollfds, for the length given. A signal
+        // interrupting it only goes round again.
+        if unsafe { libc::poll(polls.as_mut_ptr(), 2, -1) } <= 0 {
             continue;
+        }
+        if polls[1].revents != 0 {
+            break;
         }
         // SAFETY: the buffer is valid for its length, and the descriptor
         // outlives this thread: KeyWatch joins it before closing the file.
@@ -86,7 +113,7 @@ fn more_follows(fd: i32) -> bool {
 
 impl Drop for KeyWatch {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
+        let _ = self.stop.write_all(b"x");
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
