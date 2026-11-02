@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
 
-use crate::{config, release, text};
+use crate::{config, release, system, text};
 
 const APP: &str = "lokal";
 const MANIFEST_URL: &str = "https://download.guimadaleno.com/lokal/latest.json";
@@ -151,7 +151,7 @@ fn check(executable: &Path) -> Result<Option<String>, ()> {
 /// system. The connection isn't what makes an update trusted: the signature
 /// and the hashes are.
 fn download(url: &str) -> Result<Vec<u8>, ()> {
-    let output = Command::new("curl")
+    let output = Command::new(system::program("curl").ok_or(())?)
         .args([
             "--fail",
             "--silent",

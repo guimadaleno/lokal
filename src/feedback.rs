@@ -230,7 +230,7 @@ fn details(server: &Server, updates_off: bool) -> Vec<(&'static str, String)> {
 /// nowhere else, no redirect followed, thirty seconds at most. None when no
 /// answer came at all.
 fn send(body: &[u8]) -> Option<(u16, Vec<u8>)> {
-    let mut child = Command::new("curl")
+    let mut child = Command::new(system::program("curl")?)
         .args([
             "--silent",
             "--proto",

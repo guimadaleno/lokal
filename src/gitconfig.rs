@@ -16,6 +16,8 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::system;
+
 /// Set for a git command that runs unasked. A submodule's settings are out
 /// of `program_setting`'s reach, and they apply inside it: git stays out,
 /// and fsmonitor is off in case it goes in anyway.
@@ -106,7 +108,11 @@ fn repository_setting(pattern: &str) -> Result<Option<String>, ()> {
 /// What git printed with `args` and the code it ended with; None without
 /// git. Err when it couldn't run or didn't end in time.
 fn git(args: &[&str]) -> Result<Option<(i32, String)>, ()> {
-    let mut command = Command::new("git");
+    // Without git, a git command runs nothing at all.
+    let Some(git) = system::program("git") else {
+        return Ok(None);
+    };
+    let mut command = Command::new(git);
     command
         .args(args)
         .stdin(Stdio::null())

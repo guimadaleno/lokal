@@ -7,7 +7,6 @@
 use std::env;
 use std::fs;
 use std::io::Read;
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -346,14 +345,10 @@ fn on_path<'a>(names: &[&'a str], wsl: bool) -> Vec<(&'a str, PathBuf)> {
             let program = folders
                 .iter()
                 .map(|folder| folder.join(name))
-                .find(|path| is_program(path))?;
+                .find(|path| system::is_program(path))?;
             Some((*name, program))
         })
         .collect()
-}
-
-fn is_program(path: &Path) -> bool {
-    fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
 }
 
 /// What a program prints, stdout or else stderr, when it ends within the
@@ -415,6 +410,7 @@ fn version_in(output: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn addresses_lose_what_could_be_a_secret() {
@@ -483,9 +479,9 @@ mod tests {
         fs::write(&program, "#!/bin/sh\n").unwrap();
         fs::write(base.join("bin/plain"), "not a program").unwrap();
         fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(is_program(&program));
-        assert!(!is_program(&base.join("bin/plain")));
-        assert!(!is_program(&base.join("bin")));
+        assert!(system::is_program(&program));
+        assert!(!system::is_program(&base.join("bin/plain")));
+        assert!(!system::is_program(&base.join("bin")));
         fs::remove_dir_all(&base).unwrap();
     }
 

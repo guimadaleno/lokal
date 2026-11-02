@@ -3,7 +3,8 @@
 use std::env;
 use std::fs;
 use std::net::Ipv4Addr;
-use std::path::Path;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::config;
@@ -57,6 +58,21 @@ fn gateway_in(routes: &str) -> Option<Ipv4Addr> {
         }
     }
     None
+}
+
+/// Where a program Lokal starts itself is: the first in the PATH's absolute
+/// folders. A relative one (`.`, or an empty entry) would let a project's
+/// own `git` or `curl` run in its place.
+pub fn program(name: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+    env::split_paths(&path)
+        .filter(|folder| folder.is_absolute())
+        .map(|folder| folder.join(name))
+        .find(|candidate| is_program(candidate))
+}
+
+pub fn is_program(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
 }
 
 fn os_name() -> String {
