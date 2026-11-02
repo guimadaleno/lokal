@@ -592,6 +592,11 @@ Measured on a current laptop, under WSL; the judge on a consumer GPU.
   `usage.completion_tokens`: tried with a fake server that sends none.
 - **"Couldn't find a model server":** written, but not seen, since that needs
   LM Studio stopped.
+- **Hooks in auto, the unasked PATH and control characters as marks:** run
+  in a pseudo-terminal against a fake server only. A post-commit hook made
+  auto ask on No, and without it the judge let the commit through; an
+  answer and an output holding ESC and OSC 52 showed `^[` marks. Still
+  owed: the same with a real model, and the PATH with a `.` in it.
 
 ## Later, not decided
 
