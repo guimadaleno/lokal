@@ -297,9 +297,10 @@ impl Conversation {
                     eprintln!("{}", style::red(&message));
                     // Nothing came of the request, so trying again won't send
                     // it twice; what the person's commands gave goes with it.
+                    // In a turn mail started, that's still waiting untouched.
                     if self.messages.len() == turn_start + 1 {
                         self.messages.pop();
-                        self.own = own;
+                        self.own.splice(0..0, own);
                     }
                     break;
                 }
