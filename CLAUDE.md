@@ -254,6 +254,14 @@ dependencies.
 
 - **Everything is in English:** code, docs, commits and every word on
   screen. Conversation with the user stays in Portuguese.
+- **Safety before convenience.** Lokal lets a model act on a person's
+  machine, and it is meant to go public: push back on any idea that loosens
+  the approvals, the allowlist or the refusals, and propose the safer design
+  first (a session's *don't ask again* for the exact command, not `cmd *`).
+  The user decides.
+- **Nothing of one machine in the code:** no personal paths, addresses or
+  names, and examples use reserved values. What works only on WSL with LM
+  Studio says so.
 - **Simple code over clever code:** small modules with one job, short
   functions, plain names, no traits or generics where a function does, no
   abstraction before a second real use. `stack-rust.md` does not apply here.
@@ -513,6 +521,29 @@ cargo clippy --all-targets
 - **Look at a change in a real terminal.** Prompt, hints, spinner and colors
   are only right once seen; a pseudo-terminal that records the output is the
   way to check them unattended.
+  - **Recording:** `lokal` in a Python `pty.fork()` at a fixed size
+    (100×34, `TERM=xterm-256color`), its XDG folders in a temporary one with
+    an empty `lokal/about-me.md` and `updates = off`, writing an asciicast
+    v2, under `timeout -s INT` with the cast written in `atexit`, so a hang
+    still leaves it. `@xterm/xterm` in a page driven by Puppeteer replays it
+    for screenshots.
+  - **The driver never approves:** at *Run it?* it waits and sends Esc,
+    then skips half a second of output, since *Run it? No* still holds the
+    question. A turn ends after about 2.5 s of silence, and that wait starts
+    again whenever keys are sent, or the checks race.
+  - **A scripted fake OpenAI server** (streaming `data:` pieces, tool calls
+    picked by the last message) stands in for the model. Two sessions'
+    sockets need a short `TMPDIR`, since a Unix socket's path stops at 108
+    bytes. When the real server stops answering, ask its `/v1/models`
+    before blaming Lokal.
+- **A permission feature is tried in the user's own setup,** not only in a
+  project folder: Lokal started in `~`, files on the Windows desktop under
+  `/mnt/c`, work spread over several sessions by mail. Auto passed every
+  scripted test and still asked at every step there (#33).
+- **The user runs a release build of `main`,** at their request: after
+  building a change for them, put it in place of their copy the same way.
+  It takes the next published release on its own, since only a higher
+  version is taken.
 - **The release build is static (musl).** Before touching dependencies:
   `rustup target add x86_64-unknown-linux-musl`, then
   `LOKAL_RELEASE_BUILD=1 cargo build --release --target x86_64-unknown-linux-musl`.
@@ -537,6 +568,8 @@ cargo clippy --all-targets
   entry is the release's notes, written for the person using Lokal.
 - **Bump the smallest part that fits:** patch for fixes, minor for anything
   new, while below 1.0.
+- **The release that ships auto changes the page:** its refusal "Run
+  anything that can change your machine without your yes" stops being true.
 
 ## Keys and secrets
 
@@ -562,6 +595,21 @@ cargo clippy --all-targets
 | Auto's judge, a 27B model with reasoning off (Ollama 0.40.2) | 1.1–1.9 s a command; 6–22 s with reasoning; the conversation's prompt cache stays |
 
 Measured on a current laptop, under WSL; the judge on a consumer GPU.
+
+- **Several sessions on one LM Studio:** with `parallel = 1`, the usual
+  per-model default, a second request waits for the first. With 2 slots
+  each reply runs at about 35 tokens/s instead of 47 (62 together), and the
+  context is **one pool shared by the requests running at once**: two that
+  together pass it both fail with HTTP 400 (*Context size has been
+  exceeded*), while `loaded_context_length` still shows the whole. Raising
+  `parallel` needs Lokal to budget `context / parallel`, or to recover from
+  that error, first.
+- **A new conversation sees nothing of an old one** (checked 2026-10-19,
+  after one seemed contaminated): in the code, and in LM Studio's cache with
+  a hybrid 27B, by planting a random word in one request and asking for it
+  in a fresh one with the same system prompt, an 11K request and a stream
+  cut short included. Not tried: a session near the limit with many tool
+  calls.
 
 ## Unverified paths
 
@@ -635,8 +683,16 @@ Tracked as issues:
   default, with a `context` setting**, and `server.rs` moved to `/api/v1`
   with it (#19).
 
+Not tracked: a license, not chosen yet.
+
 Decided, and kept here so they aren't undone:
 
+- **No `/allow <program>`:** the person vouches for the program, but the
+  model picks the arguments, and one program alone (yt-dlp) has `--exec`, a
+  config file read from the working folder, `-o` anywhere and self-update.
+  `/allow X` amounts to `X *`, which the refusal to approve more than the
+  person saw rules out. A program allowed to run unasked belongs inside the
+  box (#2).
 - **The page never waits for a release, nor a release for the page:**
   `site.yml` publishes `site/` whenever it changes on `main`. The page reads
   `latest.json` for the version (the install line's and the terminal
