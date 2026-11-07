@@ -251,7 +251,7 @@ mod tests {
         let other = [7u8; 32];
         let app = App { key: &other, ..example() };
         assert!(open(vector!("valid.json"), &app).is_err());
-        let app = App { name: "kent", ..example() };
+        let app = App { name: "other", ..example() };
         assert_eq!(open(vector!("valid.json"), &app), Err(Refused::App));
     }
 
@@ -265,7 +265,7 @@ mod tests {
         assert_eq!(open(b"not json", &example()), Err(Refused::Malformed));
     }
 
-    // The same table as release.py's tests and Vovo's update::newer.
+    // The same table as release.py's tests.
     #[test]
     fn versions_compare() {
         assert!(newer("0.2.0", "0.1.9"));
