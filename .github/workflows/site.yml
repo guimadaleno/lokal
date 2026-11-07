@@ -21,7 +21,9 @@ permissions:
 
 concurrency:
   group: site
-  cancel-in-progress: true
+  # A publish under way finishes; a newer one waits rather than cutting its
+  # upload off halfway.
+  cancel-in-progress: false
 
 # Each job stops at about three times its slowest run: without a limit,
 # one stuck on a download runs for six hours.
