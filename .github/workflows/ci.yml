@@ -1,13 +1,18 @@
-# Every push and pull request is checked the way a release is, so a broken
-# test or a lint shows on the commit that brought it rather than at the next
-# tag. Nothing here publishes anything.
+# Every push to main and every pull request is checked the way a release is,
+# so a broken test or a lint shows on the commit that brought it rather than
+# at the next tag. Nothing here publishes anything.
 name: CI
 
+# A branch is checked through its pull request: pushing on every branch too
+# would check it twice. Prose and the site change nothing these jobs check,
+# so a push of only those runs none of them; markdown is skipped by name,
+# never as `**.md`, which would skip a file compiled in with it.
 on:
   push:
-    branches: ['**']
-    paths-ignore: ['site/**', '**.md']
+    branches: [main]
+    paths-ignore: ['README.md', 'CLAUDE.md', 'CHANGELOG.md', 'docs/**', 'tests/release/README.md', 'tests/report/README.md', '.claude/**', 'site/**']
   pull_request:
+    paths-ignore: ['README.md', 'CLAUDE.md', 'CHANGELOG.md', 'docs/**', 'tests/release/README.md', 'tests/report/README.md', '.claude/**', 'site/**']
 
 permissions:
   contents: read

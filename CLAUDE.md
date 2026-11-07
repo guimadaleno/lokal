@@ -349,7 +349,7 @@ dependencies.
 | `spinner.rs`, `style.rs`, `interrupt.rs`, `text.rs` | Spinner, colors, Ctrl+C flag, every word on screen |
 | `site/` | The page at guimadaleno.com/lokal/, published by `.github/workflows/site.yml` |
 | `README.md` | What a person reads first in the repository: what Lokal is, setting up a model, what it won't do |
-| `.github/workflows/ci.yml` | Formatting, lints and tests on every push |
+| `.github/workflows/ci.yml` | Formatting, lints and tests on every push to main and every pull request |
 | `tools/icon.py` | Draws the mark and writes `site/`'s icons from one definition |
 
 ## Invariants
