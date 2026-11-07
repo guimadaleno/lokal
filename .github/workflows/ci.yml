@@ -30,6 +30,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Without it every run builds every dependency from scratch, the
+      # largest part of its minutes.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ github.job }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ github.job }}-
+
       - name: Formatting
         run: cargo fmt --check
 
