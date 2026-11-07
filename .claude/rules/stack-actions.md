@@ -16,6 +16,9 @@ runner that can prove it, and stops the moment it can't.
 - **Every job has `timeout-minutes`,** about three times its slowest normal
   run. Without it a job lives six hours: one `apt-get` stuck on a mirror
   once cost two thirds of a month's spend.
+- **A download from outside is cut off and tried again,** not waited on:
+  each try under `timeout`, three tries, the step with its own
+  `timeout-minutes`. A stalled mirror, not the code, is what has hung jobs.
 - **Linux by default.** A Windows minute costs about 1.7 Linux ones and a
   macOS minute about ten, and every job is rounded up to the minute. What
   builds or tests on Linux (a cross-compile, a lint, a core that names no
