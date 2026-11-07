@@ -17,9 +17,12 @@ concurrency:
   group: publish
   cancel-in-progress: false
 
+# Each job stops at about three times its slowest run: without a limit,
+# one stuck on a download runs for six hours.
 jobs:
   release:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       # The action verifies the manifest against update.pub, from here.
       - uses: actions/checkout@v7

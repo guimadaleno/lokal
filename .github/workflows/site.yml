@@ -23,9 +23,12 @@ concurrency:
   group: site
   cancel-in-progress: true
 
+# Each job stops at about three times its slowest run: without a limit,
+# one stuck on a download runs for six hours.
 jobs:
   publish:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     # A step's `if` cannot read secrets, so the token's presence travels
     # through env.
     env:
