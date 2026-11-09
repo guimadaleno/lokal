@@ -27,6 +27,9 @@ const NOTES_SHARE: u64 = 8;
 const NOTES_ROOM_UNKNOWN: usize = 4096 * CHARS_PER_TOKEN;
 const STOPPED_RESULT: &str = "Stopped by the user.";
 const SKIPPED_AFTER_NO: &str = "Not run: the user declined an earlier step.";
+/// In the saved conversation, where an image the model looked at was.
+const IMAGE_NOT_KEPT: &str =
+    "[The image isn't kept in a saved conversation: read the file again to look at it.]";
 const NO_ANSWER_RESULT: &str = "(No answer: the reply stopped before it began.)";
 const ASK_AGAIN_NOTE: &str = "(From Lokal, not the user: your last reply ran out of room while \
     still reasoning, before any answer or step. Reason briefly this time, then answer or take the next step.)";
@@ -87,7 +90,9 @@ pub enum Turn {
 
 impl Conversation {
     pub fn new(server: Server, facts: Facts, peers: Option<Peers>) -> Self {
-        let tools_size = tools::definitions(peers.is_some()).to_string().len();
+        let tools_size = tools::definitions(peers.is_some(), server.vision == Some(true))
+            .to_string()
+            .len();
         let mut conversation = Conversation {
             server,
             facts,
@@ -126,7 +131,8 @@ impl Conversation {
     /// tools that go with it, and what the two cost: what the model is told
     /// before the conversation.
     pub fn system_prompt(&self) -> (&str, Vec<String>, u64) {
-        let names = tools::definitions(self.peers.is_some())
+        let names = self
+            .tools()
             .as_array()
             .into_iter()
             .flatten()
@@ -400,11 +406,11 @@ impl Conversation {
         let mut declined = false;
         for (index, call) in reply.tool_calls.iter().enumerate() {
             // Every call gets a result, even the ones skipped after a stop or a no.
-            let result = if stopped || interrupt::happened() {
+            let result: Value = if stopped || interrupt::happened() {
                 stopped = true;
-                STOPPED_RESULT.to_string()
+                STOPPED_RESULT.into()
             } else if declined {
-                SKIPPED_AFTER_NO.to_string()
+                SKIPPED_AFTER_NO.into()
             } else {
                 // An even share of the room with the calls still to come, so
                 // the first doesn't take it all; what a short output leaves
@@ -424,18 +430,22 @@ impl Conversation {
                 // A blank line after each step, so its output doesn't run into what follows.
                 eprintln!();
                 match outcome {
-                    Outcome::Done(result) => result,
+                    Outcome::Done(result) => result.into(),
+                    Outcome::Image { text, url } => json!([
+                        {"type": "text", "text": text},
+                        {"type": "image_url", "image_url": {"url": url}}
+                    ]),
                     Outcome::Wrote { result, path } => {
                         self.written.push(path.display().to_string());
-                        result
+                        result.into()
                     }
                     Outcome::Declined(result) => {
                         declined = true;
-                        result
+                        result.into()
                     }
                     Outcome::Stopped => {
                         stopped = true;
-                        STOPPED_RESULT.to_string()
+                        STOPPED_RESULT.into()
                     }
                 }
             };
@@ -568,7 +578,7 @@ impl Conversation {
         let mut body = json!({
             "model": self.server.model,
             "messages": messages,
-            "tools": tools::definitions(self.peers.is_some()),
+            "tools": self.tools(),
             "stream": true,
             "stream_options": {"include_usage": true}
         });
@@ -605,6 +615,11 @@ impl Conversation {
         context::estimate(self.fixed(), &self.messages)
     }
 
+    /// The tools this session offers the model.
+    fn tools(&self) -> Value {
+        tools::definitions(self.peers.is_some(), self.server.vision == Some(true))
+    }
+
     /// What every request carries besides the messages, in characters: the
     /// system prompt and the tools.
     fn fixed(&self) -> usize {
@@ -616,7 +631,8 @@ impl Conversation {
             return;
         }
         let path = config::last_conversation_path();
-        let saved = json!({"messages": self.messages, "tokens": self.tokens});
+        let messages: Vec<Value> = self.messages.iter().map(kept).collect();
+        let saved = json!({"messages": messages, "tokens": self.tokens});
         if let Err(error) = config::write(&path, &saved.to_string()) {
             eprintln!(
                 "{}",
@@ -642,6 +658,31 @@ impl Conversation {
         self.tokens = saved["tokens"].as_u64();
         true
     }
+}
+
+/// A message as the saved conversation keeps it: an image gives way to a
+/// line saying so, or one screenshot would add megabytes to the file.
+fn kept(message: &Value) -> Value {
+    let Some(fields) = message.as_object() else {
+        return message.clone();
+    };
+    if context::image_urls(message).next().is_none() {
+        return message.clone();
+    }
+    let text: Vec<&str> = message["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|part| part["text"].as_str())
+        .chain([IMAGE_NOT_KEPT])
+        .collect();
+    let mut kept: serde_json::Map<String, Value> = fields
+        .iter()
+        .filter(|(key, _)| *key != "content")
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    kept.insert("content".into(), text.join("\n").into());
+    Value::Object(kept)
 }
 
 /// What the Markdown styling still holds, with every style closed.
@@ -706,7 +747,7 @@ mod tests {
             own: Vec::new(),
             asked: Vec::new(),
             written: Vec::new(),
-            tools_size: tools::definitions(false).to_string().len(),
+            tools_size: tools::definitions(false, false).to_string().len(),
         }
     }
 
@@ -772,5 +813,20 @@ mod tests {
             conversation.status().as_deref(),
             Some("38s · 12% · 24 tok/s")
         );
+    }
+
+    #[test]
+    fn the_saved_conversation_keeps_a_line_in_an_images_place() {
+        let message = json!({"role": "tool", "tool_call_id": "7", "content": [
+            {"type": "text", "text": "shot.png: a 640×480 PNG image."},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}
+        ]});
+        assert_eq!(
+            kept(&message),
+            json!({"role": "tool", "tool_call_id": "7",
+                   "content": format!("shot.png: a 640×480 PNG image.\n{IMAGE_NOT_KEPT}")})
+        );
+        let text = json!({"role": "tool", "tool_call_id": "8", "content": "plain"});
+        assert_eq!(kept(&text), text);
     }
 }

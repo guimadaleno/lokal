@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::{CONTEXT_FULL, LEAST_ROOM, Outcome, asking, limit, propose, shown, text_arg};
+use crate::context::CHARS_PER_TOKEN;
+use crate::image::{self, Image};
 use crate::input::Input;
 use crate::mode::Mode;
 use crate::peers::Peers;
@@ -19,10 +21,17 @@ use crate::{config, style, text};
 const FILE_LIMIT: usize = 30_000;
 /// The most of a file read into memory, for a part of it or a change to it.
 const READ_CAP: u64 = 64 * 1024 * 1024;
+/// The largest image sent to the model: its data goes along with every
+/// request until it makes way.
+const IMAGE_CAP: u64 = 20 * 1024 * 1024;
 /// A file change that changes nothing, which isn't put to the person.
 const UNCHANGED: &str = "Nothing to do: the file already has that content.";
 
-pub(super) fn read_file(args: &Value, room: Option<usize>) -> Result<Outcome, String> {
+pub(super) fn read_file(
+    args: &Value,
+    room: Option<usize>,
+    sees: Option<bool>,
+) -> Result<Outcome, String> {
     let path = path_arg(args)?;
     let from = args["from_line"].as_u64().map(|line| line.max(1) as usize);
     let to = args["to_line"].as_u64().map(|line| line as usize);
@@ -34,26 +43,108 @@ pub(super) fn read_file(args: &Value, room: Option<usize>) -> Result<Outcome, St
             to.map_or(String::new(), |to| to.to_string())
         ),
     };
-    eprintln!(
-        "{} {}{}",
-        style::accent(text::STEP_READ),
-        shown(&path),
-        style::gray(&range)
-    );
     let limit = limit(room, FILE_LIMIT);
     if limit < LEAST_ROOM {
+        print_read(&path, &range);
         return Ok(Outcome::Done(format!(
             "Not read: there's no room left in the context for it. {CONTEXT_FULL}"
         )));
     }
-    let contents = read_text(&path)?.ok_or_else(|| no_such_file(&path))?;
+    let bytes = read_bytes(&path);
+    // Text is anything that reads as UTF-8, whatever it starts with.
+    let image = match &bytes {
+        Ok(Some(bytes)) if std::str::from_utf8(bytes).is_err() => image::read(bytes),
+        _ => None,
+    };
+    match &image {
+        Some(image) => print_read(
+            &path,
+            &format!(" {}", text::image_size(image.width, image.height)),
+        ),
+        None => print_read(&path, &range),
+    }
+    let bytes = bytes?.ok_or_else(|| no_such_file(&path))?;
+    if let Some(image) = image {
+        return look_at(&path, &image, &bytes, room, sees);
+    }
+    let contents = String::from_utf8(bytes).map_err(|_| match sees {
+        Some(true) => format!(
+            "{} isn't a text file, nor a PNG, JPEG or WebP image.",
+            path.display()
+        ),
+        _ => format!("{} isn't a text file.", path.display()),
+    })?;
     read_part(&contents, from, to, limit).map(Outcome::Done)
 }
 
-/// A text file's contents, or None when there's no such file. Anything but
-/// a regular file is refused before it's opened: a device or a pipe could
+fn print_read(path: &Path, detail: &str) {
+    eprintln!(
+        "{} {}{}",
+        style::accent(text::STEP_READ),
+        shown(path),
+        style::gray(detail)
+    );
+}
+
+/// An image, for a model that sees and has room for it. One too big for
+/// the room is turned down, saying so: Lokal can't shrink it.
+fn look_at(
+    path: &Path,
+    image: &Image,
+    bytes: &[u8],
+    room: Option<usize>,
+    sees: Option<bool>,
+) -> Result<Outcome, String> {
+    match sees {
+        Some(true) => {}
+        Some(false) => {
+            return Err(format!(
+                "{} is an image, and the model loaded doesn't take images.",
+                path.display()
+            ));
+        }
+        None => {
+            return Err(format!(
+                "{} is an image, and this server doesn't say whether its model takes images, \
+                 so Lokal doesn't send them.",
+                path.display()
+            ));
+        }
+    }
+    if bytes.len() as u64 > IMAGE_CAP {
+        return Err(format!(
+            "{} is over {} MB, too big to send to the model. A smaller copy would do: \
+             make one with a command first.",
+            path.display(),
+            IMAGE_CAP / 1024 / 1024
+        ));
+    }
+    let tokens = image.tokens();
+    // Where the context's size isn't known, as much as a read of text.
+    let room = (room.unwrap_or(FILE_LIMIT) / CHARS_PER_TOKEN) as u64;
+    if tokens > room {
+        return Ok(Outcome::Done(format!(
+            "Not read: the image would take about {tokens} tokens of the context, and there's \
+             room for about {room}. A smaller copy would fit: make one with a command, if that's \
+             fine, or answer with what you have."
+        )));
+    }
+    Ok(Outcome::Image {
+        text: format!(
+            "{}: a {}×{} {} image.",
+            path.display(),
+            image.width,
+            image.height,
+            image.kind.name()
+        ),
+        url: image::data_url(image.kind, bytes),
+    })
+}
+
+/// A file's bytes, or None when there's no such file. Anything but a
+/// regular file is refused before it's opened: a device or a pipe could
 /// never end, or never begin. So is one too big to hold in memory.
-fn read_text(path: &Path) -> Result<Option<String>, String> {
+fn read_bytes(path: &Path) -> Result<Option<Vec<u8>>, String> {
     // A device is never opened: opening one can act on it.
     match fs::metadata(path) {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
@@ -88,6 +179,14 @@ fn read_text(path: &Path) -> Result<Option<String>, String> {
             READ_CAP / 1024 / 1024
         ));
     }
+    Ok(Some(bytes))
+}
+
+/// A text file's contents, or None when there's no such file.
+fn read_text(path: &Path) -> Result<Option<String>, String> {
+    let Some(bytes) = read_bytes(path)? else {
+        return Ok(None);
+    };
     String::from_utf8(bytes)
         .map(Some)
         .map_err(|_| format!("{} isn't a text file.", path.display()))
@@ -316,6 +415,64 @@ mod tests {
                 "x".repeat(100)
             )
         );
+    }
+
+    fn folder(name: &str) -> PathBuf {
+        let dir = env::temp_dir().join(format!("lokal-{name}-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn read(path: &Path, room: usize, sees: Option<bool>) -> Result<Outcome, String> {
+        read_file(&serde_json::json!({"path": path}), Some(room), sees)
+    }
+
+    #[test]
+    fn a_model_that_sees_gets_an_image() {
+        let dir = folder("image");
+        let path = dir.join("shot.png");
+        fs::write(&path, image::png_start(640, 480)).unwrap();
+        let Ok(Outcome::Image { text, url }) = read(&path, 100_000, Some(true)) else {
+            panic!("no image");
+        };
+        assert_eq!(text, format!("{}: a 640×480 PNG image.", path.display()));
+        assert!(url.starts_with("data:image/png;base64,iVBORw0KGgo"));
+        let no = read(&path, 100_000, Some(false)).err().unwrap();
+        assert!(no.ends_with("is an image, and the model loaded doesn't take images."));
+        let unknown = read(&path, 100_000, None).err().unwrap();
+        assert!(unknown.contains("this server doesn't say whether its model takes images"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_image_too_big_for_the_room_is_turned_down_with_its_estimate() {
+        let dir = folder("big-image");
+        let path = dir.join("photo.png");
+        fs::write(&path, image::png_start(4000, 3000)).unwrap();
+        let Ok(Outcome::Done(result)) = read(&path, 30_000, Some(true)) else {
+            panic!("not turned down");
+        };
+        assert!(result.starts_with("Not read: the image would take about 15370 tokens"));
+        assert!(result.contains("room for about 10000"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn text_stays_text_whatever_it_starts_with() {
+        let dir = folder("not-image");
+        let text = dir.join("notes.txt");
+        fs::write(&text, "GIF89a is how a GIF starts.").unwrap();
+        let Ok(Outcome::Done(result)) = read(&text, 100_000, Some(true)) else {
+            panic!("not read as text");
+        };
+        assert_eq!(result, "GIF89a is how a GIF starts.");
+        let binary = dir.join("data.bin");
+        fs::write(&binary, [0x00, 0xFF, 0xFE, 0x80]).unwrap();
+        let seeing = read(&binary, 100_000, Some(true)).err().unwrap();
+        assert!(seeing.ends_with("isn't a text file, nor a PNG, JPEG or WebP image."));
+        let blind = read(&binary, 100_000, Some(false)).err().unwrap();
+        assert!(blind.ends_with("isn't a text file."));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

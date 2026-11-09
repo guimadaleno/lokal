@@ -33,6 +33,8 @@ const CONTEXT_FULL: &str = "Answer with what you have, or, if that isn't enough,
 pub enum Outcome {
     /// The result for the model.
     Done(String),
+    /// An image for a model that sees: what it is, and its data URL.
+    Image { text: String, url: String },
     /// A file of the project's was written: the result for the model, and
     /// the path as the model gave it, for auto's judge.
     Wrote { result: String, path: PathBuf },
@@ -43,9 +45,15 @@ pub enum Outcome {
     Stopped,
 }
 
-/// The tools, with the ones for other sessions when this one listens: the
-/// same for the whole session, so the server's prompt cache holds.
-pub fn definitions(sessions: bool) -> Value {
+/// The tools, with the ones for other sessions when this one listens, and
+/// images when the model sees: the same for the whole session, so the
+/// server's prompt cache holds.
+pub fn definitions(sessions: bool, images: bool) -> Value {
+    let read = if images {
+        "Read a text file, or look at an image (PNG, JPEG or WebP). "
+    } else {
+        "Read a text file. "
+    };
     let mut tools = vec![
         tool(
             "run_command",
@@ -63,8 +71,10 @@ pub fn definitions(sessions: bool) -> Value {
         ),
         tool(
             "read_file",
-            "Read a text file. A long file comes back cut short, saying the line to read on from; \
-             read a part with from_line and to_line.",
+            &format!(
+                "{read}A long file comes back cut short, saying the line to read on from; \
+                 read a part with from_line and to_line."
+            ),
             json!({
                 "path": {"type": "string"},
                 "from_line": {"type": "integer", "description": "First line to read, counting from 1."},
@@ -160,7 +170,7 @@ pub fn run(
     let result = match serde_json::from_str::<Value>(&call.arguments) {
         Ok(args) => match (call.name.as_str(), peers) {
             ("run_command", _) => command::run_command(&args, input, room, judge),
-            ("read_file", _) => files::read_file(&args, room),
+            ("read_file", _) => files::read_file(&args, room, case.server.vision),
             ("write_file", _) => files::write_file(&args, input, mode, scratch, peers),
             ("edit_file", _) => files::edit_file(&args, input, mode, scratch, peers),
             ("remember", _) => remember::remember(&args, input),

@@ -10,6 +10,7 @@ mod diff;
 mod feedback;
 mod gitconfig;
 mod http;
+mod image;
 mod input;
 mod install;
 mod interrupt;

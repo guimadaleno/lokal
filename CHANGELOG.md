@@ -19,6 +19,11 @@ copy and the page show as its notes.
   will get some wrong, so use auto at your own risk. Riskier commands, like
   deleting files or sudo, always ask. Shift+Tab again goes back to asking
   for everything.
+- With a model that can see, Lokal looks at images: ask about a PNG, JPEG
+  or WebP file, or drop one on the terminal to paste its path.
+- With Ollama, Lokal now knows how much context the model has, so the
+  prompt shows how much is in use, and a long conversation makes room as
+  it does with LM Studio.
 
 ## 0.6.0 — 2026-10-29
 

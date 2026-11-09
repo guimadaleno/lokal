@@ -2,7 +2,8 @@
 
 A terminal assistant for Linux that runs on a model on your own machine.
 You ask in plain words. It runs commands, reads your files and changes them,
-and asks before anything changes.
+and asks before anything changes. With a model that can see, it looks at
+images too.
 
 It talks to LM Studio, or to any server that speaks the OpenAI chat API
 (Ollama works too). It finds the server by itself, also from WSL when the

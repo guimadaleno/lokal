@@ -319,6 +319,7 @@ dependencies.
 | `tools.rs`, `shell.rs`, `diff.rs` | The model's tools, running a command, showing a change |
 | `tools/command.rs` | run_command and the person's `!` commands: who decides, what the model hears |
 | `tools/files.rs` | read_file, write_file and edit_file, and where a change may open on Yes |
+| `image.rs` | What an image is to the model: its kind and size from its first bytes, its data URL, what it takes of the context |
 | `tools/remember.rs` | remember: a line added to user.md, or one swapped for it |
 | `tools/mail.rs` | list_sessions and mail, shown as steps |
 | `allowlist.rs` | Which commands run without asking, and which questions open on Yes |
@@ -454,6 +455,18 @@ dependencies.
     way. It goes inside their request's own message, since some chat
     templates refuse two from the user in a row, framed so `drop_own`
     finds it again to make way.
+- **An image goes only to a model the server says sees** (LM Studio's
+  `type: "vlm"`, Ollama's `vision` capability), in the read's own `tool`
+  message: what the model looked at, never the person's words. A server
+  that doesn't say gets none, since a model that can't see may drop the
+  image and answer as if it had.
+  - **It counts by its pixels, never its base64** (`image::tokens_in_url`),
+    on the high side, and one that doesn't fit the room left is turned down
+    with its estimate: Lokal carries no decoder to shrink it.
+  - **A file that reads as UTF-8 is text,** whatever its first bytes. An
+    image is PNG, JPEG or WebP, up to 20 MB: Ollama refuses a GIF.
+  - **It makes way like an output** once the model has replied after it,
+    and the saved conversation keeps a line in its place.
 - **What the model wrote into a file makes way like an output,** once it
   has replied after the write (`make_way`). The file holds that text, and
   it is most of a conversation that writes files; kept, nothing else could
@@ -494,6 +507,7 @@ Last checked against **LM Studio 0.4.26**, on 2026-10-14.
 | A `model` that doesn't exist falls back to the loaded model instead of failing | `server.rs` checks the name first | a request with `"model": "nope"` |
 | `max_tokens` caps a reply, and one cut short ends with `finish_reason: "length"` | `conversation.rs` | a request with `"max_tokens": 50` and a long question |
 | A tool call's `arguments` in the conversation must be valid JSON: arguments cut short get HTTP 500 with an HTML page | `context.rs` (`kept_arguments`) | a request whose history has a call with `"arguments": "{\"path\": \"a"` |
+| An `image_url` part with a base64 `data:` URL in a `tool` message's content reaches a `vlm` model (tried with Qwen) | `files.rs`, `conversation.rs` | a request whose tool result holds a small PNG of two colors, asking which |
 | Under WSL's NAT networking, the server is reached at the Windows host (the default gateway) only with "Serve on Local Network" on | `server.rs`, `system.rs` | `curl <gateway>:1234/v1/models` from WSL |
 
 LM Studio writes its version to `~/.lmstudio/.internal/historical-version-info.json`
@@ -513,6 +527,7 @@ it says about the model. Last checked against **Ollama 0.40.2**, on
 | `POST /api/show` with `{"model": "<id>"}` gives `capabilities` (`vision` when the model sees), `model_info["<general.architecture>.context_length"]` (the most it takes) and `parameters`, a text with the model's own `num_ctx` when it has one | `server.rs` (`ollama_model`) | `curl <host>:11434/api/show -d '{"model": "<id>"}'` |
 | `GET /api/ps` lists the loaded models, each `name` tagged (`:latest` when none was given), with `context_length` | `server.rs` (`loaded_context`) | `curl <host>:11434/api/ps` |
 | `max_tokens` caps a reply on `/v1/chat/completions` | `conversation.rs` | a request with `"max_tokens": 40` and a long question |
+| An `image_url` part with a base64 `data:` URL in a `tool` message's content reaches a model with `vision` (tried with Qwen 3.8); a GIF gets HTTP 400 (`invalid image input`). An image adds about pixels / 1024 tokens, up to about 4 MP, where Ollama shrinks it | `image.rs`, `files.rs` | the same request as LM Studio's, with a PNG, a JPEG, a WebP and a GIF |
 
 **The page's "Set up LM Studio" steps name its screens and options** (the
 Developer tab, "Serve on Local Network", the mark on models that use tools).
@@ -650,6 +665,11 @@ Measured on a current laptop, under WSL; the judge on a consumer GPU.
 - **The reasoning window with wide characters or a resize while it shows:**
   rows are cut by character count, so double-width characters may wrap and
   leave a row behind. Tested only with a fake server's plain text.
+- **Images with a model family other than Qwen:** the image goes in the
+  read's `tool` message, tried with Qwen only, on LM Studio and on Ollama.
+  A chat template that drops an image there would leave the model
+  answering blind. Still owed: a second family that sees and uses tools;
+  a user message after the result is the fallback (#17).
 - **Auto's judge with LM Studio:** it sends `reasoning_effort: "none"`.
   Ollama 0.40.2 honors it (1.3 s instead of 8–12 s) and keeps the
   conversation's prompt cache across the judge's request. Neither is

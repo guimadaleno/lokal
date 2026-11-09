@@ -4,6 +4,8 @@
 
 use serde_json::Value;
 
+use crate::image;
+
 /// About three characters a token: rough, and on the high side.
 pub const CHARS_PER_TOKEN: usize = 3;
 /// Stands in for a tool's output once it's dropped to free up context.
@@ -44,9 +46,32 @@ fn tokens(characters: usize) -> u64 {
     (characters / CHARS_PER_TOKEN) as u64
 }
 
-/// The length of the JSON a value is sent as.
-fn json_length<T: serde::Serialize + ?Sized>(value: &T) -> usize {
-    serde_json::to_string(value).map_or(0, |json| json.len())
+/// The length of the JSON messages are sent as, each counted as
+/// `message_length` does.
+fn json_length(messages: &[Value]) -> usize {
+    let commas = messages.len().saturating_sub(1);
+    messages.iter().map(message_length).sum::<usize>() + commas + 2
+}
+
+/// The length of the JSON a message is sent as, but for its images, each
+/// counted as the characters of the tokens it takes, never by its data.
+fn message_length(message: &Value) -> usize {
+    let length = serde_json::to_string(message).map_or(0, |json| json.len());
+    image_urls(message).fold(length, |length, url| {
+        let tokens =
+            image::tokens_in_url(url).map_or(url.len() / CHARS_PER_TOKEN, |tokens| tokens as usize);
+        length - url.len() + tokens * CHARS_PER_TOKEN
+    })
+}
+
+/// The data of the images a message holds, as a tool's result has them.
+pub fn image_urls(message: &Value) -> impl Iterator<Item = &str> {
+    message["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|part| part["type"] == "image_url")
+        .filter_map(|part| part["image_url"]["url"].as_str())
 }
 
 /// Near the end of the context, the oldest of what the model has seen
@@ -63,9 +88,9 @@ pub fn free(messages: &mut [Value], fixed: usize, context: u64) {
         if tokens(characters) <= budget(context) {
             return;
         }
-        characters -= json_length(&messages[index]);
+        characters -= message_length(&messages[index]);
         make_way(&mut messages[index]);
-        characters += json_length(&messages[index]);
+        characters += message_length(&messages[index]);
     }
 }
 
@@ -76,7 +101,7 @@ pub fn room_for_output(messages: &[Value], fixed: usize, context: u64) -> usize 
     for message in &messages[..last_reply(messages)] {
         let mut made_way = message.clone();
         make_way(&mut made_way);
-        characters = characters + json_length(&made_way) - json_length(message);
+        characters = characters + message_length(&made_way) - message_length(message);
     }
     let room = budget(context).saturating_sub(tokens(characters));
     room as usize * CHARS_PER_TOKEN
@@ -206,7 +231,7 @@ mod tests {
     /// What the system prompt and the tools take, as in a conversation
     /// without other sessions and with an empty prompt.
     fn fixed() -> usize {
-        crate::tools::definitions(false).to_string().len()
+        crate::tools::definitions(false, false).to_string().len()
     }
 
     fn messages() -> Vec<Value> {
@@ -291,6 +316,31 @@ mod tests {
                 assert_eq!(freed, before, "{steps} steps, {context}");
             }
         }
+    }
+
+    #[test]
+    fn an_image_counts_by_its_pixels_and_makes_way_like_an_output() {
+        // A screenshot's start, and a few megabytes of data after it.
+        let mut bytes = image::png_start(1920, 1080);
+        bytes.resize(3_000_000, 7);
+        let url = image::data_url(image::Kind::Png, &bytes);
+        let mut messages = messages();
+        messages.push(json!({"role": "assistant", "content": "", "tool_calls": []}));
+        messages.push(json!({"role": "tool", "tool_call_id": "1", "content": [
+            {"type": "text", "text": "shot.png: a 1920×1080 PNG image."},
+            {"type": "image_url", "image_url": {"url": url}}
+        ]}));
+        let alone = estimate(0, &messages[..2]);
+        let with_image = estimate(0, &messages);
+        let tokens = image::read(&bytes).unwrap().tokens();
+        assert!(with_image - alone >= tokens);
+        assert!(with_image - alone < tokens + 100);
+        // Unseen, it stays; seen, it goes first when the context fills.
+        free(&mut messages, 0, 2048);
+        assert_eq!(image_urls(&messages[2]).count(), 1);
+        reply(&mut messages);
+        free(&mut messages, 0, 2048);
+        assert_eq!(messages[2]["content"], DROPPED_OUTPUT);
     }
 
     #[test]

@@ -182,6 +182,11 @@ pub fn git_runs_hook(hook: &str) -> String {
 }
 
 pub const STEP_READ: &str = "read";
+
+/// After the path of an image the model looks at.
+pub fn image_size(width: u32, height: u32) -> String {
+    format!("{width}×{height}")
+}
 pub const STEP_CREATE: &str = "create";
 pub const STEP_EDIT: &str = "edit";
 pub const STEP_REMEMBER: &str = "remember";
