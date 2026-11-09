@@ -80,19 +80,8 @@ pub struct Conversation {
 
 enum Failure {
     Stopped,
-    /// The server turned the request down: an image it can't take, say.
-    Refused(String),
-    /// No answer: the server couldn't be reached, or broke off.
-    Error(String),
-}
-
-impl Failure {
-    fn message(self) -> String {
-        match self {
-            Failure::Refused(message) | Failure::Error(message) => message,
-            Failure::Stopped => String::new(),
-        }
-    }
+    /// The server turned the request down, or never answered.
+    Server(http::Failure),
 }
 
 /// How a turn ended.
@@ -283,8 +272,8 @@ impl Conversation {
                         .push(json!({"role": "assistant", "content": STOPPED_RESULT}));
                     break;
                 }
-                Err(failure) => {
-                    let refused = matches!(failure, Failure::Refused(_));
+                Err(Failure::Server(failure)) => {
+                    let refused = matches!(failure, http::Failure::Refused(_));
                     let message = failure.message();
                     layout::print_fitted(&message, style::red);
                     // An image the server turns down would fail every
@@ -602,10 +591,7 @@ impl Conversation {
                         print_rest(&mut markdown);
                         println!();
                     }
-                    return result.map_err(|failure| match failure {
-                        http::Failure::Refused(message) => Failure::Refused(message),
-                        http::Failure::Lost(message) => Failure::Error(message),
-                    });
+                    return result.map_err(Failure::Server);
                 }
             }
             // After every piece too, not only in a pause between them: hidden
