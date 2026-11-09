@@ -15,7 +15,7 @@ use crate::markdown::Markdown;
 use crate::memory::{self, Note};
 use crate::peers::Peers;
 use crate::progress::{ToolProgress, speed, working_label};
-use crate::server::Server;
+use crate::server::{self, Kind, Server};
 use crate::spinner::Spinner;
 use crate::system::Facts;
 use crate::tools::{self, Outcome};
@@ -249,6 +249,7 @@ impl Conversation {
         let (mut generated, mut generating) = (0, Duration::ZERO);
         let mut asked_again = false;
         let mut left_out_images = false;
+        let mut learned_context = false;
         let own = self.open_request(request, on_mail);
         loop {
             self.free_context();
@@ -283,6 +284,7 @@ impl Conversation {
                     break;
                 }
             };
+            learned_context |= self.learn_context();
             self.tokens = reply.tokens.or(self.tokens);
             // The first token starts the clock, so it isn't among those it times.
             generated += reply.generated.saturating_sub(1);
@@ -344,6 +346,9 @@ impl Conversation {
         }
         self.model_time = Some(model_time);
         self.speed = speed(generated, generating);
+        if learned_context {
+            crate::warn_if_context_is_small(&self.server, true);
+        }
         self.save();
         if let Some(peers) = &self.peers {
             peers.set_busy(false);
@@ -627,6 +632,16 @@ impl Conversation {
 
     fn estimated_tokens(&self) -> u64 {
         context::estimate(self.fixed(), &self.messages)
+    }
+
+    /// Ollama's context, when the start couldn't read it: the model wasn't
+    /// loaded then, and a request loads it. True when it's known now.
+    fn learn_context(&mut self) -> bool {
+        if self.server.context.is_some() || self.server.kind != Kind::Ollama {
+            return false;
+        }
+        self.server.context = server::loaded_context(&self.server);
+        self.server.context.is_some()
     }
 
     /// The tools this session offers the model.

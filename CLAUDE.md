@@ -532,7 +532,7 @@ it says about the model. Last checked against **Ollama 0.40.15**, on
 | `POST /api/show` with `{"model": "<id>"}` gives `capabilities` (`vision` when the model sees), `model_info["<general.architecture>.context_length"]` (the most it takes) and `parameters`, a text with the model's own `num_ctx` when it has one | `server.rs` (`ollama_model`) | `curl <host>:11434/api/show -d '{"model": "<id>"}'` |
 | `GET /api/ps` lists the loaded models, each `name` tagged (`:latest` when none was given), with `context_length` | `server.rs` (`loaded_context`) | `curl <host>:11434/api/ps` |
 | `max_tokens` caps a reply on `/v1/chat/completions` | `conversation.rs` | a request with `"max_tokens": 40` and a long question |
-| An `image_url` part with a base64 `data:` URL in a `tool` message's content reaches a model with `vision` (tried with Qwen 3.8 27B and LFM3-VL 2B); a GIF gets HTTP 400 (`invalid image input`). An image adds about pixels / 1024 tokens with Qwen, up to about 4 MP, where Ollama shrinks it, and less with LFM3-VL | `image.rs`, `files.rs` | the same request as LM Studio's, with a PNG, a JPEG, a WebP and a GIF |
+| An `image_url` part with a base64 `data:` URL in a `tool` message's content reaches a model with `vision` (tried with Qwen 3.8 27B and LFM3-VL 2B); a GIF gets HTTP 400 (`invalid image input`). An image adds about pixels / 1024 tokens with Qwen and with LFM3-VL, up to about 4 MP, where Ollama shrinks it | `image.rs`, `files.rs` | the same request as LM Studio's, with a PNG, a JPEG, a WebP and a GIF |
 
 **The page's "Set up LM Studio" steps name its screens and options** (the
 Developer tab, "Serve on Local Network", the mark on models that use tools).
@@ -691,8 +691,9 @@ Measured on a current laptop, under WSL; the judge on a consumer GPU.
   has been tried, under WSL: a conversation with a command step, in auto.
   The context and its gauge come from LM Studio's `/api/v0/models`, or
   from Ollama's model `num_ctx` or `/api/ps` (above); elsewhere they stay
-  unknown, and so they do on Ollama for a model that isn't loaded and has
-  no `num_ctx` of its own.
+  unknown. On Ollama, a model that isn't loaded at the start and has no
+  `num_ctx` of its own gets its context from `/api/ps` after the first
+  reply, which loads it, with the warning about a small one then.
   The speed is timed by Lokal from the first token on. The spinner counts
   a token a piece, and so does the prompt's status where a server sends no
   `usage.completion_tokens`: tried with a fake server that sends none.

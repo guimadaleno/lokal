@@ -171,6 +171,12 @@ fn is_ollama(address: &str) -> bool {
     http::get_json(address, "/api/version").is_ok_and(|reply| reply["version"].is_string())
 }
 
+/// The context Ollama has the model loaded with now, when it is.
+pub fn loaded_context(server: &Server) -> Option<u64> {
+    let running = http::get_json(&server.address, "/api/ps").ok()?;
+    context_in(&running, &server.model)
+}
+
 /// What Ollama says about a model, from `/api/show` and `/api/ps`.
 fn ollama_model(id: String, shown: &Value, running: &Value) -> Model {
     let architecture = shown["model_info"]["general.architecture"]
@@ -182,7 +188,7 @@ fn ollama_model(id: String, shown: &Value, running: &Value) -> Model {
         .map(|capabilities| capabilities.iter().any(|capability| capability == "vision"));
     // The model's own num_ctx is what a request without options loads it
     // with; without one, the context it's loaded with now, if it is.
-    let context = own_num_ctx(shown).or_else(|| loaded_context(running, &id));
+    let context = own_num_ctx(shown).or_else(|| context_in(running, &id));
     Model {
         id,
         context,
@@ -204,7 +210,7 @@ fn own_num_ctx(shown: &Value) -> Option<u64> {
 
 /// The context of the model as `/api/ps` lists it while it's loaded. A
 /// name without a tag is the `latest` one, as for Ollama.
-fn loaded_context(running: &Value, id: &str) -> Option<u64> {
+fn context_in(running: &Value, id: &str) -> Option<u64> {
     let tagged = |name: &str| {
         let last = name.rsplit('/').next().unwrap_or(name);
         if last.contains(':') {

@@ -171,7 +171,7 @@ fn run(started: Instant, resume: bool, request: &str) -> ExitCode {
     if talking {
         update = update::start(config.updates_off);
         commands::print_header(&server);
-        warn_if_context_is_small(&server);
+        warn_if_context_is_small(&server, false);
         first_line = ask_first_question(&mut input);
         commands::warn_if_user_md_is_long();
     }
@@ -463,11 +463,15 @@ fn ask_first_question(input: &mut Input) -> Option<String> {
 }
 
 /// Only when the model takes more: otherwise there's nothing to raise.
-fn warn_if_context_is_small(server: &server::Server) {
+/// `apart` puts a blank line before it, to set it off from an answer.
+fn warn_if_context_is_small(server: &server::Server, apart: bool) {
     if let (Some(context), Some(most)) = (server.context, server.max_context)
         && context < SMALL_CONTEXT
         && most > context
     {
+        if apart {
+            eprintln!();
+        }
         let warning = text::small_context(context, most, server.kind);
         // Broken at spaces, one column short of the edge: the terminal
         // would break it mid-word.
