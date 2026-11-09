@@ -5,6 +5,20 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.7.2 — 2026-11-09
+
+- Ctrl+V in Windows Terminal now says so when the model can't take images,
+  or the server doesn't say whether it can, instead of doing nothing.
+- A pasted image that doesn't fit in the context is left out, counting
+  what goes with it: the output of a command you ran with ! and the tools
+  of your MCP servers. The model is told it isn't attached.
+- The status, notes and command hints at the right of the > no longer
+  wrap with wide characters, a long line or a narrow terminal, and a line
+  of several lines redraws right after an image is pasted into it.
+- Reading the clipboard when it takes too long no longer leaves programs
+  running.
+- An image whose marker shows twice in a line goes once.
+
 ## 0.7.1 — 2026-11-09
 
 - Ctrl+V pastes an image in Windows Terminal also with mail turned off.
