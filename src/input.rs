@@ -28,7 +28,7 @@ use rustyline::{
 use crate::approvals::ProjectApprovals;
 use crate::peers::{Directory, Inbox};
 use crate::tty::{self, RawMode, discard_typed_ahead};
-use crate::{clipboard, config, diff, menu, mode, style, text};
+use crate::{clipboard, config, diff, layout, menu, mode, style, text};
 
 pub const PROMPT: &str = "> ";
 /// How long after Esc another key makes it part of one, like an arrow
@@ -627,11 +627,17 @@ fn rows(line: &str) -> usize {
     rows_at(line, tty::width().unwrap_or(80))
 }
 
-/// The same at `width` columns, laid out as rustyline does: a line break a
-/// paste kept starts a row at the left edge, a character that doesn't fit
-/// moves whole to the next row, a tab reaches the next stop, and a row
-/// filled exactly wraps only at the end of the line.
+/// The same at `width` columns.
 fn rows_at(line: &str, width: usize) -> usize {
+    laid_out(line, width).0
+}
+
+/// The rows a line takes at the `>` at `width` columns, and the column it
+/// ends at on the last, laid out as rustyline does: a line break a paste
+/// kept starts a row at the left edge, a character that doesn't fit moves
+/// whole to the next row, a tab reaches the next stop, and a row filled
+/// exactly wraps only at the end of the line.
+fn laid_out(line: &str, width: usize) -> (usize, usize) {
     let width = width.max(1);
     let (mut row, mut column) = (0, PROMPT.width());
     for c in line.chars() {
@@ -653,8 +659,9 @@ fn rows_at(line: &str, width: usize) -> usize {
     }
     if column == width {
         row += 1;
+        column = 0;
     }
-    row + 1
+    (row + 1, column)
 }
 
 /// rustyline's tab stop, which Lokal leaves as it comes.
@@ -862,18 +869,29 @@ impl Helper {
         } else {
             String::new()
         };
-        if let Some(status) = &self.status() {
-            let used = PROMPT.len()
-                + line.chars().count()
-                + display.chars().count()
-                + status.chars().count();
-            // Read on every redraw, so the status follows the window as it's
-            // resized. Off the last column, or the terminal wraps the line.
-            let width = tty::width().unwrap_or(0);
-            if let Some(padding) = width.checked_sub(used + 1).filter(|padding| *padding >= 2) {
-                display.push_str(&" ".repeat(padding));
-                display.push_str(status);
-            }
+        // Read on every redraw, so the hint follows the window as it's
+        // resized. It stays on the line's last row and off its last column:
+        // wrapped, it takes a row an empty paste's redraw doesn't count.
+        let width = tty::width();
+        let (rows, end) = width.map_or((1, 0), |width| laid_out(line, width));
+        let room = width.map_or(usize::MAX, |width| width.saturating_sub(end + 1));
+        if display.width() > room {
+            display = if room > 3 {
+                layout::cut(&display, room)
+            } else {
+                String::new()
+            };
+        }
+        // The status only beside a line on one row, at the right edge.
+        if let Some(status) = &self.status()
+            && rows == 1
+            && width.is_some()
+            && let Some(padding) = room
+                .checked_sub(display.width() + status.width())
+                .filter(|padding| *padding >= 2)
+        {
+            display.push_str(&" ".repeat(padding));
+            display.push_str(status);
         }
         (!display.is_empty()).then_some(Hint {
             display,
@@ -1081,6 +1099,11 @@ mod tests {
         assert_eq!(rows_at(&straddling, 80), 3);
         assert_eq!(rows_at(&format!("{}\tx", "x".repeat(69)), 80), 1);
         assert_eq!(rows_at(&format!("{}\tx", "x".repeat(77)), 80), 2);
+        // Where the line ends, for the hint after it.
+        assert_eq!(laid_out("hello", 80), (1, 7));
+        assert_eq!(laid_out("olá 漢字 ok", 80), (1, 13));
+        assert_eq!(laid_out(&"x".repeat(78), 80), (2, 0));
+        assert_eq!(laid_out("a\nbc", 80), (2, 2));
     }
 
     #[test]
