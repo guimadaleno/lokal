@@ -265,7 +265,7 @@ impl Conversation {
         // only those the context has room for: older outputs would make way
         // first for one that can't fit anyway.
         let images = asked.map(|line| input.images_in(line)).unwrap_or_default();
-        let images = self.images_that_fit(images);
+        let images = self.images_that_fit(images, request);
         let own = self.open_request(request, on_mail, images);
         // The MCP servers' tools join the first request, once the person
         // has seen what they tell the model.
@@ -681,12 +681,14 @@ impl Conversation {
     }
 
     /// The pasted images that fit the room left once the request's words are
-    /// in, each counted by its pixels; one that doesn't is left out, saying
-    /// so, as a read is. Where the context's size isn't known, all go.
-    fn images_that_fit(&self, images: Vec<(usize, String)>) -> Vec<String> {
+    /// in, with what the person's own commands gave ahead of them, each
+    /// counted by its pixels; one that doesn't is left out, saying so, as a
+    /// read is. Where the context's size isn't known, all go.
+    fn images_that_fit(&self, images: Vec<(usize, String)>, request: &str) -> Vec<String> {
+        let words = request.len() + self.own.iter().map(String::len).sum::<usize>();
         let mut room = self
             .room_for_output()
-            .map(|room| (room / CHARS_PER_TOKEN) as u64);
+            .map(|room| (room.saturating_sub(words) / CHARS_PER_TOKEN) as u64);
         images
             .into_iter()
             .filter_map(|(number, url)| {
@@ -966,7 +968,28 @@ mod tests {
         let conversation = conversation(8192);
         let small = image::data_url(image::Kind::Png, &image::png_start(64, 64));
         let big = image::data_url(image::Kind::Png, &image::png_start(3840, 2160));
-        let kept = conversation.images_that_fit(vec![(1, small.clone()), (2, big)]);
+        let kept = conversation.images_that_fit(vec![(1, small.clone()), (2, big)], "look");
         assert_eq!(kept, [small]);
+    }
+
+    #[test]
+    fn what_goes_with_a_pasted_image_counts_against_its_room() {
+        let mut conversation = conversation(8192);
+        let image = image::data_url(image::Kind::Png, &image::png_start(1500, 1500));
+        let images = vec![(1, image.clone())];
+        assert_eq!(
+            conversation.images_that_fit(images.clone(), "look"),
+            [image]
+        );
+        // A command's output waiting to go with the request, and long words.
+        conversation.own.push("1\n".repeat(8000));
+        assert!(
+            conversation
+                .images_that_fit(images.clone(), "look")
+                .is_empty()
+        );
+        conversation.own.clear();
+        let request = "word ".repeat(3200);
+        assert!(conversation.images_that_fit(images, &request).is_empty());
     }
 }
