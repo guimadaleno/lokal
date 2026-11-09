@@ -52,8 +52,9 @@ pub fn image() -> Result<(Image, String), String> {
         return Err(text::CLIPBOARD_NO_READER.to_string());
     };
     let program = find(program).ok_or(text::CLIPBOARD_NO_READER)?;
-    // Both end with an error when the clipboard holds no PNG.
-    let bytes = run(program, args).map_err(|_| text::CLIPBOARD_NO_IMAGE.to_string())?;
+    // Both end with an error when the clipboard holds no PNG, which `run`
+    // says as no image.
+    let bytes = run(program, args)?;
     if bytes.len() as u64 > image::MOST_BYTES {
         return Err(text::CLIPBOARD_TOO_BIG.to_string());
     }

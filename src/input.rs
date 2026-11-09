@@ -172,6 +172,10 @@ impl Input {
             helper.status = status;
             helper.accented = true;
         }
+        // A paste's word belongs to the prompt it was pressed at.
+        if let Ok(mut notice) = self.notice.lock() {
+            notice.take();
+        }
         // Only here: at an approval, one Ctrl+C stops the turn.
         let ctrl_c = QuitOnSecondCtrlC {
             armed: self.quit_armed.clone(),
@@ -188,6 +192,7 @@ impl Input {
                 pasted: self.pasted.clone(),
                 vision: self.vision,
                 notice: self.notice.clone(),
+                inbox: self.inbox.clone(),
             };
             editor.bind_sequence(key, EventHandler::Conditional(Box::new(paste)));
         }
@@ -351,15 +356,15 @@ impl Input {
         self.vision = vision;
     }
 
-    /// The pasted images whose marker is whole in `line`, in its order: what
-    /// goes with the request is what the line shows.
-    pub fn images_in(&self, line: &str) -> Vec<String> {
+    /// The pasted images whose marker is whole in `line`, in its order, with
+    /// their numbers: what goes with the request is what the line shows.
+    pub fn images_in(&self, line: &str) -> Vec<(usize, String)> {
         let Ok(pasted) = self.pasted.lock() else {
             return Vec::new();
         };
         markers(line)
             .into_iter()
-            .filter_map(|number| pasted.get(number.checked_sub(1)?).cloned())
+            .filter_map(|number| Some((number, pasted.get(number.checked_sub(1)?).cloned()?)))
             .collect()
     }
 
@@ -454,6 +459,9 @@ struct PasteImage {
     pasted: Arc<Mutex<Vec<String>>>,
     vision: Option<bool>,
     notice: Notice,
+    /// Told the person is typing while the clipboard is read, so mail can't
+    /// end the line under the marker about to go in.
+    inbox: Option<Inbox>,
 }
 
 impl ConditionalEventHandler for PasteImage {
@@ -464,6 +472,10 @@ impl ConditionalEventHandler for PasteImage {
         _positive: bool,
         context: &EventContext,
     ) -> Option<Cmd> {
+        // The next hint sets it again from the line.
+        if let Some(inbox) = &self.inbox {
+            inbox.set_typing(true);
+        }
         let pasted = match self.vision {
             Some(true) => clipboard::image().map(|(_, url)| url),
             Some(false) => Err(text::PASTE_BLIND.to_string()),

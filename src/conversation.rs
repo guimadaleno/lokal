@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use crate::chat::{self, Event, Reply};
 use crate::context::{self, CHARS_PER_TOKEN, is_object, kept_arguments};
+use crate::image;
 use crate::input::Input;
 use crate::markdown::Markdown;
 use crate::mcp::Mcp;
@@ -260,8 +261,11 @@ impl Conversation {
         let mut asked_again = false;
         let mut left_out_images = false;
         let mut learned_context = false;
-        // The images the person pasted, as their line still shows them.
+        // The images the person pasted, as their line still shows them, and
+        // only those the context has room for: older outputs would make way
+        // first for one that can't fit anyway.
         let images = asked.map(|line| input.images_in(line)).unwrap_or_default();
+        let images = self.images_that_fit(images);
         let own = self.open_request(request, on_mail, images);
         // The MCP servers' tools join the first request, once the person
         // has seen what they tell the model.
@@ -676,6 +680,33 @@ impl Conversation {
         context::estimate(self.fixed(), &self.messages)
     }
 
+    /// The pasted images that fit the room left once the request's words are
+    /// in, each counted by its pixels; one that doesn't is left out, saying
+    /// so, as a read is. Where the context's size isn't known, all go.
+    fn images_that_fit(&self, images: Vec<(usize, String)>) -> Vec<String> {
+        let mut room = self
+            .room_for_output()
+            .map(|room| (room / CHARS_PER_TOKEN) as u64);
+        images
+            .into_iter()
+            .filter_map(|(number, url)| {
+                let tokens = image::tokens_in_url(&url).unwrap_or(u64::MAX);
+                match &mut room {
+                    Some(left) if tokens > *left => {
+                        let line = text::pasted_no_room(number, tokens, *left);
+                        layout::print_fitted(&line, style::gray);
+                        None
+                    }
+                    Some(left) => {
+                        *left -= tokens;
+                        Some(url)
+                    }
+                    None => Some(url),
+                }
+            })
+            .collect()
+    }
+
     /// Ollama's context, read again after the session's first reply when the
     /// model's own num_ctx doesn't settle it: at the start the model wasn't
     /// loaded, or another client had loaded it with options of its own, and
@@ -928,5 +959,14 @@ mod tests {
             kept(&pasted)["content"],
             format!("this [Image #1]\n{}", text::PASTED_NOT_KEPT)
         );
+    }
+
+    #[test]
+    fn a_pasted_image_that_doesnt_fit_the_room_is_left_out() {
+        let conversation = conversation(8192);
+        let small = image::data_url(image::Kind::Png, &image::png_start(64, 64));
+        let big = image::data_url(image::Kind::Png, &image::png_start(3840, 2160));
+        let kept = conversation.images_that_fit(vec![(1, small.clone()), (2, big)]);
+        assert_eq!(kept, [small]);
     }
 }

@@ -514,13 +514,14 @@ of MCP servers the person sets up. One binary, few dependencies.
     templates refuse two from the user in a row, framed so `drop_own`
     finds it again to make way.
 - **An image goes only to a model the server says sees** (LM Studio's
-  `type: "vlm"`, Ollama's `vision` capability), in the read's own `tool`
-  message: what the model looked at, never the person's words. A server
-  that doesn't say gets none, since a model that can't see may drop the
-  image and answer as if it had.
+  `type: "vlm"`, Ollama's `vision` capability): one the model read goes in
+  its read's own `tool` message, never as the person's words, and one the
+  person pasted in their own message. A server that doesn't say gets none,
+  since a model that can't see may drop the image and answer as if it had.
   - **It counts by its pixels, never its base64** (`image::tokens_in_url`),
-    on the high side, and one that doesn't fit the room left is turned down
-    with its estimate: Lokal carries no decoder to shrink it.
+    on the high side, and one that doesn't fit the room left, read or
+    pasted, is left out with its estimate before anything older makes way
+    for it: Lokal carries no decoder to shrink it.
   - **A file that reads as UTF-8 is text,** whatever its first bytes. An
     image is PNG, JPEG or WebP, up to 20 MB: Ollama refuses a GIF.
   - **It makes way like an output** once the model has replied after it,

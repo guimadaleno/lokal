@@ -731,6 +731,14 @@ pub fn clipboard_failed(why: &str) -> String {
     format!("Couldn't read the clipboard: {why}.")
 }
 
+pub fn pasted_no_room(image: usize, tokens: u64, room: u64) -> String {
+    format!(
+        "Image #{image} is left out: it would take about {} tokens, and the context has room for about {}.",
+        number(tokens),
+        number(room)
+    )
+}
+
 pub fn image_marker(number: usize) -> String {
     format!("[Image #{number}]")
 }
