@@ -5,6 +5,17 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.7.1 — 2026-11-09
+
+- Ctrl+V pastes an image in Windows Terminal also with mail turned off.
+- Text you paste is no longer cut when it arrives slowly, as over a remote
+  connection.
+- Keys you press while Lokal reads an image from the clipboard go in after
+  it, and mail from another session waits for the line you're writing.
+- The line redraws right after an image is pasted into one with several
+  lines, or with wide characters, as in Chinese or Japanese.
+- "No image on the clipboard." shows on an empty line too.
+
 ## 0.7.0 — 2026-11-09
 
 - Start a line with ! to run a command yourself, like !git status. It runs
