@@ -5,7 +5,7 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
-## Unreleased
+## 0.7.0 — 2026-11-09
 
 - Start a line with ! to run a command yourself, like !git status. It runs
   without asking, since you typed it, and what it gives goes to the model

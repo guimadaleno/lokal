@@ -675,8 +675,6 @@ cargo clippy --all-targets
   entry is the release's notes, written for the person using Lokal.
 - **Bump the smallest part that fits:** patch for fixes, minor for anything
   new, while below 1.0.
-- **The release that ships auto changes the page:** its refusal "Run
-  anything that can change your machine without your yes" stops being true.
 
 ## Keys and secrets
 
@@ -696,7 +694,7 @@ cargo clippy --all-targets
 
 | What | Measured |
 |---|---|
-| Release binary (static, stripped) | 2.2 MB |
+| Release binary (static, stripped) | 2.5 MB (0.7.0) |
 | Start to the prompt, server found | ~40 ms |
 | Memory at the prompt | ~3 MB |
 | Auto's judge, a 27B model with reasoning off (Ollama 0.40.2) | 1.1–1.9 s a command; 6–22 s with reasoning; the conversation's prompt cache stays |
