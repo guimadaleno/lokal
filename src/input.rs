@@ -754,16 +754,20 @@ fn still_reading(call: &str) -> bool {
     }
 }
 
-/// The numbers of the `[Image #N]` markers whole in `line`, in its order.
+/// The numbers of the `[Image #N]` markers whole in `line`, in its order,
+/// each once.
 fn markers(line: &str) -> Vec<usize> {
     let mut numbers = Vec::new();
     let mut rest = line;
     while let Some(start) = rest.find("[Image #") {
         rest = &rest[start + "[Image #".len()..];
         let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        // Written as Lokal writes it, and each image once.
         if !digits.is_empty()
+            && !digits.starts_with('0')
             && rest[digits.len()..].starts_with(']')
             && let Ok(number) = digits.parse()
+            && !numbers.contains(&number)
         {
             numbers.push(number);
         }
@@ -1125,6 +1129,8 @@ mod tests {
             [4]
         );
         assert_eq!(markers("no images"), Vec::<usize>::new());
+        assert_eq!(markers("[Image #1] and [Image #1] again"), [1]);
+        assert_eq!(markers("[Image #01] [Image #0] [Image #10]"), [10]);
     }
 
     #[test]
