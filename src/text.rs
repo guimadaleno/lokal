@@ -667,7 +667,11 @@ pub fn size(bytes: usize) -> String {
 }
 
 pub fn more_lines(count: usize) -> String {
-    format!("… +{count} lines")
+    if count == 1 {
+        "… +1 line".to_string()
+    } else {
+        format!("… +{count} lines")
+    }
 }
 
 pub fn unknown_option(option: &str) -> String {
