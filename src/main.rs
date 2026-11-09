@@ -18,6 +18,7 @@ mod judge;
 mod keys;
 mod layout;
 mod markdown;
+mod mcp;
 mod memory;
 mod menu;
 mod mode;
@@ -161,6 +162,13 @@ fn run(started: Instant, resume: bool, request: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // MCP servers in a conversation at a terminal only, where each call can
+    // be asked about; started now, so they're up by the first request.
+    let mcp = if talking {
+        mcp::Mcp::start(&config.mcp)
+    } else {
+        None
+    };
     let folder = env::current_dir().unwrap_or_default();
     let project = approvals::ProjectApprovals::load(approvals::project_root(&folder));
     let mut input = Input::new(project);
@@ -200,7 +208,7 @@ fn run(started: Instant, resume: bool, request: &str) -> ExitCode {
     if let Some(peers) = &peers {
         input.receive(peers.inbox(), peers.directory());
     }
-    let mut conversation = Conversation::new(server, facts, peers);
+    let mut conversation = Conversation::new(server, facts, peers, mcp);
     if talking && !conversation.notes().is_empty() {
         commands::print_notes(&conversation);
     }

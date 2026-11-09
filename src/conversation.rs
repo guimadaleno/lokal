@@ -12,6 +12,7 @@ use crate::chat::{self, Event, Reply};
 use crate::context::{self, CHARS_PER_TOKEN, is_object, kept_arguments};
 use crate::input::Input;
 use crate::markdown::Markdown;
+use crate::mcp::Mcp;
 use crate::memory::{self, Note};
 use crate::peers::Peers;
 use crate::progress::{ToolProgress, speed, working_label};
@@ -66,6 +67,8 @@ pub struct Conversation {
     show_reasoning: bool,
     /// The person's other sessions, in a conversation at a terminal.
     peers: Option<Peers>,
+    /// The MCP servers the person set up, in a conversation at a terminal.
+    mcp: Option<Mcp>,
     /// The commands the person ran at the `>` since their last request,
     /// framed for the model: they go along with the next one.
     own: Vec<String>,
@@ -96,7 +99,7 @@ pub enum Turn {
 }
 
 impl Conversation {
-    pub fn new(server: Server, facts: Facts, peers: Option<Peers>) -> Self {
+    pub fn new(server: Server, facts: Facts, peers: Option<Peers>, mcp: Option<Mcp>) -> Self {
         let tools_size = tools::definitions(peers.is_some(), server.vision == Some(true))
             .to_string()
             .len();
@@ -113,6 +116,7 @@ impl Conversation {
             speed: None,
             show_reasoning: false,
             peers,
+            mcp,
             own: Vec::new(),
             asked: Vec::new(),
             written: Vec::new(),
@@ -257,6 +261,13 @@ impl Conversation {
         let mut left_out_images = false;
         let mut learned_context = false;
         let own = self.open_request(request, on_mail);
+        // The MCP servers' tools join the first request, once the person
+        // has seen what they tell the model.
+        if let Some(mcp) = &mut self.mcp
+            && mcp.ready(input)
+        {
+            self.tools_size = self.tools().to_string().len();
+        }
         loop {
             self.free_context();
             let started = Instant::now();
@@ -457,15 +468,20 @@ impl Conversation {
                     written: &self.written,
                 };
                 let peers = self.peers.as_ref();
-                let outcome = tools::run(call, input, mode, &case, room, scratch, peers);
+                let servers = self.mcp.as_mut();
+                let outcome = tools::run(call, input, mode, &case, room, scratch, peers, servers);
                 // A blank line after each step, so its output doesn't run into what follows.
                 eprintln!();
                 match outcome {
                     Outcome::Done(result) => result.into(),
-                    Outcome::Image { text, url } => json!([
-                        {"type": "text", "text": text},
-                        {"type": "image_url", "image_url": {"url": url}}
-                    ]),
+                    Outcome::Images { text, urls } => {
+                        let mut parts = vec![json!({"type": "text", "text": text})];
+                        parts
+                            .extend(urls.into_iter().map(
+                                |url| json!({"type": "image_url", "image_url": {"url": url}}),
+                            ));
+                        Value::Array(parts)
+                    }
                     Outcome::Wrote { result, path } => {
                         self.written.push(path.display().to_string());
                         result.into()
@@ -674,9 +690,18 @@ impl Conversation {
         std::mem::take(&mut self.learned_context)
     }
 
-    /// The tools this session offers the model.
+    /// The tools this session offers the model: Lokal's, then the MCP
+    /// servers' once the person has seen them.
     fn tools(&self) -> Value {
-        tools::definitions(self.peers.is_some(), self.server.vision == Some(true))
+        let mut tools = tools::definitions(self.peers.is_some(), self.server.vision == Some(true));
+        if let (Some(mcp), Some(list)) = (&self.mcp, tools.as_array_mut()) {
+            list.extend(mcp.definitions().cloned());
+        }
+        tools
+    }
+
+    pub fn mcp(&self) -> Option<&Mcp> {
+        self.mcp.as_ref()
     }
 
     /// What every request carries besides the messages, in characters: the
@@ -790,6 +815,7 @@ mod tests {
             speed: None,
             show_reasoning: false,
             peers: None,
+            mcp: None,
             own: Vec::new(),
             asked: Vec::new(),
             written: Vec::new(),

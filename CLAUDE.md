@@ -3,8 +3,8 @@
 A terminal assistant for Linux that runs on a model on the person's own
 machine: LM Studio, or any server that speaks the OpenAI chat API. It finds
 the server by itself (also from WSL, where the server runs on Windows), and
-the model can run commands, read files and change them. One binary, few
-dependencies.
+the model can run commands, read files and change them, and call the tools
+of MCP servers the person sets up. One binary, few dependencies.
 
 ## What it refuses to do
 
@@ -219,6 +219,41 @@ dependencies.
     session; the sender's model is told to shorten it, or that it's full.
     The socket is all it puts on disk, and it goes when the session quits,
     or at the next start if the session was killed.
+- **Let an MCP server act without a yes, or its words reach the model
+  unseen** (`src/mcp.rs`, #37). A server is a program the person named, and
+  its tool descriptions are a third party's text that goes along with every
+  request.
+  - **Servers are set in the person's settings only** (`mcp.<name> =
+    <command line>`, optionally `mcp.<name>.tools = a, b`), never a
+    project's `.mcp.json`, or a cloned repository could start programs.
+    The settings are Lokal's own, so the model can't add one.
+  - **A server starts in the home folder, never the project's:** a
+    project's `.npmrc` or `uv.toml` could change what `npx` or `uvx`
+    fetches and runs. Its program comes from the PATH's absolute folders,
+    as for what runs unasked, and it runs in a session of its own, ended
+    with Lokal (stdin closed, then SIGTERM, then SIGKILL).
+  - **A tool list shows whole before the model gets it,** every word of
+    each tool's description and parameters, control characters as marks,
+    asked on No ("Offer them to the model?"). Its hash is kept in the state
+    folder (`mcp-seen`), and a list that changes is shown again. The list
+    is fixed for the session, so the prompt cache holds.
+  - **Every call asks, on No** ("Call it?"), with the server, the tool and
+    its arguments. "Don't ask again" covers that exact call for the
+    session, kept apart from commands, so a call's text can't let a
+    command run unasked. A tool's name alone would be `cmd *`. Auto never
+    judges a call, mail never approves one, and `readOnlyHint` is the
+    server's word, never Lokal's rule.
+  - **What a call gives is an output:** text cut to the room left, an
+    image to a model that sees, anything else a line saying so. A server's
+    words on screen, its last stderr lines included, show their control
+    characters as marks.
+  - **Stdio and tools only:** no HTTP (TLS and OAuth, and an address Lokal
+    would talk to), no sampling (a server writing to the person's model),
+    no resources or prompts, and a server's `instructions` aren't passed
+    on. Both eras: `initialize` first, then `server/discover` with `_meta`
+    (2026-07-28) when that fails.
+  - **Conversations at a terminal only:** a one-shot request starts no
+    server, since nothing there could be asked about.
 - **Keep the model's reasoning.** It shows only when the person asks:
   `/reasoning` turns on, for the session, a small window where its last few
   lines show faint while it thinks, and which clears itself when the answer
@@ -235,8 +270,9 @@ dependencies.
   picks Send. The menu starts on Don't send. It sends kinds, never names:
   no server address, no model. **The conversation is never part of it,**
   since it can hold files and secrets the model read.
-- **Grow on disk.** It keeps the last conversation only, and user.md is
-  the person's own file.
+- **Grow on disk.** It keeps the last conversation only, a line a MCP
+  server for the tool list the person saw, and user.md is the person's own
+  file.
   - **The scratch folder** (`src/scratch.rs`, `/tmp/lokal-<uid>/<pid>`) is
     where the model is told to put what it makes only to get the work done.
     It goes when Lokal quits, and one left by a Lokal that was killed (a
@@ -321,6 +357,10 @@ dependencies.
 | `tools/files.rs` | read_file, write_file and edit_file, and where a change may open on Yes |
 | `image.rs` | What an image is to the model: its kind and size from its first bytes, its data URL, what it takes of the context |
 | `tools/remember.rs` | remember: a line added to user.md, or one swapped for it |
+| `tools/mcp.rs` | A call to an MCP server's tool: shown, asked, and what it gave as an output |
+| `mcp.rs` | The session's MCP servers: started, their tool lists shown to the person, offered, ended |
+| `mcp/client.rs` | One MCP server's process and the JSON-RPC with it, in both eras of the protocol |
+| `mcp/seen.rs` | The tool lists the person has seen, a hash a server |
 | `tools/mail.rs` | list_sessions and mail, shown as steps |
 | `allowlist.rs` | Which commands run without asking, and which questions open on Yes |
 | `gitconfig.rs` | What a repository's own git settings and hooks would have git run |
@@ -704,6 +744,11 @@ Measured on a current laptop, under WSL; the judge on a consumer GPU.
   The speed is timed by Lokal from the first token on. The spinner counts
   a token a piece, and so does the prompt's status where a server sends no
   `usage.completion_tokens`: tried with a fake server that sends none.
+- **MCP with a real server:** tried against `tests/mcp/fake_server.py` in
+  both eras (unit tests and a pseudo-terminal), and with Qwen 3.8 on
+  Ollama calling the fake's tools, an image included. A published server
+  (the official filesystem one through `npx`) is still owed, as is a
+  server that only speaks 2026-07-28 out in the world.
 - **Hooks in auto, the unasked PATH and control characters as marks:** run
   in a pseudo-terminal against a fake server only. A post-commit hook made
   auto ask on No, and without it the judge let the commit through; an

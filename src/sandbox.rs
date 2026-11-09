@@ -396,7 +396,7 @@ fn named_by_git(project: &Path, home: &Path) -> Result<Vec<PathBuf>, String> {
 /// relative one is read from their own folder.
 fn paths_in(project: &Path, home: &Path, key: &str, value: &str) -> Vec<(PathBuf, bool)> {
     let include = key.starts_with("include");
-    words(value)
+    config::words(value)
         .into_iter()
         .map(|word| word.trim_start_matches('!').to_string())
         .filter(|word| !word.is_empty() && !word.starts_with('-') && !word.contains("://"))
@@ -416,32 +416,6 @@ fn paths_in(project: &Path, home: &Path, key: &str, value: &str) -> Vec<(PathBuf
             Some((path, surely))
         })
         .collect()
-}
-
-/// A value split as a shell would: quotes and a backslash keep a space in
-/// a word ("/mnt/c/Program Files/…").
-fn words(value: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut word = String::new();
-    let mut quote = None;
-    let mut chars = value.chars();
-    while let Some(c) = chars.next() {
-        match (c, quote) {
-            ('\\', _) => word.extend(chars.next()),
-            ('"' | '\'', None) => quote = Some(c),
-            (c, Some(open)) if c == open => quote = None,
-            (c, None) if c.is_whitespace() => {
-                if !word.is_empty() {
-                    words.push(std::mem::take(&mut word));
-                }
-            }
-            (c, _) => word.push(c),
-        }
-    }
-    if !word.is_empty() {
-        words.push(word);
-    }
-    words
 }
 
 /// Settings whose program git runs by itself: a path in them always means
@@ -1071,7 +1045,10 @@ mod tests {
             [(PathBuf::from("/nonexistent/ana/p/.gitconfig"), true)]
         );
         assert!(found("include.path", "local.gitconfig").is_empty());
-        assert_eq!(words("a \"b c\" d\\ e 'f g'"), ["a", "b c", "d e", "f g"]);
+        assert_eq!(
+            config::words("a \"b c\" d\\ e 'f g'"),
+            ["a", "b c", "d e", "f g"]
+        );
         // What git runs by itself means a file, even one that reads like a ref.
         assert_eq!(
             found("core.pager", "scripts/x"),

@@ -18,7 +18,7 @@ use crate::peers::Peers;
 use crate::{config, style, text};
 
 /// How much of a file one read gives the model; a longer one says where to read on.
-const FILE_LIMIT: usize = 30_000;
+pub(super) const FILE_LIMIT: usize = 30_000;
 /// The most of a file read into memory, for a part of it or a change to it.
 const READ_CAP: u64 = 64 * 1024 * 1024;
 /// The largest image sent to the model: its data goes along with every
@@ -129,7 +129,7 @@ fn look_at(
              fine, or answer with what you have."
         )));
     }
-    Ok(Outcome::Image {
+    Ok(Outcome::Images {
         text: format!(
             "{}: a {}×{} {} image.",
             path.display(),
@@ -137,7 +137,7 @@ fn look_at(
             image.height,
             image.kind.name()
         ),
-        url: image::data_url(image.kind, bytes),
+        urls: vec![image::data_url(image.kind, bytes)],
     })
 }
 
@@ -432,11 +432,11 @@ mod tests {
         let dir = folder("image");
         let path = dir.join("shot.png");
         fs::write(&path, image::png_start(640, 480)).unwrap();
-        let Ok(Outcome::Image { text, url }) = read(&path, 100_000, Some(true)) else {
+        let Ok(Outcome::Images { text, urls }) = read(&path, 100_000, Some(true)) else {
             panic!("no image");
         };
         assert_eq!(text, format!("{}: a 640×480 PNG image.", path.display()));
-        assert!(url.starts_with("data:image/png;base64,iVBORw0KGgo"));
+        assert!(urls[0].starts_with("data:image/png;base64,iVBORw0KGgo"));
         let no = read(&path, 100_000, Some(false)).err().unwrap();
         assert!(no.ends_with("is an image, and the model loaded doesn't take images."));
         let unknown = read(&path, 100_000, None).err().unwrap();

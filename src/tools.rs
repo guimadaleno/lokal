@@ -13,10 +13,12 @@ use crate::judge;
 use crate::mode::Mode;
 use crate::peers::{self, Peers};
 use crate::{config, diff, layout, style, text};
+use files::FILE_LIMIT;
 
 mod command;
 mod files;
 mod mail;
+mod mcp;
 mod remember;
 
 pub use command::run_own;
@@ -33,8 +35,9 @@ const CONTEXT_FULL: &str = "Answer with what you have, or, if that isn't enough,
 pub enum Outcome {
     /// The result for the model.
     Done(String),
-    /// An image for a model that sees: what it is, and its data URL.
-    Image { text: String, url: String },
+    /// Images for a model that sees: the text that goes with them, and
+    /// their data URLs.
+    Images { text: String, urls: Vec<String> },
     /// A file of the project's was written: the result for the model, and
     /// the path as the model gave it, for auto's judge.
     Wrote { result: String, path: PathBuf },
@@ -155,8 +158,10 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
 
 /// Runs one tool call in `mode`, with what auto's judge reads in `case`.
 /// `room` is how many characters its output may take, when the context's
-/// size is known; `scratch` is the session's folder, and `peers` the other
-/// sessions, when this one listens.
+/// size is known; `scratch` is the session's folder, `peers` the other
+/// sessions, when this one listens, and `servers` the MCP servers whose
+/// tools are offered.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     call: &ToolCall,
     input: &mut Input,
@@ -165,6 +170,7 @@ pub fn run(
     room: Option<usize>,
     scratch: Option<&Path>,
     peers: Option<&Peers>,
+    servers: Option<&mut crate::mcp::Mcp>,
 ) -> Outcome {
     let judge = (mode == Mode::Auto).then_some(case);
     let result = match serde_json::from_str::<Value>(&call.arguments) {
@@ -176,7 +182,15 @@ pub fn run(
             ("remember", _) => remember::remember(&args, input),
             ("list_sessions", Some(peers)) => Ok(mail::list_sessions(peers)),
             ("mail", Some(peers)) => mail::mail(&args, peers),
-            (other, _) => Err(format!("there's no tool called {other}.")),
+            (other, _) => match servers {
+                Some(servers) => match servers.find(other) {
+                    Some(index) => {
+                        mcp::call(servers, index, &args, input, room, case.server.vision)
+                    }
+                    None => Err(format!("there's no tool called {other}.")),
+                },
+                None => Err(format!("there's no tool called {other}.")),
+            },
         },
         // Not repeated back: they can be a whole file.
         Err(error) => Err(format!("the arguments aren't valid JSON ({error}).")),

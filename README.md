@@ -57,6 +57,23 @@ runs a command of your own. Shift+Tab switches between asking for
 everything, accepting file edits once their diff shows, and auto, where the
 model, asked separately, also lets everyday commands run.
 
+## MCP servers
+
+An MCP server gives the model tools Lokal doesn't have. Add one a line in
+`~/.config/lokal/config`, a name of your choice and the command that starts
+it:
+
+```
+mcp.notes = npx -y @modelcontextprotocol/server-filesystem /home/you/notes
+mcp.notes.tools = read_text_file, list_directory    # optional: only these
+```
+
+Servers start with a conversation, in your home folder, and speak MCP over
+their standard input and output. The first time, and whenever a server
+changes what it tells the model about its tools, Lokal shows you all of it
+and asks before the model gets them. Every call asks too, and `/info` shows
+what each server's tools cost in context.
+
 ## What it won't do
 
 - Run a command that may change something without your yes. Which commands
@@ -64,6 +81,9 @@ model, asked separately, also lets everyday commands run.
   the one exception: you switch it on for a session, and anything riskier,
   like deleting files or sudo, still asks.
 - Change a file without showing you the diff first.
+- Call an MCP server's tool without your yes, or give the model a server's
+  tools before you've seen what it says about them. A project's own
+  `.mcp.json` starts nothing.
 - Take a key you pressed before the question as its answer.
 - Send anything anywhere on its own, except one update check a day, which
   `updates = off` turns off. `/feedback` sends a report only when you write

@@ -66,6 +66,10 @@ pub struct Input {
     approved: HashSet<String>,
     /// The same, kept for the project.
     project: ProjectApprovals,
+    /// Calls to MCP tools the person said not to ask about again, this
+    /// session: apart from commands, so a call's text can't let a command
+    /// run unasked.
+    approved_calls: HashSet<String>,
     /// Mail from the person's other sessions, when this one listens.
     inbox: Option<Inbox>,
 }
@@ -80,6 +84,7 @@ impl Input {
                 editor: None,
                 quit_armed,
                 approved: HashSet::new(),
+                approved_calls: HashSet::new(),
                 project,
                 inbox: None,
             };
@@ -106,6 +111,7 @@ impl Input {
             editor,
             quit_armed,
             approved: HashSet::new(),
+            approved_calls: HashSet::new(),
             project,
             inbox: None,
         }
@@ -230,7 +236,23 @@ impl Input {
     /// with Esc always No; a file change never gets "don't ask again". When
     /// the diff showed only its start, `rest` holds the lines left out, and
     /// a choice between Yes and No prints them and asks again.
-    pub fn approve_write(&mut self, mut rest: Vec<String>, opens_on_yes: bool) -> Approval {
+    pub fn approve_write(&mut self, rest: Vec<String>, opens_on_yes: bool) -> Approval {
+        self.approve_shown(text::WRITE_QUESTION, rest, diff::print, false, opens_on_yes)
+    }
+
+    /// Asks `question` about what was just shown, starting on Yes only when
+    /// `opens_on_yes`, with Esc always No. `session` offers "don't ask
+    /// again" for the rest of the session. When only the start was shown,
+    /// `rest` holds the lines left out, and a choice before No prints them
+    /// with `print` and asks again.
+    pub fn approve_shown(
+        &mut self,
+        question: &str,
+        mut rest: Vec<String>,
+        print: fn(&[String]),
+        session: bool,
+        opens_on_yes: bool,
+    ) -> Approval {
         if self.editor.is_none() {
             return Approval::Unavailable;
         }
@@ -238,30 +260,30 @@ impl Input {
             // Again after the rest: keys pressed while it printed came
             // before the question.
             discard_typed_ahead();
-            let mut items = vec![menu::Item {
-                label: text::CHOICE_YES,
-                key: 'y',
-            }];
-            if !rest.is_empty() {
-                items.push(menu::Item {
-                    label: text::CHOICE_SHOW_REST,
-                    key: 's',
-                });
+            let mut options = vec![(text::CHOICE_YES, 'y')];
+            if session {
+                options.push((text::CHOICE_YES_SESSION, 'a'));
             }
-            items.push(menu::Item {
-                label: text::CHOICE_NO,
-                key: 'n',
-            });
+            if !rest.is_empty() {
+                options.push((text::CHOICE_SHOW_REST, 's'));
+            }
+            options.push((text::CHOICE_NO, 'n'));
+            let items: Vec<menu::Item> = options
+                .iter()
+                .map(|&(label, key)| menu::Item { label, key })
+                .collect();
             let no = items.len() - 1;
             let start = if opens_on_yes { 0 } else { no };
-            match self.choose(text::WRITE_QUESTION, &items, start, no) {
-                Some(menu::Choice::Picked(0)) => return Approval::Yes,
-                Some(menu::Choice::Picked(index)) if index < no => {
-                    diff::print(&std::mem::take(&mut rest));
-                }
-                Some(menu::Choice::Picked(_)) => return Approval::No,
+            let picked = match self.choose(question, &items, start, no) {
+                Some(menu::Choice::Picked(index)) => options[index].1,
                 Some(menu::Choice::Interrupted) => return Approval::Stop,
                 None => return Approval::Unavailable,
+            };
+            match picked {
+                'y' => return Approval::Yes,
+                'a' => return Approval::YesForSession,
+                's' => print(&std::mem::take(&mut rest)),
+                _ => return Approval::No,
             }
         }
     }
@@ -293,6 +315,17 @@ impl Input {
             Some(text::APPROVED_FOR_PROJECT)
         } else {
             None
+        }
+    }
+
+    /// Whether this exact MCP call was approved for the session.
+    pub fn call_approved_before(&self, call: &str) -> bool {
+        self.approved_calls.contains(call)
+    }
+
+    pub fn keep_call_approval(&mut self, approval: &Approval, call: &str) {
+        if let Approval::YesForSession = approval {
+            self.approved_calls.insert(call.to_string());
         }
     }
 

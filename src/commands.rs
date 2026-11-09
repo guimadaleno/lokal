@@ -223,6 +223,12 @@ fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
         let tokens = context::tokens_in(&note.text);
         rows.push((label, text::note_size(&note.name, tokens, note.cut)));
     }
+    if let Some(mcp) = conversation.mcp() {
+        for (index, server) in mcp.summary().into_iter().enumerate() {
+            let label = if index == 0 { text::INFO_MCP } else { "" };
+            rows.push((label, server));
+        }
+    }
     rows.push((
         text::INFO_SCRATCH,
         text::scratch_folder(conversation.scratch()),

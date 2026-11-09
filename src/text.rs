@@ -64,6 +64,7 @@ where the model, asked apart, also lets everyday commands run.
 Mail from your other Lokal sessions shows above the >. Waiting mail goes to
 the model with Enter on an empty line, and Esc drops it. A line starting
 with @name mails that session.
+MCP servers set as mcp.<name> in /config offer their tools; each call asks.
 lokal -r picks up the last conversation.";
 
 pub const SETTINGS_TEMPLATE: &str = "\
@@ -84,6 +85,12 @@ pub const SETTINGS_TEMPLATE: &str = "\
 
 # How many turns in a row mail may start on its own before it waits for you:
 # mail_turns = 64
+
+# MCP servers, one line each: a name of your choice and the command that
+# starts it. It starts in your home folder, and every call asks first.
+# mcp.files = npx -y @modelcontextprotocol/server-filesystem /home/you/notes
+# Only some of a server's tools, to save context:
+# mcp.files.tools = read_text_file, list_directory
 ";
 pub const SETTINGS_NEXT_START: &str = "Saved. Settings apply the next time Lokal starts.";
 
@@ -97,6 +104,7 @@ pub const QUIT_AGAIN: &str = "Press Ctrl+C again to quit";
 
 pub const RUN_QUESTION: &str = "Run it?";
 pub const WRITE_QUESTION: &str = "Write it?";
+pub const CALL_QUESTION: &str = "Call it?";
 pub const CHOICE_YES: &str = "Yes";
 pub const CHOICE_YES_SESSION: &str = "Yes, and don't ask again this session";
 pub const CHOICE_YES_PROJECT: &str = "Yes, and don't ask again in this project";
@@ -412,6 +420,7 @@ pub const INFO_USER_MD: &str = "user.md";
 pub const INFO_SETTINGS: &str = "settings";
 pub const INFO_PROJECT: &str = "project";
 pub const INFO_SCRATCH: &str = "scratch";
+pub const INFO_MCP: &str = "mcp";
 pub const INFO_SESSION: &str = "session";
 pub const INFO_NOTES: &str = "notes";
 pub const NO_NOTES: &str = "none yet (/memory starts a LOKAL.md)";
@@ -697,8 +706,149 @@ pub fn bad_updates_setting(path: &str, line: usize) -> String {
 
 pub fn unknown_setting(path: &str, line: usize, name: &str) -> String {
     format!(
-        "{path}, line {line}: there's no setting called `{name}`. The ones that exist are `server`, `model`, `updates`, `mail` and `mail_turns`."
+        "{path}, line {line}: there's no setting called `{name}`. The ones that exist are `server`, `model`, `updates`, `mail`, `mail_turns` and `mcp.<name>`."
     )
+}
+
+pub const MCP_SEEN_HEADER: &str = "# The MCP tool lists you've seen, a hash a server. Lokal writes this file:\n# a list that changes is shown again before the model gets it.\n";
+pub const MCP_NO_PROGRAM: &str = "there's no command to start it.";
+pub const MCP_STARTING: &str = "starting the MCP servers";
+pub const MCP_FAILED: &str = "it failed as it started.";
+pub const MCP_COULDNT_START: &str = "couldn't start";
+pub const MCP_NO_TOOLS: &str = "no tools";
+pub const MCP_DECLINED: &str = "you said no to its tools";
+pub const OFFER_QUESTION: &str = "Offer them to the model?";
+
+pub fn mcp_couldnt_start(name: &str, reason: &str) -> String {
+    format!("The MCP server {name} couldn't start, so its tools aren't offered: {reason}")
+}
+
+pub fn mcp_no_tools(name: &str) -> String {
+    format!("The MCP server {name} offers no tools Lokal can give the model.")
+}
+
+pub fn mcp_offers(name: &str, tools: usize, tokens: u64) -> String {
+    let count = if tools == 1 {
+        "1 tool".to_string()
+    } else {
+        format!("{tools} tools")
+    };
+    format!(
+        "The MCP server {name} offers {count}, about {} tokens a request. All it tells the model:",
+        number(tokens)
+    )
+}
+
+pub fn mcp_offered(name: &str, tools: usize, tokens: u64) -> String {
+    let count = if tools == 1 {
+        "1 tool".to_string()
+    } else {
+        format!("{tools} tools")
+    };
+    format!("{name} · {count}, ~{} tokens a request", number(tokens))
+}
+
+pub fn mcp_starts_later(name: &str) -> String {
+    format!("{name} · starting; its tools are shown with the first request")
+}
+
+pub fn mcp_no_such_tool(name: &str) -> String {
+    format!("It has no tool called {name}, which mcp.<name>.tools names.")
+}
+
+pub const MCP_WANTS_INPUT: &str =
+    "The tool asked for more from the user, which Lokal can't give it in this version.";
+pub const MCP_IMAGE_UNREAD: &str =
+    "[An image Lokal can't read, left out: only PNG, JPEG and WebP go to the model.]";
+pub const MCP_IMAGE_BLIND: &str = "[An image, left out: the model loaded doesn't take images.]";
+pub const MCP_IMAGE_UNSAID: &str =
+    "[An image, left out: this server doesn't say whether its model takes images.]";
+pub const MCP_AUDIO: &str = "[Audio, left out: Lokal gives the model none.]";
+pub const MCP_TOOL_FAILED: &str = "The tool failed:";
+
+pub fn mcp_binary(uri: &str) -> String {
+    format!("[{uri}: binary data, left out.]")
+}
+
+pub fn mcp_link(name: &str, uri: &str) -> String {
+    format!("[A link: {name} {uri}]")
+}
+
+pub fn mcp_unknown_part(kind: &str) -> String {
+    format!("[A part of a kind Lokal doesn't know ({kind}), left out.]")
+}
+
+pub fn mcp_image_no_room(width: u32, height: u32, tokens: u64) -> String {
+    format!(
+        "[An image of {width}×{height}, left out: it would take about {tokens} tokens, more than the context has room for.]"
+    )
+}
+
+pub fn mcp_image_shown(size: &str) -> String {
+    format!("an image, {size}")
+}
+
+pub fn mcp_same_name(name: &str) -> String {
+    format!("Its tool {name} is left out: another tool has that name already.")
+}
+pub const MCP_ENDED: &str = "the server ended.";
+
+pub fn mcp_relative_program(program: &str) -> String {
+    format!("`{program}` is a relative path: use an absolute one, or a program the PATH finds.")
+}
+
+pub fn mcp_cant_start(program: &str, error: &str) -> String {
+    format!("couldn't start `{program}`: {error}.")
+}
+
+pub fn mcp_unknown_version(version: &str) -> String {
+    format!("it speaks a version of MCP Lokal doesn't: {version}.")
+}
+
+pub fn mcp_no_answer(method: &str) -> String {
+    format!("it didn't answer `{method}` in time.")
+}
+
+pub fn mcp_refused(message: &str) -> String {
+    format!("the server said: {message}")
+}
+
+/// What went wrong with a server on its first line, then the last lines it
+/// wrote to stderr.
+pub fn mcp_with_stderr(message: &str, stderr: &[String]) -> String {
+    let mut lines = vec![message.to_string()];
+    lines.extend(stderr.iter().cloned());
+    lines.join("\n")
+}
+
+pub fn bad_mcp_setting(path: &str, line: usize, error: &str) -> String {
+    format!("{path}, line {line}: {error}")
+}
+
+pub fn bad_mcp_name(name: &str, most: usize) -> String {
+    format!(
+        "`{name}` can't name an MCP server: use lowercase letters, digits and dashes, at most {most}, as in `mcp.github = …`."
+    )
+}
+
+pub fn mcp_set_twice(name: &str) -> String {
+    format!("`mcp.{name}` is set twice.")
+}
+
+pub fn mcp_no_command(name: &str) -> String {
+    format!(
+        "`mcp.{name}` needs the command that starts the server, as in `mcp.{name} = npx -y <package>`."
+    )
+}
+
+pub fn unknown_mcp_field(name: &str, field: &str) -> String {
+    format!(
+        "`mcp.{name}.{field}` isn't a setting: an MCP server takes `mcp.{name}` and `mcp.{name}.tools`."
+    )
+}
+
+pub fn mcp_tools_without_server(path: &str, name: &str) -> String {
+    format!("{path}: `mcp.{name}.tools` is set, but not `mcp.{name}`, the command that starts it.")
 }
 
 pub fn bad_mail_setting(path: &str, line: usize) -> String {

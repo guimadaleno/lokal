@@ -162,7 +162,8 @@ impl Kept {
     }
 }
 
-fn signal_group(pid: u32, signal: libc::c_int) {
+/// A signal to a process and everything in its group.
+pub fn signal_group(pid: u32, signal: libc::c_int) {
     // SAFETY: plain syscall; the command leads its own process group.
     unsafe {
         libc::kill(-(pid as libc::pid_t), signal);

@@ -19,7 +19,23 @@ pub struct Config {
     pub mail: Mail,
     /// How many turns in a row mail may start on its own.
     pub mail_turns: Option<usize>,
+    /// The MCP servers the person set up, in the order they come.
+    pub mcp: Vec<McpServer>,
 }
+
+/// An MCP server: `mcp.<name> = <command line>`, and optionally
+/// `mcp.<name>.tools = a, b` for the only tools of its the model gets.
+#[derive(Clone, Debug, PartialEq)]
+pub struct McpServer {
+    pub name: String,
+    /// The program and its arguments, split as a shell would.
+    pub command: Vec<String>,
+    pub tools: Option<Vec<String>>,
+}
+
+/// The longest name a server may have: it starts every tool's name, which
+/// the chat API keeps under 64 characters.
+const MCP_NAME_MOST: usize = 20;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub enum Mail {
@@ -71,10 +87,93 @@ fn parse(contents: &str, path: &str) -> Result<Config, String> {
                 Some(Ok(turns)) => config.mail_turns = Some(turns),
                 _ => return Err(text::bad_mail_turns_setting(path, index + 1)),
             },
+            other if other.starts_with("mcp.") => {
+                set_mcp(&mut config.mcp, other, value.as_deref().unwrap_or(""))
+                    .map_err(|error| text::bad_mcp_setting(path, index + 1, &error))?;
+            }
             other => return Err(text::unknown_setting(path, index + 1, other)),
         }
     }
+    if let Some(server) = config.mcp.iter().find(|server| server.command.is_empty()) {
+        return Err(text::mcp_tools_without_server(path, &server.name));
+    }
     Ok(config)
+}
+
+/// One `mcp.<name>` or `mcp.<name>.tools` line. Err says what's wrong.
+fn set_mcp(servers: &mut Vec<McpServer>, setting: &str, value: &str) -> Result<(), String> {
+    let rest = &setting["mcp.".len()..];
+    let (name, field) = match rest.split_once('.') {
+        Some((name, field)) => (name, Some(field)),
+        None => (rest, None),
+    };
+    let valid = !name.is_empty()
+        && name.len() <= MCP_NAME_MOST
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !valid {
+        return Err(text::bad_mcp_name(name, MCP_NAME_MOST));
+    }
+    let index = match servers.iter().position(|server| server.name == name) {
+        Some(index) => index,
+        None => {
+            servers.push(McpServer {
+                name: name.to_string(),
+                command: Vec::new(),
+                tools: None,
+            });
+            servers.len() - 1
+        }
+    };
+    let server = &mut servers[index];
+    match field {
+        None if !server.command.is_empty() => Err(text::mcp_set_twice(name)),
+        None => {
+            server.command = words(value);
+            if server.command.is_empty() {
+                return Err(text::mcp_no_command(name));
+            }
+            Ok(())
+        }
+        Some("tools") => {
+            let tools = value
+                .split(',')
+                .map(str::trim)
+                .filter(|tool| !tool.is_empty())
+                .map(String::from)
+                .collect();
+            server.tools = Some(tools);
+            Ok(())
+        }
+        Some(other) => Err(text::unknown_mcp_field(name, other)),
+    }
+}
+
+/// A value split as a shell would: quotes and a backslash keep a space in
+/// a word ("/mnt/c/Program Files/…").
+pub fn words(value: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quote = None;
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        match (c, quote) {
+            ('\\', _) => word.extend(chars.next()),
+            ('"' | '\'', None) => quote = Some(c),
+            (c, Some(open)) if c == open => quote = None,
+            (c, None) if c.is_whitespace() => {
+                if !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                }
+            }
+            (c, _) => word.push(c),
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
 }
 
 pub fn approvals_path() -> PathBuf {
@@ -114,6 +213,11 @@ pub fn last_conversation_path() -> PathBuf {
     state_dir().join("last-conversation.json")
 }
 
+/// The MCP tool lists the person has seen, a hash a server.
+pub fn mcp_seen_path() -> PathBuf {
+    state_dir().join("mcp-seen")
+}
+
 pub fn last_update_check_path() -> PathBuf {
     state_dir().join("last-update-check")
 }
@@ -128,6 +232,7 @@ pub fn own_files() -> Vec<PathBuf> {
         approvals_path(),
         last_conversation_path(),
         last_update_check_path(),
+        mcp_seen_path(),
     ]
 }
 
@@ -212,6 +317,43 @@ fn xdg_dir(variable: &str, fallback: &str) -> PathBuf {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn reads_mcp_servers_and_their_tools() {
+        let config = parse(
+            "mcp.github = npx -y \"@scope/server github\"\n\
+             mcp.github.tools = create_issue, search_issues\n\
+             mcp.fs-2 = /opt/fs --root /srv\n",
+            "config",
+        )
+        .unwrap();
+        assert_eq!(
+            config.mcp,
+            [
+                McpServer {
+                    name: "github".into(),
+                    command: vec!["npx".into(), "-y".into(), "@scope/server github".into()],
+                    tools: Some(vec!["create_issue".into(), "search_issues".into()]),
+                },
+                McpServer {
+                    name: "fs-2".into(),
+                    command: vec!["/opt/fs".into(), "--root".into(), "/srv".into()],
+                    tools: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_wrong_mcp_setting_says_what_and_where() {
+        let error = |contents: &str| parse(contents, "config").unwrap_err();
+        assert!(error("mcp.GitHub = x").contains("line 1: `GitHub` can't name an MCP server"));
+        assert!(error("mcp. = x").contains("can't name an MCP server"));
+        assert!(error("mcp.a = x\nmcp.a = y").contains("line 2: `mcp.a` is set twice."));
+        assert!(error("mcp.a =").contains("needs the command"));
+        assert!(error("mcp.a.env = X=1").contains("`mcp.a.env` isn't a setting"));
+        assert!(error("mcp.a.tools = x").contains("`mcp.a.tools` is set, but not `mcp.a`"));
+    }
 
     #[test]
     fn reads_settings_and_skips_comments() {

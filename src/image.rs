@@ -76,6 +76,15 @@ pub fn data_url(kind: Kind, bytes: &[u8]) -> String {
     format!("data:{};base64,{}", kind.media_type(), base64(bytes))
 }
 
+/// An image an MCP server sends as base64: what it is, and its data URL.
+/// None for what isn't a PNG, JPEG or WebP whose size Lokal can read.
+pub fn from_base64(data: &str) -> Option<(Image, String)> {
+    let data: String = data.split_whitespace().collect();
+    let image = read(&unbase64(&data)?)?;
+    let url = format!("data:{};base64,{data}", image.kind.media_type());
+    Some((image, url))
+}
+
 /// What an image sent as a data URL takes of the context, read from the
 /// start of its data. None for a URL that isn't one.
 pub fn tokens_in_url(url: &str) -> Option<u64> {
@@ -340,5 +349,9 @@ mod tests {
             tokens_in_url("data:image/png;base64,bm90IGFuIGltYWdl"),
             None
         );
+        let data = &url["data:image/png;base64,".len()..];
+        let (image, again) = from_base64(&format!("{}\n{}", &data[..8], &data[8..])).unwrap();
+        assert_eq!((image.width, image.height, again), (1920, 1080, url));
+        assert!(from_base64("bm90IGFuIGltYWdl").is_none());
     }
 }
