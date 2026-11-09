@@ -267,7 +267,7 @@ impl Conversation {
                     break;
                 }
                 Err(Failure::Error(message)) => {
-                    eprintln!("{}", style::red(&message));
+                    layout::print_fitted(&message, style::red);
                     // An image the server can't take would fail every request
                     // after it: it gives way to a note saying why, and the
                     // model is asked again, once.
@@ -276,7 +276,7 @@ impl Conversation {
                         && context::leave_out_unseen_images(&mut self.messages, &note)
                     {
                         left_out_images = true;
-                        eprintln!("{}", style::gray(text::WITHOUT_THE_IMAGE));
+                        layout::print_fitted(text::WITHOUT_THE_IMAGE, style::gray);
                         continue;
                     }
                     end = Turn::Failed;
@@ -295,7 +295,7 @@ impl Conversation {
                 // The reasoning isn't kept, so the second try starts with room.
                 if ran_out && !asked_again {
                     asked_again = true;
-                    eprintln!("{}", style::gray(text::ASKING_AGAIN));
+                    layout::print_fitted(text::ASKING_AGAIN, style::gray);
                     self.messages
                         .push(json!({"role": "user", "content": ASK_AGAIN_NOTE}));
                     continue;
@@ -307,7 +307,7 @@ impl Conversation {
                     _ => text::NO_ANSWER.to_string(),
                 };
                 end = Turn::Failed;
-                eprintln!("{}", style::red(&message));
+                layout::print_fitted(&message, style::red);
                 // So the model doesn't take the unanswered request up again unasked.
                 self.messages
                     .push(json!({"role": "assistant", "content": NO_ANSWER_RESULT}));
@@ -329,11 +329,11 @@ impl Conversation {
                 }
                 if asked_again {
                     end = Turn::Failed;
-                    eprintln!("{}", style::red(text::CUT_SHORT_AGAIN));
+                    layout::print_fitted(text::CUT_SHORT_AGAIN, style::red);
                     break;
                 }
                 asked_again = true;
-                eprintln!("{}", style::gray(text::CUT_SHORT));
+                layout::print_fitted(text::CUT_SHORT, style::gray);
                 continue;
             }
             if reply.tool_calls.is_empty() {

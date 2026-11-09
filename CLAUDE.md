@@ -697,8 +697,6 @@ Measured on a current laptop, under WSL; the judge on a consumer GPU.
   The speed is timed by Lokal from the first token on. The spinner counts
   a token a piece, and so does the prompt's status where a server sends no
   `usage.completion_tokens`: tried with a fake server that sends none.
-- **"Couldn't find a model server":** written, but not seen, since that needs
-  LM Studio stopped.
 - **Hooks in auto, the unasked PATH and control characters as marks:** run
   in a pseudo-terminal against a fake server only. A post-commit hook made
   auto ask on No, and without it the judge let the commit through; an

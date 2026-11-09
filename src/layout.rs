@@ -3,6 +3,8 @@
 
 use std::borrow::Cow;
 
+use crate::tty;
+
 /// `text` as it may go to the terminal: line breaks and tabs kept, the `\r`
 /// of a line's CRLF ending dropped, and every other control character
 /// shown in caret notation (ESC as `^[`, a lone `\r` as `^M`). Otherwise a
@@ -111,6 +113,16 @@ pub fn indented(text: &str, indent: usize, width: usize) -> String {
         }
     }
     out
+}
+
+/// A message of Lokal's on stderr, in `paint`, broken at spaces one column
+/// short of the terminal's edge, where the terminal would break it
+/// mid-word. Where the width isn't known, each line stays whole.
+pub fn print_fitted(text: &str, paint: fn(&str) -> String) {
+    let room = tty::width().map_or(usize::MAX, |width| width.saturating_sub(1));
+    for line in text.lines().flat_map(|line| broken(line, room)) {
+        eprintln!("{}", paint(&line));
+    }
 }
 
 /// A line in pieces of at most `room` characters, broken at spaces, and a

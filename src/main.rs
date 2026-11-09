@@ -157,7 +157,7 @@ fn run(started: Instant, resume: bool, request: &str) -> ExitCode {
     let server = match server::find(&config) {
         Ok(server) => server,
         Err(message) => {
-            eprintln!("{}", style::red(&message));
+            layout::print_fitted(&message, style::red);
             return ExitCode::FAILURE;
         }
     };
@@ -472,13 +472,10 @@ fn warn_if_context_is_small(server: &server::Server, apart: bool) {
         if apart {
             eprintln!();
         }
-        let warning = text::small_context(context, most, server.kind);
-        // Broken at spaces, one column short of the edge: the terminal
-        // would break it mid-word.
-        let room = tty::width().map_or(usize::MAX, |width| width.saturating_sub(1));
-        for line in layout::broken(&warning, room) {
-            eprintln!("{}", style::gray(&line));
-        }
+        layout::print_fitted(
+            &text::small_context(context, most, server.kind),
+            style::gray,
+        );
     }
 }
 
