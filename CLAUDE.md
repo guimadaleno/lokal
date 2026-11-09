@@ -521,7 +521,10 @@ of MCP servers the person sets up. One binary, few dependencies.
   - **It counts by its pixels, never its base64** (`image::tokens_in_url`),
     on the high side, and one that doesn't fit the room left, read or
     pasted, is left out with its estimate before anything older makes way
-    for it: Lokal carries no decoder to shrink it.
+    for it: Lokal carries no decoder to shrink it. A pasted one's room is
+    what's left once the request's words and the `!` outputs going with
+    it are in, and the request tells the model it was left out, or it may
+    answer as if it saw it.
   - **A file that reads as UTF-8 is text,** whatever its first bytes. An
     image is PNG, JPEG or WebP, up to 20 MB: Ollama refuses a GIF.
   - **It makes way like an output** once the model has replied after it,
@@ -532,7 +535,8 @@ of MCP servers the person sets up. One binary, few dependencies.
     inserts that nothing without a redraw: a paste no redraw follows
     within 300 ms stands for the image, and Lokal ends the line with a
     SIGINT, as mail does, then gives it back with the marker in
-    (`input::PasteWatch`). Text pastes wait for nothing. Lokal reads the
+    (`input::PasteWatch`), with any model, so one that doesn't see gets
+    its note as Alt+V does. Text pastes wait for nothing. Lokal reads the
     clipboard only on that key, with its own fixed program from the PATH's absolute folders
     (`powershell.exe` under WSL, `wl-paste` or `xclip` elsewhere), never
     the model, which has no tool for it. It shows as `[Image #N]`,
