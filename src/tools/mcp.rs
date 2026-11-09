@@ -13,9 +13,8 @@ use crate::{layout, style, text, tty};
 /// The lines of arguments shown before the question; "Show the rest"
 /// prints the others.
 const ARGUMENTS_SHOWN: usize = 12;
-/// The lines of what a call gave shown on screen, as for a command.
+/// The rows of what a call gave shown on screen, as for a command.
 const RESULT_SHOWN: usize = 12;
-const RESULT_WIDTH: usize = 200;
 
 /// Calls the tool at `index` once the person says yes. Auto never judges a
 /// call and mail never approves one: the server's code runs as the person,
@@ -179,28 +178,38 @@ fn outcome(result: &Value, room: Option<usize>, vision: Option<bool>) -> Outcome
     }
 }
 
-/// What the call gave, as a command's output shows: its first lines,
-/// faint and indented, after a blank line, and the images by their size.
+/// What the call gave, as a command's output shows: its first rows, faint
+/// and indented, after a blank line, and the images by their size. A
+/// server's result is often prose, so a long line goes on under the indent,
+/// broken at spaces, rather than at the terminal's edge.
 fn show_result(output: &str, images: &[String]) {
-    let lines: Vec<&str> = output
+    let width = tty::width().unwrap_or(80);
+    let rows: Vec<String> = output
         .lines()
         .filter(|line| !line.trim().is_empty())
+        .flat_map(|line| {
+            // No more of a line than the rows shown can hold.
+            let line: String = layout::printable(line.trim_end())
+                .chars()
+                .take(RESULT_SHOWN * width)
+                .collect();
+            layout::indented(&line, 2, width)
+                .lines()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        })
         .collect();
-    if lines.is_empty() && images.is_empty() {
+    if rows.is_empty() && images.is_empty() {
         return;
     }
     eprintln!();
-    for line in lines.iter().take(RESULT_SHOWN) {
-        let line: String = layout::printable(line.trim_end())
-            .chars()
-            .take(RESULT_WIDTH)
-            .collect();
-        eprintln!("  {}", style::gray(&line));
+    for row in rows.iter().take(RESULT_SHOWN) {
+        eprintln!("{}", style::gray(row));
     }
-    if lines.len() > RESULT_SHOWN {
+    if rows.len() > RESULT_SHOWN {
         eprintln!(
             "  {}",
-            style::gray(&text::more_lines(lines.len() - RESULT_SHOWN))
+            style::gray(&text::more_lines(rows.len() - RESULT_SHOWN))
         );
     }
     for size in images {
