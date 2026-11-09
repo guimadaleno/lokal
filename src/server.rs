@@ -3,13 +3,22 @@
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::config::Config;
 use crate::{http, system, text};
 
 /// LM Studio's default port.
 const PORT: u16 = 1234;
+
+/// Which server it is: what Lokal can ask it beyond the chat API.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Kind {
+    LmStudio,
+    Ollama,
+    /// Any other server that speaks the OpenAI chat API.
+    Other,
+}
 
 pub struct Server {
     /// host:port
@@ -19,8 +28,21 @@ pub struct Server {
     pub context: Option<u64>,
     /// The most context the model takes, when the server reports it.
     pub max_context: Option<u64>,
+    /// Whether the model takes images; None when the server doesn't say.
+    pub vision: Option<bool>,
+    pub kind: Kind,
     /// Set in the settings, rather than found.
     pub pinned: bool,
+}
+
+/// The model picked, with what the server says about it.
+#[derive(Debug, PartialEq)]
+struct Model {
+    id: String,
+    context: Option<u64>,
+    max_context: Option<u64>,
+    vision: Option<bool>,
+    kind: Kind,
 }
 
 pub fn find(config: &Config) -> Result<Server, String> {
@@ -35,12 +57,14 @@ pub fn find(config: &Config) -> Result<Server, String> {
         }
         None => look_for_server()?,
     };
-    let (model, context, max_context) = pick_model(&address, config.model.as_deref())?;
+    let model = pick_model(&address, config.model.as_deref())?;
     Ok(Server {
         address,
-        model,
-        context,
-        max_context,
+        model: model.id,
+        context: model.context,
+        max_context: model.max_context,
+        vision: model.vision,
+        kind: model.kind,
         pinned: config.server.is_some(),
     })
 }
@@ -84,12 +108,9 @@ fn is_listening(address: &str) -> bool {
 }
 
 /// The configured model, or else the one loaded in LM Studio, or else the
-/// first one an OpenAI-compatible server lists; with its context and the
-/// most it takes, when the server says.
-fn pick_model(
-    address: &str,
-    wanted: Option<&str>,
-) -> Result<(String, Option<u64>, Option<u64>), String> {
+/// first one an OpenAI-compatible server lists; with what the server says
+/// about it, when it's LM Studio or Ollama.
+fn pick_model(address: &str, wanted: Option<&str>) -> Result<Model, String> {
     // LM Studio's own API says which model is loaded and with what context.
     if let Ok(listing) = http::get_json(address, "/api/v0/models")
         && let Some(models) = listing["data"].as_array()
@@ -97,19 +118,32 @@ fn pick_model(
         return pick_lm_studio_model(models, wanted);
     }
     let listing = http::get_json(address, "/v1/models")?;
-    if let Some(model) = wanted {
-        return Ok((model.to_string(), None, None));
+    let id = match wanted {
+        Some(model) => model.to_string(),
+        None => listing["data"][0]["id"]
+            .as_str()
+            .ok_or(text::NO_MODELS)?
+            .to_string(),
+    };
+    if is_ollama(address) {
+        let shown = http::post_for_json(address, "/api/show", &json!({"model": id}));
+        let running = http::get_json(address, "/api/ps");
+        return Ok(ollama_model(
+            id,
+            &shown.unwrap_or_default(),
+            &running.unwrap_or_default(),
+        ));
     }
-    listing["data"][0]["id"]
-        .as_str()
-        .map(|id| (id.to_string(), None, None))
-        .ok_or_else(|| text::NO_MODELS.into())
+    Ok(Model {
+        id,
+        context: None,
+        max_context: None,
+        vision: None,
+        kind: Kind::Other,
+    })
 }
 
-fn pick_lm_studio_model(
-    models: &[Value],
-    wanted: Option<&str>,
-) -> Result<(String, Option<u64>, Option<u64>), String> {
+fn pick_lm_studio_model(models: &[Value], wanted: Option<&str>) -> Result<Model, String> {
     let model = match wanted {
         Some(name) => models
             .iter()
@@ -122,12 +156,70 @@ fn pick_lm_studio_model(
             })
             .ok_or(text::NO_MODEL_LOADED)?,
     };
-    let id = model["id"].as_str().unwrap_or_default().to_string();
-    Ok((
+    Ok(Model {
+        id: model["id"].as_str().unwrap_or_default().to_string(),
+        context: model["loaded_context_length"].as_u64(),
+        max_context: model["max_context_length"].as_u64(),
+        vision: Some(model["type"] == "vlm"),
+        kind: Kind::LmStudio,
+    })
+}
+
+/// Ollama says its version at an address of its own, where other servers
+/// say nothing, or an error.
+fn is_ollama(address: &str) -> bool {
+    http::get_json(address, "/api/version").is_ok_and(|reply| reply["version"].is_string())
+}
+
+/// What Ollama says about a model, from `/api/show` and `/api/ps`.
+fn ollama_model(id: String, shown: &Value, running: &Value) -> Model {
+    let architecture = shown["model_info"]["general.architecture"]
+        .as_str()
+        .unwrap_or_default();
+    let max_context = shown["model_info"][format!("{architecture}.context_length")].as_u64();
+    let vision = shown["capabilities"]
+        .as_array()
+        .map(|capabilities| capabilities.iter().any(|capability| capability == "vision"));
+    // The model's own num_ctx is what a request without options loads it
+    // with; without one, the context it's loaded with now, if it is.
+    let context = own_num_ctx(shown).or_else(|| loaded_context(running, &id));
+    Model {
         id,
-        model["loaded_context_length"].as_u64(),
-        model["max_context_length"].as_u64(),
-    ))
+        context,
+        max_context,
+        vision,
+        kind: Kind::Ollama,
+    }
+}
+
+/// The num_ctx in a model's own parameters, a line like `num_ctx  65536`.
+fn own_num_ctx(shown: &Value) -> Option<u64> {
+    shown["parameters"].as_str()?.lines().find_map(|line| {
+        let mut words = line.split_whitespace();
+        (words.next() == Some("num_ctx"))
+            .then(|| words.next()?.parse().ok())
+            .flatten()
+    })
+}
+
+/// The context of the model as `/api/ps` lists it while it's loaded. A
+/// name without a tag is the `latest` one, as for Ollama.
+fn loaded_context(running: &Value, id: &str) -> Option<u64> {
+    let tagged = |name: &str| {
+        let last = name.rsplit('/').next().unwrap_or(name);
+        if last.contains(':') {
+            name.to_string()
+        } else {
+            format!("{name}:latest")
+        }
+    };
+    let id = tagged(id);
+    running["models"]
+        .as_array()?
+        .iter()
+        .find(|model| model["name"].as_str().map(tagged).as_deref() == Some(id.as_str()))?
+        ["context_length"]
+        .as_u64()
 }
 
 #[cfg(test)]
@@ -163,12 +255,88 @@ mod tests {
         let models = models.as_array().unwrap();
         assert_eq!(
             pick_lm_studio_model(models, None).unwrap(),
-            ("chat".into(), Some(32768), Some(131072))
+            Model {
+                id: "chat".into(),
+                context: Some(32768),
+                max_context: Some(131072),
+                vision: Some(false),
+                kind: Kind::LmStudio,
+            }
+        );
+        let idle = pick_lm_studio_model(models, Some("idle")).unwrap();
+        assert_eq!((idle.id.as_str(), idle.context), ("idle", None));
+        assert!(pick_lm_studio_model(models, Some("missing")).is_err());
+    }
+
+    #[test]
+    fn lm_studio_says_a_model_sees_with_its_type() {
+        let models = json!([{"id": "seer", "type": "vlm", "state": "loaded"}]);
+        let model = pick_lm_studio_model(models.as_array().unwrap(), None).unwrap();
+        assert_eq!(model.vision, Some(true));
+    }
+
+    /// As Ollama 0.40.2 answers, cut to the fields Lokal reads.
+    fn shown(parameters: &str) -> Value {
+        json!({
+            "parameters": parameters,
+            "model_info": {"general.architecture": "qwen35", "qwen35.context_length": 262144,
+                           "qwen35.vision.block_count": 27},
+            "capabilities": ["completion", "vision", "tools", "thinking"]
+        })
+    }
+
+    fn running(name: &str, context: u64) -> Value {
+        json!({"models": [{"name": name, "model": name, "context_length": context}]})
+    }
+
+    #[test]
+    fn reads_what_ollama_says_about_a_model() {
+        let model = ollama_model(
+            "qwen".into(),
+            &shown("num_ctx                        65536\nstop \"<|im_end|>\""),
+            &Value::Null,
         );
         assert_eq!(
-            pick_lm_studio_model(models, Some("idle")).unwrap(),
-            ("idle".into(), None, None)
+            model,
+            Model {
+                id: "qwen".into(),
+                context: Some(65536),
+                max_context: Some(262144),
+                vision: Some(true),
+                kind: Kind::Ollama,
+            }
         );
-        assert!(pick_lm_studio_model(models, Some("missing")).is_err());
+    }
+
+    #[test]
+    fn without_its_own_num_ctx_the_loaded_context_counts() {
+        let loaded = running("qwen:latest", 4096);
+        assert_eq!(
+            ollama_model("qwen".into(), &shown(""), &loaded).context,
+            Some(4096)
+        );
+        let elsewhere = running("hf.co/a/b:Q4", 8192);
+        assert_eq!(
+            ollama_model("hf.co/a/b:Q4".into(), &shown(""), &elsewhere).context,
+            Some(8192)
+        );
+        assert_eq!(
+            ollama_model("qwen:7b".into(), &shown(""), &loaded).context,
+            None
+        );
+    }
+
+    #[test]
+    fn a_model_ollama_doesnt_describe_has_nothing_known() {
+        let model = ollama_model("nope".into(), &Value::Null, &Value::Null);
+        assert_eq!(
+            (model.context, model.max_context, model.vision),
+            (None, None, None)
+        );
+        let text_only = json!({"capabilities": ["completion", "tools"]});
+        assert_eq!(
+            ollama_model("t".into(), &text_only, &Value::Null).vision,
+            Some(false)
+        );
     }
 }

@@ -1,6 +1,6 @@
 //! Plain-HTTP requests to the model server, with errors a person can read.
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -58,6 +58,19 @@ pub fn post_json(address: &str, path: &str, body: &Value) -> Result<impl BufRead
         ));
     }
     Ok(BufReader::new(body.into_reader()))
+}
+
+/// Posts JSON and returns the JSON the server answers with.
+pub fn post_for_json(address: &str, path: &str, body: &Value) -> Result<Value, String> {
+    let mut reply = String::new();
+    post_json(address, path, body)?
+        .read_to_string(&mut reply)
+        .map_err(|_| text::cant_reach(address))?;
+    let value: Value = serde_json::from_str(&reply).map_err(|_| text::not_json(address))?;
+    match error_message(&value) {
+        Some(message) => Err(text::server_said(&message)),
+        None => Ok(value),
+    }
 }
 
 /// Servers send errors as {"error": "..."} or {"error": {"message": "..."}}.

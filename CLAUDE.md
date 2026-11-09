@@ -501,6 +501,19 @@ on the machine it runs on (the `targetHistories` entry whose `target` is
 `lmstudio`, its `lastRecordedAppVersion`). From WSL, that's under `/mnt/c/Users/<user>/`.
 Its About screen shows the same thing.
 
+### Ollama, too
+
+With the server set to Ollama (`server = localhost:11434`), Lokal reads what
+it says about the model. Last checked against **Ollama 0.40.2**, on
+2026-11-09.
+
+| Lokal relies on | Where | How to check |
+|---|---|---|
+| `GET /api/version` answers `{"version": "..."}`, which is how Lokal knows it's Ollama | `server.rs` (`is_ollama`) | `curl <host>:11434/api/version` |
+| `POST /api/show` with `{"model": "<id>"}` gives `capabilities` (`vision` when the model sees), `model_info["<general.architecture>.context_length"]` (the most it takes) and `parameters`, a text with the model's own `num_ctx` when it has one | `server.rs` (`ollama_model`) | `curl <host>:11434/api/show -d '{"model": "<id>"}'` |
+| `GET /api/ps` lists the loaded models, each `name` tagged (`:latest` when none was given), with `context_length` | `server.rs` (`loaded_context`) | `curl <host>:11434/api/ps` |
+| `max_tokens` caps a reply on `/v1/chat/completions` | `conversation.rs` | a request with `"max_tokens": 40` and a long question |
+
 **The page's "Set up LM Studio" steps name its screens and options** (the
 Developer tab, "Serve on Local Network", the mark on models that use tools).
 When LM Studio changes, check those words in `site/index.html` and
@@ -650,7 +663,10 @@ Measured on a current laptop, under WSL; the judge on a consumer GPU.
 - **Servers other than LM Studio:** the chat path should work with any
   OpenAI-compatible server through `server = host:port`. Only Ollama 0.40.2
   has been tried, under WSL: a conversation with a command step, in auto.
-  The context gauge stays hidden without LM Studio's `/api/v0/models`.
+  The context and its gauge come from LM Studio's `/api/v0/models`, or
+  from Ollama's model `num_ctx` or `/api/ps` (above); elsewhere they stay
+  unknown, and so they do on Ollama for a model that isn't loaded and has
+  no `num_ctx` of its own.
   The speed is timed by Lokal from the first token on. The spinner counts
   a token a piece, and so does the prompt's status where a server sends no
   `usage.completion_tokens`: tried with a fake server that sends none.

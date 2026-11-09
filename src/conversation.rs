@@ -681,6 +681,8 @@ mod tests {
                 model: String::new(),
                 context: Some(context),
                 max_context: None,
+                vision: None,
+                kind: crate::server::Kind::Other,
                 pinned: false,
             },
             facts: Facts {

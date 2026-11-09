@@ -176,6 +176,8 @@ mod tests {
             model: String::new(),
             context: None,
             max_context: None,
+            vision: None,
+            kind: crate::server::Kind::Other,
             pinned: false,
         };
         let case = Case {

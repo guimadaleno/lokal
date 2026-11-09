@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use crate::input::Input;
 use crate::menu::{self, Item};
 use crate::report::{self, Answer, Field, Kind, Report};
-use crate::server::Server;
+use crate::server::{self, Server};
 use crate::{spinner, style, system, text, update};
 
 const APP: &str = "lokal";
@@ -203,10 +203,10 @@ fn details(server: &Server, updates_off: bool) -> Vec<(&'static str, String)> {
     let locale = std::env::var("LC_ALL")
         .or_else(|_| std::env::var("LANG"))
         .unwrap_or_default();
-    let server_kind = if server.context.is_some() {
-        "lm-studio"
-    } else {
-        "openai-compatible"
+    let server_kind = match server.kind {
+        server::Kind::LmStudio => "lm-studio",
+        server::Kind::Ollama => "ollama",
+        server::Kind::Other => "openai-compatible",
     };
     let found = if server.pinned { "settings" } else { "found" };
     let updates = match update::standing_of(updates_off) {

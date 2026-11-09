@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use crate::server::Kind;
+
 /// The product's name, as the header and /about show it.
 pub const NAME: &str = "Lokal";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -531,9 +533,15 @@ pub fn context_size(tokens: u64) -> String {
     format!("{} tokens of context", number(tokens))
 }
 
-pub fn small_context(context: u64, most: u64) -> String {
+pub fn small_context(context: u64, most: u64, kind: Kind) -> String {
+    let raise = match kind {
+        Kind::Ollama => {
+            "raise OLLAMA_CONTEXT_LENGTH where Ollama runs, or num_ctx in the model's Modelfile"
+        }
+        Kind::LmStudio | Kind::Other => "raise Context Length in LM Studio",
+    };
     format!(
-        "The model is loaded with {} tokens of context, so long files and outputs get cut. It takes up to {}: raise Context Length in LM Studio, if memory allows.",
+        "The model is loaded with {} tokens of context, so long files and outputs get cut. It takes up to {}: {raise}, if memory allows.",
         number(context),
         number(most)
     )

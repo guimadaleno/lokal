@@ -467,7 +467,10 @@ fn warn_if_context_is_small(server: &server::Server) {
         && context < SMALL_CONTEXT
         && most > context
     {
-        eprintln!("{}", style::gray(&text::small_context(context, most)));
+        eprintln!(
+            "{}",
+            style::gray(&text::small_context(context, most, server.kind))
+        );
     }
 }
 
