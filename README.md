@@ -69,7 +69,9 @@ mcp.notes.tools = read_text_file, list_directory    # optional: only these
 ```
 
 Servers start with a conversation, in your home folder, and speak MCP over
-their standard input and output. The first time, and whenever a server
+their standard input and output. Under WSL, a Windows program that serves
+MCP works by its name, such as `app.exe --mcp`, since WSL puts Windows'
+folders on the PATH. The first time, and whenever a server
 changes what it tells the model about its tools, Lokal shows you all of it
 and asks before the model gets them. Every call asks too, and `/info` shows
 what each server's tools cost in context.
