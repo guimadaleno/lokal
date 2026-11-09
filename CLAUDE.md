@@ -518,7 +518,7 @@ Its About screen shows the same thing.
 ### Ollama, too
 
 With the server set to Ollama (`server = localhost:11434`), Lokal reads what
-it says about the model. Last checked against **Ollama 0.40.2**, on
+it says about the model. Last checked against **Ollama 0.40.15**, on
 2026-11-09.
 
 | Lokal relies on | Where | How to check |
@@ -527,7 +527,7 @@ it says about the model. Last checked against **Ollama 0.40.2**, on
 | `POST /api/show` with `{"model": "<id>"}` gives `capabilities` (`vision` when the model sees), `model_info["<general.architecture>.context_length"]` (the most it takes) and `parameters`, a text with the model's own `num_ctx` when it has one | `server.rs` (`ollama_model`) | `curl <host>:11434/api/show -d '{"model": "<id>"}'` |
 | `GET /api/ps` lists the loaded models, each `name` tagged (`:latest` when none was given), with `context_length` | `server.rs` (`loaded_context`) | `curl <host>:11434/api/ps` |
 | `max_tokens` caps a reply on `/v1/chat/completions` | `conversation.rs` | a request with `"max_tokens": 40` and a long question |
-| An `image_url` part with a base64 `data:` URL in a `tool` message's content reaches a model with `vision` (tried with Qwen 3.8); a GIF gets HTTP 400 (`invalid image input`). An image adds about pixels / 1024 tokens, up to about 4 MP, where Ollama shrinks it | `image.rs`, `files.rs` | the same request as LM Studio's, with a PNG, a JPEG, a WebP and a GIF |
+| An `image_url` part with a base64 `data:` URL in a `tool` message's content reaches a model with `vision` (tried with Qwen 3.8 27B and LFM3-VL 2B); a GIF gets HTTP 400 (`invalid image input`). An image adds about pixels / 1024 tokens with Qwen, up to about 4 MP, where Ollama shrinks it, and less with LFM3-VL | `image.rs`, `files.rs` | the same request as LM Studio's, with a PNG, a JPEG, a WebP and a GIF |
 
 **The page's "Set up LM Studio" steps name its screens and options** (the
 Developer tab, "Serve on Local Network", the mark on models that use tools).
@@ -665,11 +665,12 @@ Measured on a current laptop, under WSL; the judge on a consumer GPU.
 - **The reasoning window with wide characters or a resize while it shows:**
   rows are cut by character count, so double-width characters may wrap and
   leave a row behind. Tested only with a fake server's plain text.
-- **Images with a model family other than Qwen:** the image goes in the
-  read's `tool` message, tried with Qwen only, on LM Studio and on Ollama.
-  A chat template that drops an image there would leave the model
-  answering blind. Still owed: a second family that sees and uses tools;
-  a user message after the result is the fallback (#17).
+- **Images on LM Studio with a model family other than Qwen:** the image
+  goes in the read's `tool` message. On Ollama 0.40.15, Qwen 3.8 and
+  LFM3-VL both see it there; on LM Studio, only Qwen was tried, and LM
+  Studio renders each model's own chat template, which could drop an
+  image in a tool result and leave the model answering blind. A user
+  message after the result is the fallback (#17).
 - **Auto's judge with LM Studio:** it sends `reasoning_effort: "none"`.
   Ollama 0.40.2 honors it (1.3 s instead of 8–12 s) and keeps the
   conversation's prompt cache across the judge's request. Neither is
