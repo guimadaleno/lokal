@@ -261,6 +261,14 @@ impl Conversation {
         let mut asked_again = false;
         let mut left_out_images = false;
         let mut learned_context = false;
+        // The MCP servers' tools join the first request, once the person
+        // has seen what they tell the model: before the images, whose room
+        // they take.
+        if let Some(mcp) = &mut self.mcp
+            && mcp.ready(input)
+        {
+            self.tools_size = self.tools().to_string().len();
+        }
         // The images the person pasted, as their line still shows them, and
         // only those the context has room for: older outputs would make way
         // first for one that can't fit anyway.
@@ -272,13 +280,6 @@ impl Conversation {
             .collect::<Vec<_>>()
             .join("\n\n");
         let own = self.open_request(&request, on_mail, images);
-        // The MCP servers' tools join the first request, once the person
-        // has seen what they tell the model.
-        if let Some(mcp) = &mut self.mcp
-            && mcp.ready(input)
-        {
-            self.tools_size = self.tools().to_string().len();
-        }
         loop {
             self.free_context();
             let started = Instant::now();
