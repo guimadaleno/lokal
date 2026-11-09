@@ -12,7 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::image::{self, Image};
-use crate::{system, text};
+use crate::{shell, system, text};
 
 /// How long reading the clipboard may take; Windows PowerShell's start is
 /// the slow part.
@@ -125,8 +125,10 @@ fn run(program: PathBuf, args: &[&str]) -> Result<Vec<u8>, String> {
 }
 
 /// Ends a reader that went wrong, before anything waits on it: one stuck
-/// writing to a full pipe would never end on its own.
+/// writing to a full pipe would never end on its own. Its whole group goes,
+/// what it started included, since it leads a session of its own.
 fn end(mut child: Child, why: &str) -> Result<Vec<u8>, String> {
+    shell::signal_group(child.id(), libc::SIGKILL);
     let _ = child.kill();
     let _ = child.wait();
     Err(why.to_string())
