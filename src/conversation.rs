@@ -27,6 +27,8 @@ const NOTES_SHARE: u64 = 8;
 const NOTES_ROOM_UNKNOWN: usize = 4096 * CHARS_PER_TOKEN;
 const STOPPED_RESULT: &str = "Stopped by the user.";
 const SKIPPED_AFTER_NO: &str = "Not run: the user declined an earlier step.";
+/// Where an image the server failed on was, ahead of the server's words and `]`.
+const IMAGE_LEFT_OUT: &str = "[Left out: the server failed with this image in the request.";
 /// In the saved conversation, where an image the model looked at was.
 const IMAGE_NOT_KEPT: &str =
     "[The image isn't kept in a saved conversation: read the file again to look at it.]";
@@ -246,6 +248,7 @@ impl Conversation {
         let mut model_time = Duration::ZERO;
         let (mut generated, mut generating) = (0, Duration::ZERO);
         let mut asked_again = false;
+        let mut left_out_images = false;
         let own = self.open_request(request, on_mail);
         loop {
             self.free_context();
@@ -263,8 +266,19 @@ impl Conversation {
                     break;
                 }
                 Err(Failure::Error(message)) => {
-                    end = Turn::Failed;
                     eprintln!("{}", style::red(&message));
+                    // An image the server can't take would fail every request
+                    // after it: it gives way to a note saying why, and the
+                    // model is asked again, once.
+                    let note = format!("{IMAGE_LEFT_OUT} {message}]");
+                    if !left_out_images
+                        && context::leave_out_unseen_images(&mut self.messages, &note)
+                    {
+                        left_out_images = true;
+                        eprintln!("{}", style::gray(text::WITHOUT_THE_IMAGE));
+                        continue;
+                    }
+                    end = Turn::Failed;
                     self.take_back_request(turn_start, own);
                     break;
                 }
@@ -669,19 +683,15 @@ fn kept(message: &Value) -> Value {
     if context::image_urls(message).next().is_none() {
         return message.clone();
     }
-    let text: Vec<&str> = message["content"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|part| part["text"].as_str())
-        .chain([IMAGE_NOT_KEPT])
-        .collect();
     let mut kept: serde_json::Map<String, Value> = fields
         .iter()
         .filter(|(key, _)| *key != "content")
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
-    kept.insert("content".into(), text.join("\n").into());
+    kept.insert(
+        "content".into(),
+        context::without_images(message, IMAGE_NOT_KEPT).into(),
+    );
     Value::Object(kept)
 }
 

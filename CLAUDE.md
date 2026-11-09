@@ -467,6 +467,11 @@ dependencies.
     image is PNG, JPEG or WebP, up to 20 MB: Ollama refuses a GIF.
   - **It makes way like an output** once the model has replied after it,
     and the saved conversation keeps a line in its place.
+  - **One the server refuses gives way to a note** with the server's words,
+    and the model is asked again, once (`leave_out_unseen_images`): left
+    in, it would fail every request after it. A truncated PNG or an
+    animated WebP reads as an image from its header, and only the server
+    finds out.
 - **What the model wrote into a file makes way like an output,** once it
   has replied after the write (`make_way`). The file holds that text, and
   it is most of a conversation that writes files; kept, nothing else could

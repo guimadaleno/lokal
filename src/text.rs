@@ -347,6 +347,7 @@ pub fn folder_stays(folder: &str) -> String {
 pub const THINKING: &str = "thinking";
 pub const ASKING_AGAIN: &str =
     "The model ran out of room while reasoning. Asking it again, to keep it short.";
+pub const WITHOUT_THE_IMAGE: &str = "Asking the model again, without the image.";
 pub const NO_ANSWER: &str =
     "The model stopped without an answer. Ask again, or /new to start fresh.";
 pub const RAN_OUT: &str = "The model ran out of room before answering, most likely reasoning in circles. /new starts fresh.";

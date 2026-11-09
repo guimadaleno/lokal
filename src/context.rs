@@ -64,6 +64,32 @@ fn message_length(message: &Value) -> usize {
     })
 }
 
+/// The text a message with images holds, with `note` in their place.
+pub fn without_images(message: &Value, note: &str) -> String {
+    let text: Vec<&str> = message["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|part| part["text"].as_str())
+        .chain([note])
+        .collect();
+    text.join("\n")
+}
+
+/// Puts `note` in place of each image the model hasn't seen yet, those
+/// after its last reply. True if there was one.
+pub fn leave_out_unseen_images(messages: &mut [Value], note: &str) -> bool {
+    let start = last_reply(messages);
+    let mut left_out = false;
+    for message in &mut messages[start..] {
+        if image_urls(message).next().is_some() {
+            message["content"] = without_images(message, note).into();
+            left_out = true;
+        }
+    }
+    left_out
+}
+
 /// The data of the images a message holds, as a tool's result has them.
 pub fn image_urls(message: &Value) -> impl Iterator<Item = &str> {
     message["content"]
@@ -341,6 +367,28 @@ mod tests {
         reply(&mut messages);
         free(&mut messages, 0, 2048);
         assert_eq!(messages[2]["content"], DROPPED_OUTPUT);
+    }
+
+    #[test]
+    fn only_an_image_the_model_hasnt_seen_is_left_out() {
+        let image = |id: &str| {
+            json!({"role": "tool", "tool_call_id": id, "content": [
+                {"type": "text", "text": format!("{id}.png: a 64×64 PNG image.")},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}
+            ]})
+        };
+        let mut messages = messages();
+        reply(&mut messages);
+        messages.push(image("seen"));
+        reply(&mut messages);
+        messages.push(image("unseen"));
+        assert!(leave_out_unseen_images(&mut messages, "[Left out.]"));
+        assert_eq!(image_urls(&messages[2]).count(), 1);
+        assert_eq!(
+            messages[4]["content"],
+            "unseen.png: a 64×64 PNG image.\n[Left out.]"
+        );
+        assert!(!leave_out_unseen_images(&mut messages, "[Left out.]"));
     }
 
     #[test]
