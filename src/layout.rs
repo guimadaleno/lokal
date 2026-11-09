@@ -117,10 +117,12 @@ pub fn indented(text: &str, indent: usize, width: usize) -> String {
 
 /// A message of Lokal's on stderr, in `paint`, broken at spaces one column
 /// short of the terminal's edge, where the terminal would break it
-/// mid-word. Where the width isn't known, each line stays whole.
+/// mid-word. Where the width isn't known, each line stays whole. Control
+/// characters show as marks, as everywhere else.
 pub fn print_fitted(text: &str, paint: fn(&str) -> String) {
     let room = tty::width().map_or(usize::MAX, |width| width.saturating_sub(1));
-    for line in text.lines().flat_map(|line| broken(line, room)) {
+    // A server's words can be in it.
+    for line in text.lines().flat_map(|line| broken(&printable(line), room)) {
         eprintln!("{}", paint(&line));
     }
 }
