@@ -260,7 +260,9 @@ impl Conversation {
         let mut asked_again = false;
         let mut left_out_images = false;
         let mut learned_context = false;
-        let own = self.open_request(request, on_mail);
+        // The images the person pasted, as their line still shows them.
+        let images = asked.map(|line| input.images_in(line)).unwrap_or_default();
+        let own = self.open_request(request, on_mail, images);
         // The MCP servers' tools join the first request, once the person
         // has seen what they tell the model.
         if let Some(mcp) = &mut self.mcp
@@ -409,9 +411,10 @@ impl Conversation {
     }
 
     /// Adds the request to the conversation, with what the person's own
-    /// commands gave ahead of it, and returns those, to put back if the
-    /// request is taken back. A turn mail started leaves them waiting.
-    fn open_request(&mut self, request: &str, on_mail: bool) -> Vec<String> {
+    /// commands gave ahead of it and the `images` they pasted, and returns
+    /// what the commands gave, to put back if the request is taken back. A
+    /// turn mail started leaves that waiting.
+    fn open_request(&mut self, request: &str, on_mail: bool, images: Vec<String>) -> Vec<String> {
         let own = if on_mail {
             Vec::new()
         } else {
@@ -425,6 +428,17 @@ impl Conversation {
             .chain([request])
             .collect::<Vec<_>>()
             .join("\n\n");
+        let content = if images.is_empty() {
+            Value::from(content)
+        } else {
+            let mut parts = vec![json!({"type": "text", "text": content})];
+            parts.extend(
+                images
+                    .into_iter()
+                    .map(|url| json!({"type": "image_url", "image_url": {"url": url}})),
+            );
+            Value::Array(parts)
+        };
         self.messages
             .push(json!({"role": "user", "content": content}));
         own
@@ -749,7 +763,13 @@ impl Conversation {
 fn kept(message: &Value) -> Value {
     let mut kept = message.clone();
     if context::image_urls(message).next().is_some() {
-        kept["content"] = context::without_images(message, IMAGE_NOT_KEPT).into();
+        // One the person pasted is gone with the session; a file read is there to read again.
+        let note = if message["role"] == "user" {
+            text::PASTED_NOT_KEPT
+        } else {
+            IMAGE_NOT_KEPT
+        };
+        kept["content"] = context::without_images(message, note).into();
     }
     kept
 }
@@ -859,14 +879,14 @@ mod tests {
         let before = conversation.messages.clone();
         // The person's request carries them, and puts them back.
         let start = conversation.messages.len();
-        let own = conversation.open_request("why?", false);
+        let own = conversation.open_request("why?", false, Vec::new());
         assert!(conversation.own.is_empty());
         assert_eq!(conversation.messages[start]["content"], "ran ls\n\nwhy?");
         conversation.take_back_request(start, own);
         assert_eq!(conversation.own, ["ran ls"]);
         assert_eq!(conversation.messages, before);
         // Mail leaves them waiting, and taken back, still there.
-        let own = conversation.open_request("from a session", true);
+        let own = conversation.open_request("from a session", true, Vec::new());
         assert_eq!(conversation.messages[start]["content"], "from a session");
         conversation.take_back_request(start, own);
         assert_eq!(conversation.own, ["ran ls"]);
@@ -900,5 +920,13 @@ mod tests {
         );
         let text = json!({"role": "tool", "tool_call_id": "8", "content": "plain"});
         assert_eq!(kept(&text), text);
+        let pasted = json!({"role": "user", "content": [
+            {"type": "text", "text": "this [Image #1]"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}
+        ]});
+        assert_eq!(
+            kept(&pasted)["content"],
+            format!("this [Image #1]\n{}", text::PASTED_NOT_KEPT)
+        );
     }
 }

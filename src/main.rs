@@ -2,6 +2,7 @@ mod allowlist;
 mod answer;
 mod approvals;
 mod chat;
+mod clipboard;
 mod commands;
 mod config;
 mod context;
@@ -165,6 +166,7 @@ fn run(started: Instant, resume: bool, request: &str) -> ExitCode {
     let folder = env::current_dir().unwrap_or_default();
     let project = approvals::ProjectApprovals::load(approvals::project_root(&folder));
     let mut input = Input::new(project);
+    input.set_vision(server.vision);
     // MCP servers in a conversation at a terminal only, where each call can
     // be asked about; started now, so they're up by the first request.
     let mcp = if talking && input.can_ask() {

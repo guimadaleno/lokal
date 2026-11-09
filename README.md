@@ -53,7 +53,9 @@ lokal -r           pick up the last conversation
 ```
 
 At the `>`, `/help` lists the commands and keys. A line starting with `!`
-runs a command of your own. Shift+Tab switches between asking for
+runs a command of your own. With a model that can see, Ctrl+V (or Alt+V)
+pastes the image on your clipboard as `[Image #1]`, and several can go in
+one request. Shift+Tab switches between asking for
 everything, accepting file edits once their diff shows, and auto, where the
 model, asked separately, also lets everyday commands run.
 

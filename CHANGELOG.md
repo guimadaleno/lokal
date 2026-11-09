@@ -24,6 +24,9 @@ copy and the page show as its notes.
 - With Ollama, Lokal now knows how much context the model has, so the
   prompt shows how much is in use, and a long conversation makes room as
   it does with LM Studio.
+- Paste an image at the `>` with Ctrl+V (or Alt+V): a screenshot or an
+  image you copied goes in as `[Image #1]`, and the model that can see
+  gets it with your words. Several can go in one request.
 - MCP servers: add one to your settings as `mcp.<name> = <command>` and its
   tools go to the model, once you've seen what the server says about them.
   Every call asks first. Servers that speak the older MCP and the new

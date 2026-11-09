@@ -64,6 +64,7 @@ where the model, asked apart, also lets everyday commands run.
 Mail from your other Lokal sessions shows above the >. Waiting mail goes to
 the model with Enter on an empty line, and Esc drops it. A line starting
 with @name mails that session.
+Ctrl+V or Alt+V pastes the clipboard's image as [Image #1], for a model that sees.
 MCP servers set as mcp.<name> in /config offer their tools; each call asks.
 lokal -r picks up the last conversation.";
 
@@ -715,6 +716,25 @@ pub fn unknown_setting(path: &str, line: usize, name: &str) -> String {
 }
 
 pub const MCP_SEEN_HEADER: &str = "# The MCP tool lists you've seen, a hash a server. Lokal writes this file:\n# a list that changes is shown again before the model gets it.\n";
+pub const CLIPBOARD_NO_IMAGE: &str = "No image on the clipboard.";
+pub const CLIPBOARD_NO_READER: &str = "Nothing here can read the clipboard's images.";
+pub const CLIPBOARD_TOO_BIG: &str = "The clipboard's image is over 20 MB.";
+pub const CLIPBOARD_SLOW: &str = "The clipboard took too long to read.";
+pub const PASTE_BLIND: &str = "This model doesn't take images.";
+pub const PASTE_UNSAID: &str = "This server doesn't say whether its model takes images.";
+/// In the conversation, where a pasted image was once the model replied after it.
+pub const PASTED_DROPPED: &str = "[A pasted image, dropped to free up context after you saw it.]";
+/// In the saved conversation, where a pasted image was.
+pub const PASTED_NOT_KEPT: &str = "[A pasted image, not kept in a saved conversation.]";
+
+pub fn clipboard_failed(why: &str) -> String {
+    format!("Couldn't read the clipboard: {why}.")
+}
+
+pub fn image_marker(number: usize) -> String {
+    format!("[Image #{number}]")
+}
+
 pub const MCP_NO_PROGRAM: &str = "there's no command to start it.";
 pub const MCP_STARTING: &str = "starting the MCP servers";
 pub const MCP_FAILED: &str = "it failed as it started.";

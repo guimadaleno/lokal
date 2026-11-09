@@ -4,7 +4,7 @@
 
 use serde_json::Value;
 
-use crate::image;
+use crate::{image, text};
 
 /// About three characters a token: rough, and on the high side.
 pub const CHARS_PER_TOKEN: usize = 3;
@@ -148,6 +148,10 @@ fn last_reply(messages: &[Value]) -> usize {
 fn make_way(message: &mut Value) {
     if message["role"] == "tool" {
         message["content"] = DROPPED_OUTPUT.into();
+    }
+    // A pasted image goes as a tool's output does, its words staying.
+    if message["role"] == "user" && image_urls(message).next().is_some() {
+        message["content"] = without_images(message, text::PASTED_DROPPED).into();
     }
     if message["role"] == "user"
         && let Some(content) = message["content"].as_str().and_then(drop_own)
@@ -389,6 +393,20 @@ mod tests {
             "unseen.png: a 64×64 PNG image.\n[Left out.]"
         );
         assert!(!leave_out_unseen_images(&mut messages, "[Left out.]"));
+    }
+
+    #[test]
+    fn a_pasted_image_makes_way_once_the_model_replied_and_its_words_stay() {
+        let mut messages = vec![json!({"role": "user", "content": [
+            {"type": "text", "text": "What's this? [Image #1]"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}
+        ]})];
+        reply(&mut messages);
+        free(&mut messages, 0, 8);
+        assert_eq!(
+            messages[0]["content"],
+            format!("What's this? [Image #1]\n{}", text::PASTED_DROPPED)
+        );
     }
 
     #[test]

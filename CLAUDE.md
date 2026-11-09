@@ -382,7 +382,8 @@ of MCP servers the person sets up. One binary, few dependencies.
 | `allowlist.rs` | Which commands run without asking, and which questions open on Yes |
 | `gitconfig.rs` | What a repository's own git settings and hooks would have git run |
 | `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it |
-| `input.rs` | The `>` prompt (hints, completion, Ctrl+C twice) and approvals |
+| `input.rs` | The `>` prompt (hints, completion, Ctrl+C twice, an image pasted as `[Image #N]`) and approvals |
+| `clipboard.rs` | The clipboard's image, read on the person's key by Lokal's own fixed programs |
 | `menu.rs` | The arrow-key choice the approvals use |
 | `tty.rs` | `/dev/tty` itself: its width, raw mode, waiting for a key, dropping keys typed ahead |
 | `mode.rs` | The mode Shift+Tab picks: manual, accept edits or auto |
@@ -524,6 +525,14 @@ of MCP servers the person sets up. One binary, few dependencies.
     image is PNG, JPEG or WebP, up to 20 MB: Ollama refuses a GIF.
   - **It makes way like an output** once the model has replied after it,
     and the saved conversation keeps a line in its place.
+  - **The person can paste one at the `>`** (Ctrl+V, or Alt+V where the
+    terminal keeps Ctrl+V; #38): Lokal reads the clipboard only on that
+    key, with its own fixed program from the PATH's absolute folders
+    (`powershell.exe` under WSL, `wl-paste` or `xclip` elsewhere), never
+    the model, which has no tool for it. It shows as `[Image #N]`,
+    numbered for the session, and goes in the person's own message, only
+    while its marker is whole in the line, so what's sent is what the line
+    shows. Auto's judge and the other sessions get the words only.
   - **One the server refuses gives way to a note** with the server's words,
     and the model is asked again, once (`leave_out_unseen_images`): left
     in, it would fail every request after it. Only a refusal, an error

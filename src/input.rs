@@ -6,8 +6,8 @@
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
@@ -24,7 +24,7 @@ use rustyline::{
 use crate::approvals::ProjectApprovals;
 use crate::peers::{Directory, Inbox};
 use crate::tty::{self, discard_typed_ahead};
-use crate::{config, diff, menu, mode, style, text};
+use crate::{clipboard, config, diff, menu, mode, style, text};
 
 pub const PROMPT: &str = "> ";
 /// How long after Esc another key makes it part of one, like an arrow
@@ -72,7 +72,16 @@ pub struct Input {
     approved_calls: HashSet<String>,
     /// Mail from the person's other sessions, when this one listens.
     inbox: Option<Inbox>,
+    /// The images pasted this session, `[Image #1]` first, as data URLs.
+    pasted: Arc<Mutex<Vec<String>>>,
+    /// Whether the model takes images; None when the server doesn't say.
+    vision: Option<bool>,
+    /// A word on a paste that took nothing, for the line it was pressed on.
+    notice: Notice,
 }
+
+/// What shows after the line until it changes: the line, and the word.
+type Notice = Arc<Mutex<Option<(String, String)>>>;
 
 impl Input {
     pub fn new(project: ProjectApprovals) -> Self {
@@ -87,6 +96,9 @@ impl Input {
                 approved_calls: HashSet::new(),
                 project,
                 inbox: None,
+                pasted: Arc::default(),
+                vision: None,
+                notice: Arc::default(),
             };
         }
         let config = Config::builder()
@@ -96,6 +108,7 @@ impl Input {
             .behavior(Behavior::PreferTerm)
             .keyseq_timeout(Some(ESC_WAIT_MS))
             .build();
+        let notice: Notice = Arc::default();
         let editor = Editor::with_config(config).ok().map(|mut editor| {
             editor.set_helper(Some(Helper {
                 status: None,
@@ -104,6 +117,7 @@ impl Input {
                 inbox: None,
                 sessions: None,
                 command_hint: Cell::new(false),
+                notice: notice.clone(),
             }));
             editor
         });
@@ -114,6 +128,9 @@ impl Input {
             approved_calls: HashSet::new(),
             project,
             inbox: None,
+            pasted: Arc::default(),
+            vision: None,
+            notice,
         }
     }
 
@@ -165,6 +182,15 @@ impl Input {
         );
         let shift_tab = KeyEvent(KeyCode::BackTab, Modifiers::NONE);
         editor.bind_sequence(shift_tab, EventHandler::Conditional(Box::new(NextMode)));
+        // Ctrl+V, and Alt+V for terminals that keep Ctrl+V for their paste.
+        for key in [KeyEvent::ctrl('V'), KeyEvent::alt('v')] {
+            let paste = PasteImage {
+                pasted: self.pasted.clone(),
+                vision: self.vision,
+                notice: self.notice.clone(),
+            };
+            editor.bind_sequence(key, EventHandler::Conditional(Box::new(paste)));
+        }
         let esc = KeyEvent(KeyCode::Esc, Modifiers::NONE);
         let dropping = Arc::new(AtomicBool::new(false));
         if let Some(inbox) = &self.inbox {
@@ -181,6 +207,8 @@ impl Input {
         }
         editor.unbind_sequence(shift_tab);
         editor.unbind_sequence(KeyEvent::ctrl('C'));
+        editor.unbind_sequence(KeyEvent::ctrl('V'));
+        editor.unbind_sequence(KeyEvent::alt('v'));
         // A reminder left over must not show at the next question.
         self.quit_armed.store(false, Ordering::SeqCst);
         match line {
@@ -318,6 +346,23 @@ impl Input {
         }
     }
 
+    /// Whether the model takes images, for a paste at the `>` to say so.
+    pub fn set_vision(&mut self, vision: Option<bool>) {
+        self.vision = vision;
+    }
+
+    /// The pasted images whose marker is whole in `line`, in its order: what
+    /// goes with the request is what the line shows.
+    pub fn images_in(&self, line: &str) -> Vec<String> {
+        let Ok(pasted) = self.pasted.lock() else {
+            return Vec::new();
+        };
+        markers(line)
+            .into_iter()
+            .filter_map(|number| pasted.get(number.checked_sub(1)?).cloned())
+            .collect()
+    }
+
     /// Whether there's a terminal to ask on: without one, nothing is.
     pub fn can_ask(&self) -> bool {
         self.editor.is_some()
@@ -403,6 +448,60 @@ impl ConditionalEventHandler for QuitOnSecondCtrlC {
     }
 }
 
+/// Ctrl+V or Alt+V at the `>`: the clipboard's image, as `[Image #N]`
+/// where the cursor is, or a word on why there's none.
+struct PasteImage {
+    pasted: Arc<Mutex<Vec<String>>>,
+    vision: Option<bool>,
+    notice: Notice,
+}
+
+impl ConditionalEventHandler for PasteImage {
+    fn handle(
+        &self,
+        _event: &Event,
+        _count: RepeatCount,
+        _positive: bool,
+        context: &EventContext,
+    ) -> Option<Cmd> {
+        let pasted = match self.vision {
+            Some(true) => clipboard::image().map(|(_, url)| url),
+            Some(false) => Err(text::PASTE_BLIND.to_string()),
+            None => Err(text::PASTE_UNSAID.to_string()),
+        };
+        match pasted {
+            Ok(url) => {
+                let mut images = self.pasted.lock().ok()?;
+                images.push(url);
+                Some(Cmd::Insert(1, text::image_marker(images.len())))
+            }
+            Err(why) => {
+                if let Ok(mut notice) = self.notice.lock() {
+                    *notice = Some((context.line().to_string(), why));
+                }
+                Some(Cmd::Repaint)
+            }
+        }
+    }
+}
+
+/// The numbers of the `[Image #N]` markers whole in `line`, in its order.
+fn markers(line: &str) -> Vec<usize> {
+    let mut numbers = Vec::new();
+    let mut rest = line;
+    while let Some(start) = rest.find("[Image #") {
+        rest = &rest[start + "[Image #".len()..];
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        if !digits.is_empty()
+            && rest[digits.len()..].starts_with(']')
+            && let Ok(number) = digits.parse()
+        {
+            numbers.push(number);
+        }
+    }
+    numbers
+}
+
 /// Shift+Tab at the `>`: the next mode, which shows at the right at once.
 struct NextMode;
 
@@ -454,6 +553,8 @@ struct Helper {
     sessions: Option<Directory>,
     /// The hint showing is a command's, in gray, rather than the reminder or the status.
     command_hint: Cell<bool>,
+    /// A paste's word, shown until the line changes.
+    notice: Notice,
 }
 
 impl Helper {
@@ -482,8 +583,17 @@ impl Helper {
     /// The reminder after a first Ctrl+C, and the status at the right edge.
     fn line_hint(&self, line: &str) -> Option<Hint> {
         let armed = line.is_empty() && self.quit_armed.load(Ordering::SeqCst);
+        let notice = self.notice.lock().ok().and_then(|mut notice| {
+            match notice.as_ref() {
+                Some((at, why)) if at == line => Some(why.clone()),
+                // Typing ends it.
+                _ => notice.take().and(None),
+            }
+        });
         let mut display = if armed {
             text::QUIT_AGAIN.to_string()
+        } else if let Some(why) = notice {
+            format!("  {why}")
         } else {
             String::new()
         };
@@ -680,6 +790,16 @@ impl rustyline::Helper for Helper {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_whole_markers_name_images_in_the_line_s_order() {
+        assert_eq!(markers("see [Image #2] then [Image #1]"), [2, 1]);
+        assert_eq!(
+            markers("[Image #3 cut [Image #] [Image #x] [Image #4]"),
+            [4]
+        );
+        assert_eq!(markers("no images"), Vec::<usize>::new());
+    }
 
     #[test]
     fn slash_alone_lists_every_command() {
