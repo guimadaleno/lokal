@@ -468,10 +468,13 @@ fn warn_if_context_is_small(server: &server::Server) {
         && context < SMALL_CONTEXT
         && most > context
     {
-        eprintln!(
-            "{}",
-            style::gray(&text::small_context(context, most, server.kind))
-        );
+        let warning = text::small_context(context, most, server.kind);
+        // Broken at spaces, one column short of the edge: the terminal
+        // would break it mid-word.
+        let room = tty::width().map_or(usize::MAX, |width| width.saturating_sub(1));
+        for line in layout::broken(&warning, room) {
+            eprintln!("{}", style::gray(&line));
+        }
     }
 }
 
