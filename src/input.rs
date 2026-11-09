@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use unicode_width::UnicodeWidthStr;
+
 use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
 use rustyline::highlight::{CmdKind, Highlighter};
@@ -25,7 +27,7 @@ use rustyline::{
 
 use crate::approvals::ProjectApprovals;
 use crate::peers::{Directory, Inbox};
-use crate::tty::{self, discard_typed_ahead};
+use crate::tty::{self, RawMode, discard_typed_ahead};
 use crate::{clipboard, config, diff, menu, mode, style, text};
 
 pub const PROMPT: &str = "> ";
@@ -82,14 +84,21 @@ pub struct Input {
     notice: Notice,
     /// The terminal's pastes, for the empty one Windows Terminal sends.
     watch: PasteWatch,
+    /// A printer kept for the session, mail or not: while one lives,
+    /// rustyline waits for a key in `select` and reads only once one came,
+    /// so a reader in `read` is one in the middle of a paste, which
+    /// `WatchPaste` waits out. Mail's printer is this one's twin.
+    _printer: Option<Box<dyn ExternalPrinter + Send>>,
 }
 
 /// A terminal paste in progress, and one that came empty. With only an
 /// image on the clipboard, Windows Terminal answers Ctrl+V with an empty
 /// paste rather than the key, and rustyline inserts that nothing without a
-/// redraw. So a paste that no redraw follows within `EMPTY_PASTE_WAIT` was
-/// empty, and stands for the image: Lokal ends the line, as mail does, reads
-/// the clipboard and gives the line back with the marker in.
+/// redraw. So a paste that no redraw follows within `EMPTY_PASTE_WAIT`, once
+/// rustyline waits for keys again, was empty, and stands for the image: Lokal
+/// ends the line, as mail does, reads the clipboard and gives the line back
+/// with the marker in. A paste of text that comes slowly, over a slow link,
+/// is still being read, and waited for.
 #[derive(Clone, Default)]
 struct PasteWatch {
     /// The line and cursor a paste started at, until a redraw shows it landed.
@@ -98,7 +107,8 @@ struct PasteWatch {
     empty: Arc<Mutex<Option<(String, usize)>>>,
 }
 
-/// Long enough for any paste of text to land and redraw the line.
+/// Long enough for a paste of text to land and redraw the line, and how
+/// often a slow one is looked at again.
 const EMPTY_PASTE_WAIT: Duration = Duration::from_millis(300);
 
 /// What a reading of the line gave: a line, or an empty paste to act on.
@@ -127,6 +137,7 @@ impl Input {
                 vision: None,
                 notice: Arc::default(),
                 watch: PasteWatch::default(),
+                _printer: None,
             };
         }
         let config = Config::builder()
@@ -138,6 +149,7 @@ impl Input {
             .build();
         let notice: Notice = Arc::default();
         let watch = PasteWatch::default();
+        let mut printer = None;
         let editor = Editor::with_config(config).ok().map(|mut editor| {
             editor.set_helper(Some(Helper {
                 status: None,
@@ -149,6 +161,10 @@ impl Input {
                 notice: notice.clone(),
                 paste_started: watch.started.clone(),
             }));
+            printer = editor
+                .create_external_printer()
+                .ok()
+                .map(|printer| Box::new(printer) as Box<dyn ExternalPrinter + Send>);
             editor
         });
         Input {
@@ -162,6 +178,7 @@ impl Input {
             vision: None,
             notice,
             watch,
+            _printer: printer,
         }
     }
 
@@ -194,10 +211,12 @@ impl Input {
     /// the `>` or ended it.
     pub fn request(&mut self, status: Option<String>) -> Line {
         let mut initial = (String::new(), String::new());
+        let mut first = true;
         loop {
-            match self.read_line(status.clone(), &initial) {
+            match self.read_line(status.clone(), &initial, first) {
                 Read::Line(line) => return line,
                 Read::EmptyPaste(line, pos) => {
+                    first = false;
                     // Lokal ended the line to read the image. It stays on
                     // screen as it was while the clipboard is read, which can
                     // take seconds, its cursor hidden: rustyline left it for
@@ -207,7 +226,16 @@ impl Input {
                         eprint!("\x1b[{}A\r\x1b[?25l", rows(&line));
                     }
                     let (left, right) = line.split_at(pos.min(line.len()));
-                    initial = match paste(&self.pasted, self.vision) {
+                    // Keys typed meanwhile wait for the next reading, unechoed,
+                    // and a paste among them comes bracketed, as at the `>`.
+                    let terminal = tty::open();
+                    let raw = terminal.as_ref().and_then(RawMode::enter);
+                    if style::enabled() {
+                        eprint!("\x1b[?2004h");
+                    }
+                    let pasted = paste(&self.pasted, self.vision);
+                    drop(raw);
+                    initial = match pasted {
                         Ok(marker) => (format!("{left}{marker}"), right.to_string()),
                         Err(why) => {
                             if let Ok(mut notice) = self.notice.lock() {
@@ -226,11 +254,28 @@ impl Input {
 
     /// One reading of the `>`, starting from `initial`'s text on either side
     /// of the cursor.
-    fn read_line(&mut self, status: Option<String>, initial: &(String, String)) -> Read {
+    fn read_line(
+        &mut self,
+        status: Option<String>,
+        initial: &(String, String),
+        first: bool,
+    ) -> Read {
         let Some(editor) = &mut self.editor else {
             return Read::Line(Line::Quit);
         };
-        if self.inbox.as_ref().is_some_and(Inbox::enter_prompt) {
+        // What an earlier reading's watch left is no longer this line's.
+        for slot in [&self.watch.started, &self.watch.empty] {
+            if let Ok(mut slot) = slot.lock() {
+                slot.take();
+            }
+        }
+        // A line given back is one being typed, which mail waits for.
+        let typing = !initial.0.is_empty() || !initial.1.is_empty();
+        if self
+            .inbox
+            .as_ref()
+            .is_some_and(|inbox| inbox.enter_prompt(typing))
+        {
             return Read::Line(Line::Mail);
         }
         if let Some(helper) = editor.helper_mut() {
@@ -239,10 +284,7 @@ impl Input {
         }
         // A paste's word belongs to the prompt it was pressed at, but for
         // one the empty paste's reading left for this very line.
-        if initial.0.is_empty()
-            && initial.1.is_empty()
-            && let Ok(mut notice) = self.notice.lock()
-        {
+        if first && let Ok(mut notice) = self.notice.lock() {
             notice.take();
         }
         // Only here: at an approval, one Ctrl+C stops the turn.
@@ -583,7 +625,7 @@ impl ConditionalEventHandler for PasteImage {
 /// The rows a line takes at the `>`, wrapped at the terminal's width.
 fn rows(line: &str) -> usize {
     let width = tty::width().unwrap_or(80).max(1);
-    (PROMPT.chars().count() + line.chars().count()) / width + 1
+    (PROMPT.width() + line.width()) / width + 1
 }
 
 /// The clipboard's image, kept as the session's next, and its marker; or
@@ -620,8 +662,20 @@ impl ConditionalEventHandler for WatchPaste {
             *started = Some(at);
         }
         let watch = self.watch.clone();
+        // The thread reading the paste: this one.
+        // SAFETY: gettid has no arguments and can't fail.
+        let reader = unsafe { libc::syscall(libc::SYS_gettid) };
         thread::spawn(move || {
-            thread::sleep(EMPTY_PASTE_WAIT);
+            // A paste that comes in pieces is still being read, however
+            // slowly: only once its reader waits for keys again, with no
+            // redraw, was it empty.
+            loop {
+                thread::sleep(EMPTY_PASTE_WAIT);
+                let open = watch.started.lock().is_ok_and(|s| s.is_some());
+                if !open || !reading(reader) {
+                    break;
+                }
+            }
             let Some(at) = watch.started.lock().ok().and_then(|mut s| s.take()) else {
                 return;
             };
@@ -636,6 +690,15 @@ impl ConditionalEventHandler for WatchPaste {
         });
         None
     }
+}
+
+/// Whether the thread `tid` of this process waits in `read`, as rustyline's
+/// does in the middle of a paste: at the `>` it waits in `select`, since
+/// `Input` made a printer. Linux says so in `/proc`; where it can't be read,
+/// no.
+fn reading(tid: libc::c_long) -> bool {
+    std::fs::read_to_string(format!("/proc/self/task/{tid}/syscall"))
+        .is_ok_and(|call| call.split_whitespace().next() == Some(&libc::SYS_read.to_string()))
 }
 
 /// The numbers of the `[Image #N]` markers whole in `line`, in its order.

@@ -24,6 +24,9 @@ serde_json = "1.0.154"
 sha2 = { version = "0.11", default-features = false }
 # The diff shown before every file change.
 similar = "3.2.0"
+# A line's width in columns, wide characters counted twice; rustyline
+# already brings it in.
+unicode-width = "0.2.2"
 # HTTP to the model server. Plain HTTP only: the server is on this machine or its host.
 ureq = { version = "3.4.2", default-features = false }
 

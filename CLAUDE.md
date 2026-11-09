@@ -539,6 +539,14 @@ of MCP servers the person sets up. One binary, few dependencies.
     numbered for the session, and goes in the person's own message, only
     while its marker is whole in the line, so what's sent is what the line
     shows. Auto's judge and the other sessions get the words only.
+    - **A slow text paste isn't cut:** while rustyline's thread still
+      waits in `read` (from `/proc`), the paste is still coming. That
+      holds because `Input` keeps a printer all session, mail or not:
+      with one, rustyline waits for keys in `select`; once the last is
+      dropped, it waits in `read` there too.
+    - **The line given back is one being typed,** so mail waits for it,
+      and keys pressed while the clipboard is read join it after the
+      marker.
   - **One the server refuses gives way to a note** with the server's words,
     and the model is asked again, once (`leave_out_unseen_images`): left
     in, it would fail every request after it. Only a refusal, an error

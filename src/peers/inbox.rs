@@ -196,14 +196,15 @@ impl Inbox {
         self.lock().waiting.len()
     }
 
-    /// The person is at the `>` from now on, and what came meanwhile shows.
+    /// The person is at the `>` from now on, and what came meanwhile shows;
+    /// `typing` when it opens on a line already begun, which mail waits for.
     /// True when a turn starts on mail at once instead; then the `>` isn't
     /// shown.
-    pub fn enter_prompt(&self) -> bool {
+    pub fn enter_prompt(&self, typing: bool) -> bool {
         let mut guard = self.lock();
         let state = &mut *guard;
         state.at_prompt = true;
-        state.typing = false;
+        state.typing = typing;
         let start = state
             .waiting
             .iter()
