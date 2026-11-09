@@ -265,8 +265,13 @@ impl Conversation {
         // only those the context has room for: older outputs would make way
         // first for one that can't fit anyway.
         let images = asked.map(|line| input.images_in(line)).unwrap_or_default();
-        let images = self.images_that_fit(images, request);
-        let own = self.open_request(request, on_mail, images);
+        let (images, left_out) = self.images_that_fit(images, request);
+        // The model hears of one left out, or it may answer as if it saw it.
+        let request = std::iter::once(request.to_string())
+            .chain(left_out.into_iter().map(text::pasted_left_out))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let own = self.open_request(&request, on_mail, images);
         // The MCP servers' tools join the first request, once the person
         // has seen what they tell the model.
         if let Some(mcp) = &mut self.mcp
@@ -682,31 +687,39 @@ impl Conversation {
 
     /// The pasted images that fit the room left once the request's words are
     /// in, with what the person's own commands gave ahead of them, each
-    /// counted by its pixels; one that doesn't is left out, saying so, as a
-    /// read is. Where the context's size isn't known, all go.
-    fn images_that_fit(&self, images: Vec<(usize, String)>, request: &str) -> Vec<String> {
+    /// counted by its pixels, and the numbers of those that don't. One left
+    /// out says so, as a read does. Where the context's size isn't known, all
+    /// go.
+    fn images_that_fit(
+        &self,
+        images: Vec<(usize, String)>,
+        request: &str,
+    ) -> (Vec<String>, Vec<usize>) {
         let words = request.len() + self.own.iter().map(String::len).sum::<usize>();
         let mut room = self
             .room_for_output()
             .map(|room| (room.saturating_sub(words) / CHARS_PER_TOKEN) as u64);
-        images
-            .into_iter()
-            .filter_map(|(number, url)| {
-                let tokens = image::tokens_in_url(&url).unwrap_or(u64::MAX);
-                match &mut room {
-                    Some(left) if tokens > *left => {
-                        let line = text::pasted_no_room(number, tokens, *left);
-                        layout::print_fitted(&line, style::gray);
-                        None
-                    }
-                    Some(left) => {
-                        *left -= tokens;
-                        Some(url)
-                    }
-                    None => Some(url),
+        let (mut kept, mut left_out) = (Vec::new(), Vec::new());
+        for (number, url) in images {
+            let tokens = image::tokens_in_url(&url).unwrap_or(u64::MAX);
+            match &mut room {
+                Some(left) if tokens > *left => {
+                    let line = text::pasted_no_room(number, tokens, *left);
+                    layout::print_fitted(&line, style::gray);
+                    left_out.push(number);
                 }
-            })
-            .collect()
+                Some(left) => {
+                    *left -= tokens;
+                    kept.push(url);
+                }
+                None => kept.push(url),
+            }
+        }
+        // Room to breathe before the answer.
+        if !left_out.is_empty() {
+            eprintln!();
+        }
+        (kept, left_out)
     }
 
     /// Ollama's context, read again after the session's first reply when the
@@ -969,7 +982,7 @@ mod tests {
         let small = image::data_url(image::Kind::Png, &image::png_start(64, 64));
         let big = image::data_url(image::Kind::Png, &image::png_start(3840, 2160));
         let kept = conversation.images_that_fit(vec![(1, small.clone()), (2, big)], "look");
-        assert_eq!(kept, [small]);
+        assert_eq!(kept, (vec![small], vec![2]));
     }
 
     #[test]
@@ -977,19 +990,17 @@ mod tests {
         let mut conversation = conversation(8192);
         let image = image::data_url(image::Kind::Png, &image::png_start(1500, 1500));
         let images = vec![(1, image.clone())];
-        assert_eq!(
-            conversation.images_that_fit(images.clone(), "look"),
-            [image]
-        );
+        let fits = conversation.images_that_fit(images.clone(), "look");
+        assert_eq!(fits, (vec![image], vec![]));
         // A command's output waiting to go with the request, and long words.
         conversation.own.push("1\n".repeat(8000));
-        assert!(
-            conversation
-                .images_that_fit(images.clone(), "look")
-                .is_empty()
+        let left_out = (vec![], vec![1]);
+        assert_eq!(
+            conversation.images_that_fit(images.clone(), "look"),
+            left_out
         );
         conversation.own.clear();
         let request = "word ".repeat(3200);
-        assert!(conversation.images_that_fit(images, &request).is_empty());
+        assert_eq!(conversation.images_that_fit(images, &request), left_out);
     }
 }

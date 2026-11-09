@@ -724,6 +724,11 @@ pub const PASTE_BLIND: &str = "This model doesn't take images.";
 pub const PASTE_UNSAID: &str = "This server doesn't say whether its model takes images.";
 /// In the conversation, where a pasted image was once the model replied after it.
 pub const PASTED_DROPPED: &str = "[A pasted image, dropped to free up context after you saw it.]";
+
+/// To the model, in the request, for a pasted image the context had no room for.
+pub fn pasted_left_out(image: usize) -> String {
+    format!("[Image #{image} isn't attached: the context had no room for it, so you can't see it.]")
+}
 /// In the saved conversation, where a pasted image was.
 pub const PASTED_NOT_KEPT: &str = "[A pasted image, not kept in a saved conversation.]";
 
