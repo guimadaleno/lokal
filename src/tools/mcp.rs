@@ -29,6 +29,10 @@ pub(super) fn call(
     room: Option<usize>,
     vision: Option<bool>,
 ) -> Result<Outcome, String> {
+    // MCP takes an object; anything else would be asked about unseen.
+    if !args.is_object() {
+        return Err(text::MCP_ARGUMENTS_NOT_OBJECT.to_string());
+    }
     let tool = mcp.tool(index);
     let exact = format!("{} {args}", tool.exposed);
     eprintln!(
@@ -151,7 +155,12 @@ fn outcome(result: &Value, room: Option<usize>, vision: Option<bool>) -> Outcome
     let mut shown = Vec::new();
     for (image, url) in images {
         let size = image.tokens() as usize * CHARS_PER_TOKEN;
-        if size <= left {
+        if url.len() / 4 * 3 > image::MOST_BYTES as usize {
+            text.push_str(&format!(
+                "\n{}",
+                text::mcp_image_too_big(image.width, image.height)
+            ));
+        } else if size <= left {
             left -= size;
             shown.push(text::image_size(image.width, image.height));
             urls.push(url);

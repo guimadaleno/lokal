@@ -16,6 +16,10 @@ pub struct Image {
     pub height: u32,
 }
 
+/// The largest image sent to the model: its data goes along with every
+/// request until it makes way.
+pub const MOST_BYTES: u64 = 20 * 1024 * 1024;
+
 /// How far into a file its size is looked for. A JPEG's size comes after
 /// its metadata, which is rarely more than a few kilobytes.
 const SIZE_WITHIN: usize = 1024 * 1024;

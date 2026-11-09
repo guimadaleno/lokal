@@ -220,10 +220,11 @@ of MCP servers the person sets up. One binary, few dependencies.
     session; the sender's model is told to shorten it, or that it's full.
     The socket is all it puts on disk, and it goes when the session quits,
     or at the next start if the session was killed.
-- **Let an MCP server act without a yes, or its words reach the model
-  unseen** (`src/mcp.rs`, #37). A server is a program the person named, and
-  its tool descriptions are a third party's text that goes along with every
-  request.
+- **Let an MCP server act without a yes, or give the model its tools
+  before the person has seen them whole** (`src/mcp.rs`, #37). A server is
+  a program the person named, and its tool descriptions are a third party's
+  text that goes along with every request. What a call gives back is an
+  output, shown and cut as a command's is.
   - **Servers are set in the person's settings only** (`mcp.<name> =
     <command line>`, optionally `mcp.<name>.tools = a, b`), never a
     project's `.mcp.json`, or a cloned repository could start programs.
@@ -232,10 +233,17 @@ of MCP servers the person sets up. One binary, few dependencies.
     project's `.npmrc` or `uv.toml` could change what `npx` or `uvx`
     fetches and runs. Its program comes from the PATH's absolute folders,
     as for what runs unasked, and it runs in a session of its own, ended
-    with Lokal (stdin closed, then SIGTERM, then SIGKILL).
-  - **A tool list shows whole before the model gets it,** every word of
-    each tool's description and parameters, control characters as marks,
-    asked on No ("Offer them to the model?"). Its hash is kept in the state
+    with Lokal (stdin closed, then SIGTERM, then SIGKILL), a closed
+    terminal or a SIGTERM to Lokal included (`client::end_with_lokal`).
+  - **A server can't hang a turn or fill Lokal's memory:** its stdin is
+    written on a thread of its own, so Esc still stops a call to one that
+    stopped reading; only the answer awaited is passed on; a line is at
+    most 32 MB and an image 20 MB, and its stderr is read in bounded
+    pieces.
+  - **A tool list shows whole before the model gets it:** each tool's
+    name, description and parameters as the JSON the model gets, control
+    and hidden characters as marks, asked on No ("Offer them to the
+    model?"). A curated view would leave a place for words to hide. Its hash is kept in the state
     folder (`mcp-seen`), and a list that changes is shown again. The list
     is fixed for the session, so the prompt cache holds.
   - **Every call asks, on No** ("Call it?"), with the server, the tool and
@@ -243,7 +251,8 @@ of MCP servers the person sets up. One binary, few dependencies.
     session, kept apart from commands, so a call's text can't let a
     command run unasked. A tool's name alone would be `cmd *`. Auto never
     judges a call, mail never approves one, and `readOnlyHint` is the
-    server's word, never Lokal's rule.
+    server's word, never Lokal's rule. Arguments that aren't an object
+    are turned down before the question, which couldn't show them.
   - **What a call gives is an output:** text cut to the room left, an
     image to a model that sees, anything else a line saying so. A server's
     words on screen, its last stderr lines included, show their control

@@ -21,9 +21,6 @@ use crate::{config, style, text};
 pub(super) const FILE_LIMIT: usize = 30_000;
 /// The most of a file read into memory, for a part of it or a change to it.
 const READ_CAP: u64 = 64 * 1024 * 1024;
-/// The largest image sent to the model: its data goes along with every
-/// request until it makes way.
-const IMAGE_CAP: u64 = 20 * 1024 * 1024;
 /// A file change that changes nothing, which isn't put to the person.
 const UNCHANGED: &str = "Nothing to do: the file already has that content.";
 
@@ -111,12 +108,12 @@ fn look_at(
             ));
         }
     }
-    if bytes.len() as u64 > IMAGE_CAP {
+    if bytes.len() as u64 > image::MOST_BYTES {
         return Err(format!(
             "{} is over {} MB, too big to send to the model. A smaller copy would do: \
              make one with a command first.",
             path.display(),
-            IMAGE_CAP / 1024 / 1024
+            image::MOST_BYTES / 1024 / 1024
         ));
     }
     let tokens = image.tokens();

@@ -765,6 +765,12 @@ pub const MCP_IMAGE_UNSAID: &str =
     "[An image, left out: this server doesn't say whether its model takes images.]";
 pub const MCP_AUDIO: &str = "[Audio, left out: Lokal gives the model none.]";
 pub const MCP_TOOL_FAILED: &str = "The tool failed:";
+pub const MCP_ARGUMENTS_NOT_OBJECT: &str =
+    "the arguments must be a JSON object, as MCP requires. Nothing was called.";
+
+pub fn mcp_image_too_big(width: u32, height: u32) -> String {
+    format!("[An image of {width}×{height}, left out: it's over 20 MB.]")
+}
 
 pub fn mcp_binary(uri: &str) -> String {
     format!("[{uri}: binary data, left out.]")

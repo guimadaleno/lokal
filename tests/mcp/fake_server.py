@@ -5,6 +5,7 @@
     fake_server.py modern   stateless (2026-07-28): refuses initialize, and
                             any request without the version in _meta
     fake_server.py crash    writes a reason to stderr and ends
+    fake_server.py stuck    starts with initialize, then stops reading
 
 Tools, one a page: echo (gives back its text), picture (a 2x2 PNG) and
 slow (answers only when cancelled, or after a minute).
@@ -80,12 +81,14 @@ def main():
         params = message.get("params") or {}
         if method is None:
             continue
-        if ERA == "legacy":
+        if ERA in ("legacy", "stuck"):
             if method == "initialize":
                 result(id, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
                             "serverInfo": {"name": "fake", "version": "1"}})
                 continue
             if method == "notifications/initialized":
+                if ERA == "stuck":
+                    time.sleep(3600)
                 initialized = True
                 send({"jsonrpc": "2.0", "id": "ping-1", "method": "ping"})
                 continue

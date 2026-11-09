@@ -33,6 +33,8 @@ pub struct Mcp {
     /// `ready` takes them.
     starting: Vec<(McpServer, JoinHandle<Start>)>,
     servers: Vec<Server>,
+    /// Servers left out, kept until Lokal quits so they're made to end.
+    retired: Vec<Client>,
     tools: Vec<Tool>,
     ready: bool,
 }
@@ -66,6 +68,7 @@ impl Mcp {
         if servers.is_empty() {
             return None;
         }
+        client::end_with_lokal();
         let starting = servers
             .iter()
             .map(|server| {
@@ -83,6 +86,7 @@ impl Mcp {
         Some(Mcp {
             starting,
             servers: Vec::new(),
+            retired: Vec::new(),
             tools: Vec::new(),
             ready: false,
         })
@@ -162,12 +166,18 @@ impl Mcp {
             .collect()
     }
 
+    /// A server left out: asked to end now, and made to as Lokal quits.
+    fn retire(&mut self, mut client: Client) {
+        client.close();
+        self.retired.push(client);
+    }
+
     /// A server that started: its tools as the model would get them, shown
     /// to the person first when they've changed since the last time.
     fn offer(
         &mut self,
         setup: &McpServer,
-        mut client: Client,
+        client: Client,
         listed: &[Value],
         input: &mut Input,
     ) -> Server {
@@ -176,7 +186,7 @@ impl Mcp {
         if tools.is_empty() {
             layout::print_fitted(&text::mcp_no_tools(&setup.name), style::gray);
             eprintln!();
-            client.close();
+            self.retire(client);
             return left_out(&setup.name, text::MCP_NO_TOOLS);
         }
         let definitions: Vec<&Value> = tools.iter().map(|tool| &tool.definition).collect();
@@ -195,7 +205,7 @@ impl Mcp {
                 interrupt::raise();
             }
             if !matches!(approval, Approval::Yes) {
-                client.close();
+                self.retire(client);
                 return left_out(&setup.name, text::MCP_DECLINED);
             }
             if let Err(error) = seen::keep(&setup.name, &hash) {
@@ -217,13 +227,15 @@ impl Mcp {
 }
 
 /// Ends every server: its stdin closed, which asks it to end, then a
-/// SIGTERM, then a SIGKILL, each after `END_TIME`.
+/// SIGTERM, then a SIGKILL, each after `END_TIME`. One whose start was
+/// given up on is still among the signalled.
 impl Drop for Mcp {
     fn drop(&mut self) {
         let mut clients: Vec<&mut Client> = self
             .servers
             .iter_mut()
             .filter_map(|server| server.client.as_mut())
+            .chain(self.retired.iter_mut())
             .collect();
         for client in &mut clients {
             client.close();
@@ -233,11 +245,7 @@ impl Drop for Mcp {
             while asked.elapsed() < END_TIME && clients.iter_mut().any(|c| !c.has_ended()) {
                 thread::sleep(Duration::from_millis(20));
             }
-            for client in &mut clients {
-                if !client.has_ended() {
-                    client.signal(signal);
-                }
-            }
+            client::signal_all(signal);
         }
     }
 }
