@@ -914,20 +914,20 @@ fn command_hint(line: &str, pos: usize, width: Option<usize>) -> Option<Hint> {
         .iter()
         .filter(|(name, _)| name.starts_with(line))
         .collect();
+    // One column short of the edge, so the terminal doesn't wrap it.
+    let room = width.map_or(usize::MAX, |width| {
+        width.saturating_sub(PROMPT.len() + line.chars().count() + 1)
+    });
     match matches.as_slice() {
         [] => None,
         [(name, about)] => {
             let rest = &name[line.len()..];
             Some(Hint {
-                display: format!("{rest}  {about}"),
+                display: layout::cut(&format!("{rest}  {about}"), room),
                 completion: Some(rest.to_string()),
             })
         }
         several => {
-            // One column short of the edge, so the terminal doesn't wrap it.
-            let room = width.map_or(usize::MAX, |width| {
-                width.saturating_sub(PROMPT.len() + line.chars().count() + 1)
-            });
             let mut display = String::from(" ");
             for (index, (name, _)) in several.iter().enumerate() {
                 // Room for the … stays, in case the next one doesn't fit.
@@ -1149,6 +1149,15 @@ mod tests {
         assert_eq!(hint.display, "   /new  /prefs  /memory  /config  …");
         // With the prompt and the slash, one column short of the edge.
         assert_eq!("> /".len() + hint.display.chars().count(), 39);
+    }
+
+    #[test]
+    fn one_match_is_cut_to_a_narrow_terminal() {
+        let hint = command_hint("/inf", 4, Some(30)).unwrap();
+        // With the prompt and the line, one column short of the edge.
+        assert_eq!("> /inf".len() + hint.display.chars().count(), 29);
+        assert!(hint.display.starts_with("o  ") && hint.display.ends_with('…'));
+        assert_eq!(hint.completion.as_deref(), Some("o"));
     }
 
     #[test]
