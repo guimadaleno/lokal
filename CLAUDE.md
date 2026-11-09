@@ -198,7 +198,8 @@ of MCP servers the person sets up. One binary, few dependencies.
     sends itself and frames as theirs.
   - **What another model wrote always shows:** each mail whole, without
     control characters and with the bidi controls that reorder text shown
-    by their code (`<U+202E>`), and sending as a step.
+    by their code (`<U+202E>`), as are the characters that show as nothing
+    (zero-width ones, the Tags block), and sending as a step.
     - Lokal's own facts about the other sessions go to the model without
       showing, the way its facts about the machine do: names, folders,
       branches, what each does.

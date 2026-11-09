@@ -11,11 +11,12 @@ use crate::tty;
 /// file or a command could hide a line of a diff or a command's real text
 /// from the person asked about it, by moving the cursor and writing over
 /// what was printed. The bidi controls that reorder text are shown by
-/// their code (`<U+202E>`), for the same reason.
+/// their code (`<U+202E>`), for the same reason, and so are the characters
+/// that show as nothing (`is_hidden`).
 pub fn printable(text: &str) -> Cow<'_, str> {
     if !text
         .chars()
-        .any(|c| (c.is_control() && c != '\n' && c != '\t') || is_bidi(c))
+        .any(|c| (c.is_control() && c != '\n' && c != '\t') || is_marked(c))
     {
         return Cow::Borrowed(text);
     }
@@ -38,16 +39,33 @@ fn is_bidi(c: char) -> bool {
     matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
-/// `c` as it shows: a bidi control by its code, anything else as itself.
+/// Characters that take no room on screen yet reach a model whole: the
+/// zero-width ones and the Tags block, which can spell a whole sentence a
+/// person never sees. The zero-width joiner stays, since it joins emoji.
+fn is_hidden(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200B}' | '\u{200C}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}' | '\u{E0000}'..='\u{E007F}'
+    )
+}
+
+/// Shown by its code rather than as itself.
+fn is_marked(c: char) -> bool {
+    is_bidi(c) || is_hidden(c)
+}
+
+/// `c` as it shows: a bidi control or a hidden character by its code,
+/// anything else as itself.
 fn push_shown(out: &mut String, c: char) {
-    if is_bidi(c) {
+    if is_marked(c) {
         out.push_str(&format!("<U+{:04X}>", c as u32));
     } else {
         out.push(c);
     }
 }
 
-/// `text` without control characters, its bidi controls shown by their code.
+/// `text` without control characters, its bidi controls and hidden
+/// characters shown by their code.
 fn without_controls(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars().filter(|c| !c.is_control()) {
@@ -203,6 +221,21 @@ fn pieces(text: &str) -> Vec<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn characters_that_show_as_nothing_show_by_their_code() {
+        let tags: String = "Hi"
+            .chars()
+            .map(|c| char::from_u32(0xE0000 + c as u32).unwrap())
+            .collect();
+        assert_eq!(
+            printable(&format!("Note.{tags}")),
+            "Note.<U+E0048><U+E0069>"
+        );
+        assert_eq!(printable("a\u{200B}b\u{FEFF}"), "a<U+200B>b<U+FEFF>");
+        // A family emoji keeps its joiners.
+        assert_eq!(printable("👨\u{200D}👩"), "👨\u{200D}👩");
+    }
 
     #[test]
     fn control_characters_show_as_carets() {
