@@ -527,8 +527,13 @@ of MCP servers the person sets up. One binary, few dependencies.
   - **It makes way like an output** once the model has replied after it,
     and the saved conversation keeps a line in its place.
   - **The person can paste one at the `>`** (Ctrl+V, or Alt+V where the
-    terminal keeps Ctrl+V; #38): Lokal reads the clipboard only on that
-    key, with its own fixed program from the PATH's absolute folders
+    terminal keeps Ctrl+V; #38). Windows Terminal answers Ctrl+V with an
+    empty paste when the clipboard holds only an image, and rustyline
+    inserts that nothing without a redraw: a paste no redraw follows
+    within 300 ms stands for the image, and Lokal ends the line with a
+    SIGINT, as mail does, then gives it back with the marker in
+    (`input::PasteWatch`). Text pastes wait for nothing. Lokal reads the
+    clipboard only on that key, with its own fixed program from the PATH's absolute folders
     (`powershell.exe` under WSL, `wl-paste` or `xclip` elsewhere), never
     the model, which has no tool for it. It shows as `[Image #N]`,
     numbered for the session, and goes in the person's own message, only

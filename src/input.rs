@@ -8,6 +8,8 @@ use std::cell::Cell;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
@@ -78,6 +80,31 @@ pub struct Input {
     vision: Option<bool>,
     /// A word on a paste that took nothing, for the line it was pressed on.
     notice: Notice,
+    /// The terminal's pastes, for the empty one Windows Terminal sends.
+    watch: PasteWatch,
+}
+
+/// A terminal paste in progress, and one that came empty. With only an
+/// image on the clipboard, Windows Terminal answers Ctrl+V with an empty
+/// paste rather than the key, and rustyline inserts that nothing without a
+/// redraw. So a paste that no redraw follows within `EMPTY_PASTE_WAIT` was
+/// empty, and stands for the image: Lokal ends the line, as mail does, reads
+/// the clipboard and gives the line back with the marker in.
+#[derive(Clone, Default)]
+struct PasteWatch {
+    /// The line and cursor a paste started at, until a redraw shows it landed.
+    started: Arc<Mutex<Option<(String, usize)>>>,
+    /// The same, once none did: the paste was empty.
+    empty: Arc<Mutex<Option<(String, usize)>>>,
+}
+
+/// Long enough for any paste of text to land and redraw the line.
+const EMPTY_PASTE_WAIT: Duration = Duration::from_millis(300);
+
+/// What a reading of the line gave: a line, or an empty paste to act on.
+enum Read {
+    Line(Line),
+    EmptyPaste(String, usize),
 }
 
 /// What shows after the line until it changes: the line, and the word.
@@ -99,6 +126,7 @@ impl Input {
                 pasted: Arc::default(),
                 vision: None,
                 notice: Arc::default(),
+                watch: PasteWatch::default(),
             };
         }
         let config = Config::builder()
@@ -109,6 +137,7 @@ impl Input {
             .keyseq_timeout(Some(ESC_WAIT_MS))
             .build();
         let notice: Notice = Arc::default();
+        let watch = PasteWatch::default();
         let editor = Editor::with_config(config).ok().map(|mut editor| {
             editor.set_helper(Some(Helper {
                 status: None,
@@ -118,6 +147,7 @@ impl Input {
                 sessions: None,
                 command_hint: Cell::new(false),
                 notice: notice.clone(),
+                paste_started: watch.started.clone(),
             }));
             editor
         });
@@ -131,6 +161,7 @@ impl Input {
             pasted: Arc::default(),
             vision: None,
             notice,
+            watch,
         }
     }
 
@@ -162,18 +193,50 @@ impl Input {
     /// Mail that starts a turn returns `Line::Mail`, whether it waited for
     /// the `>` or ended it.
     pub fn request(&mut self, status: Option<String>) -> Line {
+        let mut initial = (String::new(), String::new());
+        loop {
+            match self.read_line(status.clone(), &initial) {
+                Read::Line(line) => return line,
+                Read::EmptyPaste(line, pos) => {
+                    // Lokal ended the line to read the image: it goes, and
+                    // comes back as it was, with the marker where the cursor was.
+                    if style::enabled() {
+                        eprint!("\x1b[1A\r\x1b[2K");
+                    }
+                    let (left, right) = line.split_at(pos.min(line.len()));
+                    initial = match paste(&self.pasted, self.vision) {
+                        Ok(marker) => (format!("{left}{marker}"), right.to_string()),
+                        Err(why) => {
+                            if let Ok(mut notice) = self.notice.lock() {
+                                *notice = Some((line.clone(), why));
+                            }
+                            (left.to_string(), right.to_string())
+                        }
+                    };
+                }
+            }
+        }
+    }
+
+    /// One reading of the `>`, starting from `initial`'s text on either side
+    /// of the cursor.
+    fn read_line(&mut self, status: Option<String>, initial: &(String, String)) -> Read {
         let Some(editor) = &mut self.editor else {
-            return Line::Quit;
+            return Read::Line(Line::Quit);
         };
         if self.inbox.as_ref().is_some_and(Inbox::enter_prompt) {
-            return Line::Mail;
+            return Read::Line(Line::Mail);
         }
         if let Some(helper) = editor.helper_mut() {
             helper.status = status;
             helper.accented = true;
         }
-        // A paste's word belongs to the prompt it was pressed at.
-        if let Ok(mut notice) = self.notice.lock() {
+        // A paste's word belongs to the prompt it was pressed at, but for
+        // one the empty paste's reading left for this very line.
+        if initial.0.is_empty()
+            && initial.1.is_empty()
+            && let Ok(mut notice) = self.notice.lock()
+        {
             notice.take();
         }
         // Only here: at an approval, one Ctrl+C stops the turn.
@@ -196,6 +259,14 @@ impl Input {
             };
             editor.bind_sequence(key, EventHandler::Conditional(Box::new(paste)));
         }
+        // Only where an image can go: an empty paste stands for one.
+        let paste_start = KeyEvent(KeyCode::BracketedPasteStart, Modifiers::NONE);
+        if self.vision == Some(true) {
+            let watch = WatchPaste {
+                watch: self.watch.clone(),
+            };
+            editor.bind_sequence(paste_start, EventHandler::Conditional(Box::new(watch)));
+        }
         let esc = KeyEvent(KeyCode::Esc, Modifiers::NONE);
         let dropping = Arc::new(AtomicBool::new(false));
         if let Some(inbox) = &self.inbox {
@@ -205,8 +276,19 @@ impl Input {
             };
             editor.bind_sequence(esc, EventHandler::Conditional(Box::new(drop)));
         }
-        let line = editor.readline(PROMPT);
+        let line = editor.readline_with_initial(PROMPT, (&initial.0, &initial.1));
         let woken = self.inbox.as_ref().is_some_and(Inbox::leave_prompt);
+        // A paste the line left with is no longer watched.
+        if let Ok(mut started) = self.watch.started.lock() {
+            started.take();
+        }
+        let empty = self
+            .watch
+            .empty
+            .lock()
+            .ok()
+            .and_then(|mut empty| empty.take());
+        editor.unbind_sequence(paste_start);
         if self.inbox.is_some() {
             editor.unbind_sequence(esc);
         }
@@ -217,22 +299,26 @@ impl Input {
         // A reminder left over must not show at the next question.
         self.quit_armed.store(false, Ordering::SeqCst);
         match line {
+            Err(ReadlineError::Interrupted) if !woken && empty.is_some() => {
+                let (line, pos) = empty.unwrap_or_default();
+                Read::EmptyPaste(line, pos)
+            }
             Err(ReadlineError::Interrupted) if woken => {
                 // Mail ended an empty line, which rustyline leaves with the
                 // status on it: it goes, and the mail shows in its place.
                 if style::enabled() {
                     eprint!("\x1b[1A\r\x1b[2K");
                 }
-                Line::Mail
+                Read::Line(Line::Mail)
             }
-            Ok(_) if dropping.load(Ordering::SeqCst) => Line::DropMessages,
+            Ok(_) if dropping.load(Ordering::SeqCst) => Read::Line(Line::DropMessages),
             Ok(line) => {
                 if !line.trim().is_empty() {
                     let _ = editor.add_history_entry(line.as_str());
                 }
-                Line::Text(line)
+                Read::Line(Line::Text(line))
             }
-            Err(_) => Line::Quit,
+            Err(_) => Read::Line(Line::Quit),
         }
     }
 
@@ -476,17 +562,8 @@ impl ConditionalEventHandler for PasteImage {
         if let Some(inbox) = &self.inbox {
             inbox.set_typing(true);
         }
-        let pasted = match self.vision {
-            Some(true) => clipboard::image().map(|(_, url)| url),
-            Some(false) => Err(text::PASTE_BLIND.to_string()),
-            None => Err(text::PASTE_UNSAID.to_string()),
-        };
-        match pasted {
-            Ok(url) => {
-                let mut images = self.pasted.lock().ok()?;
-                images.push(url);
-                Some(Cmd::Insert(1, text::image_marker(images.len())))
-            }
+        match paste(&self.pasted, self.vision) {
+            Ok(marker) => Some(Cmd::Insert(1, marker)),
             Err(why) => {
                 if let Ok(mut notice) = self.notice.lock() {
                     *notice = Some((context.line().to_string(), why));
@@ -494,6 +571,58 @@ impl ConditionalEventHandler for PasteImage {
                 Some(Cmd::Repaint)
             }
         }
+    }
+}
+
+/// The clipboard's image, kept as the session's next, and its marker; or
+/// why there's none.
+fn paste(pasted: &Mutex<Vec<String>>, vision: Option<bool>) -> Result<String, String> {
+    let url = match vision {
+        Some(true) => clipboard::image().map(|(_, url)| url)?,
+        Some(false) => return Err(text::PASTE_BLIND.to_string()),
+        None => return Err(text::PASTE_UNSAID.to_string()),
+    };
+    let mut images = pasted
+        .lock()
+        .map_err(|_| text::CLIPBOARD_NO_IMAGE.to_string())?;
+    images.push(url);
+    Ok(text::image_marker(images.len()))
+}
+
+/// The start of a terminal's paste: watched, so an empty one is known by
+/// the redraw that doesn't follow. rustyline reads the paste as ever.
+struct WatchPaste {
+    watch: PasteWatch,
+}
+
+impl ConditionalEventHandler for WatchPaste {
+    fn handle(
+        &self,
+        _event: &Event,
+        _count: RepeatCount,
+        _positive: bool,
+        context: &EventContext,
+    ) -> Option<Cmd> {
+        let at = (context.line().to_string(), context.pos());
+        if let Ok(mut started) = self.watch.started.lock() {
+            *started = Some(at);
+        }
+        let watch = self.watch.clone();
+        thread::spawn(move || {
+            thread::sleep(EMPTY_PASTE_WAIT);
+            let Some(at) = watch.started.lock().ok().and_then(|mut s| s.take()) else {
+                return;
+            };
+            if let Ok(mut empty) = watch.empty.lock() {
+                *empty = Some(at);
+            }
+            // SAFETY: a plain call, signalling this process; readline
+            // returns Interrupted on it, as for mail.
+            unsafe {
+                libc::kill(libc::getpid(), libc::SIGINT);
+            }
+        });
+        None
     }
 }
 
@@ -567,6 +696,8 @@ struct Helper {
     command_hint: Cell<bool>,
     /// A paste's word, shown until the line changes.
     notice: Notice,
+    /// A paste in progress, cleared by the redraw of one that landed.
+    paste_started: Arc<Mutex<Option<(String, usize)>>>,
 }
 
 impl Helper {
@@ -692,6 +823,14 @@ impl Hinter for Helper {
     type Hint = Hint;
 
     fn hint(&self, line: &str, pos: usize, _context: &Context<'_>) -> Option<Hint> {
+        // A paste whose text went in redraws the line: it wasn't empty.
+        if let Ok(mut started) = self.paste_started.lock()
+            && started
+                .as_ref()
+                .is_some_and(|(at, at_pos)| at != line || *at_pos != pos)
+        {
+            started.take();
+        }
         // Typing anything means the person isn't quitting after all.
         if !line.is_empty() {
             self.quit_armed.store(false, Ordering::SeqCst);
