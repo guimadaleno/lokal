@@ -736,22 +736,11 @@ impl Conversation {
 /// A message as the saved conversation keeps it: an image gives way to a
 /// line saying so, or one screenshot would add megabytes to the file.
 fn kept(message: &Value) -> Value {
-    let Some(fields) = message.as_object() else {
-        return message.clone();
-    };
-    if context::image_urls(message).next().is_none() {
-        return message.clone();
+    let mut kept = message.clone();
+    if context::image_urls(message).next().is_some() {
+        kept["content"] = context::without_images(message, IMAGE_NOT_KEPT).into();
     }
-    let mut kept: serde_json::Map<String, Value> = fields
-        .iter()
-        .filter(|(key, _)| *key != "content")
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
-    kept.insert(
-        "content".into(),
-        context::without_images(message, IMAGE_NOT_KEPT).into(),
-    );
-    Value::Object(kept)
+    kept
 }
 
 /// What the Markdown styling still holds, with every style closed.

@@ -210,8 +210,6 @@ pub fn png_start(width: u32, height: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use std::process::{Command, Stdio};
 
     fn png(width: u32, height: u32) -> Vec<u8> {
         png_start(width, height)
@@ -309,26 +307,21 @@ mod tests {
     }
 
     #[test]
-    fn base64_is_what_the_system_writes() {
-        let bytes: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
-        for length in [0, 1, 2, 3, 4, 5, 1000] {
-            let mut child = Command::new("base64")
-                .arg("-w0")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .spawn()
-                .unwrap();
-            child
-                .stdin
-                .take()
-                .unwrap()
-                .write_all(&bytes[..length])
-                .unwrap();
-            let output = child.wait_with_output().unwrap();
-            let theirs = String::from_utf8(output.stdout).unwrap();
-            assert_eq!(base64(&bytes[..length]), theirs);
-            assert_eq!(unbase64(&theirs).unwrap(), &bytes[..length]);
+    fn base64_is_rfc_4648s() {
+        for (bytes, text) in [
+            ("", ""),
+            ("f", "Zg=="),
+            ("fo", "Zm8="),
+            ("foo", "Zm9v"),
+            ("foob", "Zm9vYg=="),
+            ("fooba", "Zm9vYmE="),
+            ("foobar", "Zm9vYmFy"),
+        ] {
+            assert_eq!(base64(bytes.as_bytes()), text);
+            assert_eq!(unbase64(text).unwrap(), bytes.as_bytes());
         }
+        let bytes: Vec<u8> = (0..=255u8).collect();
+        assert_eq!(unbase64(&base64(&bytes)).unwrap(), bytes);
         assert_eq!(unbase64("abc"), None);
         assert_eq!(unbase64("a!cd"), None);
     }
