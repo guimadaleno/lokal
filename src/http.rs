@@ -38,13 +38,30 @@ pub fn get_json(address: &str, path: &str) -> Result<Value, String> {
     Ok(value)
 }
 
+/// Why a request got no reply to read.
+pub enum Failure {
+    /// The server answered with an error: it had the request, and turned
+    /// it down.
+    Refused(String),
+    /// No answer: the server couldn't be reached, or the connection broke.
+    Lost(String),
+}
+
+impl Failure {
+    pub fn message(self) -> String {
+        match self {
+            Failure::Refused(message) | Failure::Lost(message) => message,
+        }
+    }
+}
+
 /// Posts JSON and returns the reply body to read line by line.
-pub fn post_json(address: &str, path: &str, body: &Value) -> Result<impl BufRead + use<>, String> {
+pub fn post_json(address: &str, path: &str, body: &Value) -> Result<impl BufRead + use<>, Failure> {
     let response = agent()
         .post(format!("http://{address}{path}"))
         .header("Content-Type", "application/json")
         .send(body.to_string())
-        .map_err(|error| describe(error, address))?;
+        .map_err(|error| Failure::Lost(describe(error, address)))?;
     let status = response.status().as_u16();
     let mut body = response.into_body();
     if status >= 400 {
@@ -52,10 +69,10 @@ pub fn post_json(address: &str, path: &str, body: &Value) -> Result<impl BufRead
         let message = serde_json::from_str(&reply)
             .ok()
             .and_then(|value| error_message(&value));
-        return Err(message.map_or_else(
+        return Err(Failure::Refused(message.map_or_else(
             || text::server_status(status),
             |message| text::server_said(&message),
-        ));
+        )));
     }
     Ok(BufReader::new(body.into_reader()))
 }
@@ -63,7 +80,8 @@ pub fn post_json(address: &str, path: &str, body: &Value) -> Result<impl BufRead
 /// Posts JSON and returns the JSON the server answers with.
 pub fn post_for_json(address: &str, path: &str, body: &Value) -> Result<Value, String> {
     let mut reply = String::new();
-    post_json(address, path, body)?
+    post_json(address, path, body)
+        .map_err(Failure::message)?
         .read_to_string(&mut reply)
         .map_err(|_| text::cant_reach(address))?;
     let value: Value = serde_json::from_str(&reply).map_err(|_| text::not_json(address))?;

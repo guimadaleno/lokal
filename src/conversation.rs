@@ -19,7 +19,9 @@ use crate::server::{self, Kind, Server};
 use crate::spinner::Spinner;
 use crate::system::Facts;
 use crate::tools::{self, Outcome};
-use crate::{config, interrupt, judge, keys, layout, mode, prompt, reasoning, style, text, tty};
+use crate::{
+    config, http, interrupt, judge, keys, layout, mode, prompt, reasoning, style, text, tty,
+};
 
 /// The project's notes go along with every request, so they get an eighth
 /// of the context; this much when its size isn't known, an eighth of 32K.
@@ -76,7 +78,19 @@ pub struct Conversation {
 
 enum Failure {
     Stopped,
+    /// The server turned the request down: an image it can't take, say.
+    Refused(String),
+    /// No answer: the server couldn't be reached, or broke off.
     Error(String),
+}
+
+impl Failure {
+    fn message(self) -> String {
+        match self {
+            Failure::Refused(message) | Failure::Error(message) => message,
+            Failure::Stopped => String::new(),
+        }
+    }
 }
 
 /// How a turn ended.
@@ -266,13 +280,17 @@ impl Conversation {
                         .push(json!({"role": "assistant", "content": STOPPED_RESULT}));
                     break;
                 }
-                Err(Failure::Error(message)) => {
+                Err(failure) => {
+                    let refused = matches!(failure, Failure::Refused(_));
+                    let message = failure.message();
                     layout::print_fitted(&message, style::red);
-                    // An image the server can't take would fail every request
-                    // after it: it gives way to a note saying why, and the
-                    // model is asked again, once.
+                    // An image the server turns down would fail every
+                    // request after it: it gives way to a note saying why,
+                    // and the model is asked again, once. Only a refusal:
+                    // a server that never answered didn't see the image.
                     let note = format!("{IMAGE_LEFT_OUT} {message}]");
-                    if !left_out_images
+                    if refused
+                        && !left_out_images
                         && context::leave_out_unseen_images(&mut self.messages, &note)
                     {
                         left_out_images = true;
@@ -579,7 +597,10 @@ impl Conversation {
                         print_rest(&mut markdown);
                         println!();
                     }
-                    return result.map_err(Failure::Error);
+                    return result.map_err(|failure| match failure {
+                        http::Failure::Refused(message) => Failure::Refused(message),
+                        http::Failure::Lost(message) => Failure::Error(message),
+                    });
                 }
             }
             // After every piece too, not only in a pause between them: hidden

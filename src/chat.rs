@@ -51,7 +51,7 @@ pub enum Event {
         path: Option<String>,
         bytes: usize,
     },
-    Done(Result<Reply, String>),
+    Done(Result<Reply, http::Failure>),
 }
 
 pub struct Request {
@@ -77,9 +77,9 @@ impl Request {
         match self.events.recv_timeout(wait) {
             Ok(event) => Some(event),
             Err(RecvTimeoutError::Timeout) => None,
-            Err(RecvTimeoutError::Disconnected) => {
-                Some(Event::Done(Err(text::CONNECTION_DROPPED.into())))
-            }
+            Err(RecvTimeoutError::Disconnected) => Some(Event::Done(Err(http::Failure::Lost(
+                text::CONNECTION_DROPPED.into(),
+            )))),
         }
     }
 }
@@ -97,8 +97,11 @@ fn stream(
     body: &Value,
     sender: &Sender<Event>,
     abandoned: &AtomicBool,
-) -> Result<Reply, String> {
+) -> Result<Reply, http::Failure> {
     let reader = http::post_json(address, "/v1/chat/completions", body)?;
+    // An error before any of the reply is the server turning the request
+    // down; after, it broke off.
+    let mut started = false;
     let mut reply = Reply::default();
     let mut filter = AnswerFilter::new();
     let mut paths = Vec::new();
@@ -107,9 +110,9 @@ fn stream(
     for line in reader.lines() {
         // No one reads this result: the request that wanted it is gone.
         if abandoned.load(Ordering::SeqCst) {
-            return Err(String::new());
+            return Err(http::Failure::Lost(String::new()));
         }
-        let line = line.map_err(|_| text::CONNECTION_DROPPED)?;
+        let line = line.map_err(|_| http::Failure::Lost(text::CONNECTION_DROPPED.into()))?;
         let Some(data) = line.strip_prefix("data:") else {
             continue;
         };
@@ -117,10 +120,17 @@ fn stream(
         if data == "[DONE]" {
             break;
         }
-        let piece: Value = serde_json::from_str(data).map_err(|_| text::not_json(address))?;
+        let piece: Value =
+            serde_json::from_str(data).map_err(|_| http::Failure::Lost(text::not_json(address)))?;
         if let Some(message) = http::error_message(&piece) {
-            return Err(text::server_said(&message));
+            let message = text::server_said(&message);
+            return Err(if started {
+                http::Failure::Lost(message)
+            } else {
+                http::Failure::Refused(message)
+            });
         }
+        started = true;
         if add_piece(&piece, &mut reply, &mut filter, &mut paths, sender) {
             let now = Instant::now();
             reply.generating = now - *first_token.get_or_insert(now);
