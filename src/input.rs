@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
@@ -627,18 +627,38 @@ fn rows(line: &str) -> usize {
     rows_at(line, tty::width().unwrap_or(80))
 }
 
-/// The same at `width` columns: each line break a paste kept starts a row
-/// of its own, at the left edge, and only the first follows the prompt.
+/// The same at `width` columns, laid out as rustyline does: a line break a
+/// paste kept starts a row at the left edge, a character that doesn't fit
+/// moves whole to the next row, a tab reaches the next stop, and a row
+/// filled exactly wraps only at the end of the line.
 fn rows_at(line: &str, width: usize) -> usize {
     let width = width.max(1);
-    line.split('\n')
-        .enumerate()
-        .map(|(n, piece)| {
-            let prompt = if n == 0 { PROMPT.width() } else { 0 };
-            (prompt + piece.width()) / width + 1
-        })
-        .sum()
+    let (mut row, mut column) = (0, PROMPT.width());
+    for c in line.chars() {
+        if c == '\n' {
+            row += 1;
+            column = 0;
+            continue;
+        }
+        let wide = if c == '\t' {
+            TAB_STOP - column % TAB_STOP
+        } else {
+            c.width().unwrap_or(0)
+        };
+        column += wide;
+        if column > width {
+            row += 1;
+            column = wide;
+        }
+    }
+    if column == width {
+        row += 1;
+    }
+    row + 1
 }
+
+/// rustyline's tab stop, which Lokal leaves as it comes.
+const TAB_STOP: usize = 8;
 
 /// The clipboard's image, kept as the session's next, and its marker; or
 /// why there's none.
@@ -1052,6 +1072,15 @@ mod tests {
         assert_eq!(rows_at("first line one\nline two\nline three", 80), 3);
         assert_eq!(rows_at(&format!("a\n{}", "x".repeat(80)), 80), 3);
         assert_eq!(rows_at(&"漢".repeat(40), 80), 2);
+        // A row filled exactly before a break doesn't wrap: only the end does.
+        assert_eq!(rows_at(&format!("{}\nend", "x".repeat(78)), 80), 2);
+        assert_eq!(rows_at(&format!("a\n{}\nb", "x".repeat(160)), 80), 4);
+        assert_eq!(rows_at("\n\n", 80), 3);
+        // A wide character that doesn't fit moves whole to the next row.
+        let straddling = format!("{}漢{}", "x".repeat(77), "漢".repeat(39));
+        assert_eq!(rows_at(&straddling, 80), 3);
+        assert_eq!(rows_at(&format!("{}\tx", "x".repeat(69)), 80), 1);
+        assert_eq!(rows_at(&format!("{}\tx", "x".repeat(77)), 80), 2);
     }
 
     #[test]
