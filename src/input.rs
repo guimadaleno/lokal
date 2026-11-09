@@ -307,14 +307,13 @@ impl Input {
             };
             editor.bind_sequence(key, EventHandler::Conditional(Box::new(paste)));
         }
-        // Only where an image can go: an empty paste stands for one.
+        // An empty paste stands for an image, as Ctrl+V does: it's how
+        // Windows Terminal sends that key. So it says why none can go, too.
         let paste_start = KeyEvent(KeyCode::BracketedPasteStart, Modifiers::NONE);
-        if self.vision == Some(true) {
-            let watch = WatchPaste {
-                watch: self.watch.clone(),
-            };
-            editor.bind_sequence(paste_start, EventHandler::Conditional(Box::new(watch)));
-        }
+        let watch = WatchPaste {
+            watch: self.watch.clone(),
+        };
+        editor.bind_sequence(paste_start, EventHandler::Conditional(Box::new(watch)));
         let esc = KeyEvent(KeyCode::Esc, Modifiers::NONE);
         let dropping = Arc::new(AtomicBool::new(false));
         if let Some(inbox) = &self.inbox {
