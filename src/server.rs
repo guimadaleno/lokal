@@ -31,6 +31,9 @@ pub struct Server {
     /// Whether the model takes images; None when the server doesn't say.
     pub vision: Option<bool>,
     pub kind: Kind,
+    /// False when Ollama's context should be read again after a request
+    /// loads the model: only its own num_ctx says what that will be.
+    pub context_settled: bool,
     /// Set in the settings, rather than found.
     pub pinned: bool,
 }
@@ -43,6 +46,7 @@ struct Model {
     max_context: Option<u64>,
     vision: Option<bool>,
     kind: Kind,
+    context_settled: bool,
 }
 
 pub fn find(config: &Config) -> Result<Server, String> {
@@ -65,6 +69,7 @@ pub fn find(config: &Config) -> Result<Server, String> {
         max_context: model.max_context,
         vision: model.vision,
         kind: model.kind,
+        context_settled: model.context_settled,
         pinned: config.server.is_some(),
     })
 }
@@ -140,6 +145,7 @@ fn pick_model(address: &str, wanted: Option<&str>) -> Result<Model, String> {
         max_context: None,
         vision: None,
         kind: Kind::Other,
+        context_settled: true,
     })
 }
 
@@ -162,6 +168,7 @@ fn pick_lm_studio_model(models: &[Value], wanted: Option<&str>) -> Result<Model,
         max_context: model["max_context_length"].as_u64(),
         vision: Some(model["type"] == "vlm"),
         kind: Kind::LmStudio,
+        context_settled: true,
     })
 }
 
@@ -187,14 +194,17 @@ fn ollama_model(id: String, shown: &Value, running: &Value) -> Model {
         .as_array()
         .map(|capabilities| capabilities.iter().any(|capability| capability == "vision"));
     // The model's own num_ctx is what a request without options loads it
-    // with; without one, the context it's loaded with now, if it is.
-    let context = own_num_ctx(shown).or_else(|| context_in(running, &id));
+    // with; without one, the context it's loaded with now, if it is, until
+    // a request of Lokal's has loaded it (`Conversation::learn_context`).
+    let own = own_num_ctx(shown);
+    let context = own.or_else(|| context_in(running, &id));
     Model {
         id,
         context,
         max_context,
         vision,
         kind: Kind::Ollama,
+        context_settled: own.is_some(),
     }
 }
 
@@ -267,6 +277,7 @@ mod tests {
                 max_context: Some(131072),
                 vision: Some(false),
                 kind: Kind::LmStudio,
+                context_settled: true,
             }
         );
         let idle = pick_lm_studio_model(models, Some("idle")).unwrap();
@@ -310,6 +321,7 @@ mod tests {
                 max_context: Some(262144),
                 vision: Some(true),
                 kind: Kind::Ollama,
+                context_settled: true,
             }
         );
     }

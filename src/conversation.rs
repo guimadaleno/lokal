@@ -15,7 +15,7 @@ use crate::markdown::Markdown;
 use crate::memory::{self, Note};
 use crate::peers::Peers;
 use crate::progress::{ToolProgress, speed, working_label};
-use crate::server::{self, Kind, Server};
+use crate::server::{self, Server};
 use crate::spinner::Spinner;
 use crate::system::Facts;
 use crate::tools::{self, Outcome};
@@ -49,6 +49,8 @@ pub struct Conversation {
     /// LOKAL.md and AGENTS.md as last read: at the start of each turn, and
     /// after /memory.
     notes: Vec<Note>,
+    /// The last turn learned Ollama's context, for the warning when it's small.
+    learned_context: bool,
     system: String,
     /// Everything after the system prompt, in the chat API's format.
     messages: Vec<Value>,
@@ -114,6 +116,7 @@ impl Conversation {
             facts,
             recon: Vec::new(),
             notes: Vec::new(),
+            learned_context: false,
             system: String::new(),
             messages: Vec::new(),
             tokens: None,
@@ -364,8 +367,10 @@ impl Conversation {
         }
         self.model_time = Some(model_time);
         self.speed = speed(generated, generating);
+        // Between turns, so the system prompt never changes inside one.
         if learned_context {
-            crate::warn_if_context_is_small(&self.server, true);
+            self.refresh_system_prompt();
+            self.learned_context = true;
         }
         self.save();
         if let Some(peers) = &self.peers {
@@ -655,14 +660,32 @@ impl Conversation {
         context::estimate(self.fixed(), &self.messages)
     }
 
-    /// Ollama's context, when the start couldn't read it: the model wasn't
-    /// loaded then, and a request loads it. True when it's known now.
+    /// Ollama's context, read again after the session's first reply when the
+    /// model's own num_ctx doesn't settle it: at the start the model wasn't
+    /// loaded, or another client had loaded it with options of its own, and
+    /// a request without them loads it as Lokal's requests find it. True
+    /// when it changed. The notes are cut to the new room at once, silently,
+    /// unless they changed meanwhile, which the next turn says.
     fn learn_context(&mut self) -> bool {
-        if self.server.context.is_some() || self.server.kind != Kind::Ollama {
+        if self.server.context_settled {
             return false;
         }
-        self.server.context = server::loaded_context(&self.server);
-        self.server.context.is_some()
+        self.server.context_settled = true;
+        let context = server::loaded_context(&self.server);
+        if context.is_none() || context == self.server.context {
+            return false;
+        }
+        let notes_unchanged = self.read_notes() == self.notes;
+        self.server.context = context;
+        if notes_unchanged {
+            self.notes = self.read_notes();
+        }
+        true
+    }
+
+    /// Whether the last turn learned the context, once.
+    pub fn take_learned_context(&mut self) -> bool {
+        std::mem::take(&mut self.learned_context)
     }
 
     /// The tools this session offers the model.
@@ -770,6 +793,7 @@ mod tests {
                 max_context: None,
                 vision: None,
                 kind: crate::server::Kind::Other,
+                context_settled: true,
                 pinned: false,
             },
             facts: Facts {
@@ -783,6 +807,7 @@ mod tests {
             },
             recon: Vec::new(),
             notes: Vec::new(),
+            learned_context: false,
             system: String::new(),
             messages: vec![json!({"role": "user", "content": "read it"})],
             tokens: None,

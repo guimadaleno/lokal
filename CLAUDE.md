@@ -693,9 +693,14 @@ Measured on a current laptop, under WSL; the judge on a consumer GPU.
   has been tried, under WSL: a conversation with a command step, in auto.
   The context and its gauge come from LM Studio's `/api/v0/models`, or
   from Ollama's model `num_ctx` or `/api/ps` (above); elsewhere they stay
-  unknown. On Ollama, a model that isn't loaded at the start and has no
-  `num_ctx` of its own gets its context from `/api/ps` after the first
-  reply, which loads it, with the warning about a small one then.
+  unknown. On Ollama, without the model's own `num_ctx`, Lokal reads
+  `/api/ps` again after the session's first reply: the model may not have
+  been loaded at the start, or another client may have loaded it with
+  options of its own, and Lokal's request loads it as its requests find
+  it. The notes are cut to the new room at once, the system prompt
+  follows between turns, and the warning about a small context shows in
+  a conversation only. A reload by another client's options is read from
+  Ollama's scheduler, not seen.
   The speed is timed by Lokal from the first token on. The spinner counts
   a token a piece, and so does the prompt's status where a server sends no
   `usage.completion_tokens`: tried with a fake server that sends none.

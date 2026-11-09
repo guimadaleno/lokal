@@ -314,6 +314,9 @@ fn turn(conversation: &mut Conversation, input: &mut Input, request: &str, asked
     {
         peers.inbox().hold();
     }
+    if conversation.take_learned_context() {
+        warn_if_context_is_small(&conversation.server, true);
+    }
     print_separator(input);
 }
 

@@ -178,6 +178,7 @@ mod tests {
             max_context: None,
             vision: None,
             kind: crate::server::Kind::Other,
+            context_settled: true,
             pinned: false,
         };
         let case = Case {
