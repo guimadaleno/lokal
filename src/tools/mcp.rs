@@ -42,6 +42,9 @@ pub(super) fn call(
     let mut lines = argument_lines(args);
     let rest = lines.split_off(lines.len().min(ARGUMENTS_SHOWN));
     print_lines(&lines);
+    if !rest.is_empty() {
+        eprintln!("  {}", style::gray(&text::more_lines(rest.len())));
+    }
     eprintln!();
     if input.call_approved_before(&exact) {
         eprintln!("  {}", style::faint(text::APPROVED_FOR_SESSION));
@@ -64,22 +67,17 @@ pub(super) fn call(
     }
 }
 
-/// The arguments as the person reads them: a line a parameter, its text as
-/// it is but for control characters, anything else as JSON.
+/// The arguments as the JSON the server gets, with control and hidden
+/// characters as marks. A line break inside a value shows as `\n`, so no
+/// value can pass for another parameter, as it could in a `name: value`
+/// view.
 fn argument_lines(args: &Value) -> Vec<String> {
     let width = tty::width().unwrap_or(80);
-    let Some(fields) = args.as_object() else {
-        return Vec::new();
-    };
-    fields
-        .iter()
-        .flat_map(|(name, value)| {
-            let value = match value {
-                Value::String(text) => text.clone(),
-                other => other.to_string(),
-            };
-            let line = format!("{name}: {value}");
-            layout::indented(&layout::printable(&line), 2, width)
+    let json = serde_json::to_string_pretty(args).unwrap_or_default();
+    json.lines()
+        .flat_map(|line| {
+            let indent = 2 + line.len() - line.trim_start().len();
+            layout::indented(&layout::printable(line.trim_start()), indent, width)
                 .lines()
                 .map(String::from)
                 .collect::<Vec<_>>()
@@ -301,8 +299,16 @@ mod tests {
     }
 
     #[test]
-    fn arguments_show_a_line_each_without_control_characters() {
-        let lines = argument_lines(&json!({"path": "a\u{1b}[2J.txt", "depth": 2}));
-        assert_eq!(lines, ["  depth: 2", "  path: a^[[2J.txt"]);
+    fn arguments_show_as_json_so_no_value_passes_for_a_parameter() {
+        let lines = argument_lines(&json!({"a": "notes\n  text: hello", "text": "x\u{1b}[2J"}));
+        assert_eq!(
+            lines,
+            [
+                "  {",
+                r#"    "a": "notes\n  text: hello","#,
+                r#"    "text": "x\u001b[2J""#,
+                "  }"
+            ]
+        );
     }
 }

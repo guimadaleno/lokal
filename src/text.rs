@@ -752,8 +752,8 @@ pub fn mcp_starts_later(name: &str) -> String {
     format!("{name} · starting; its tools are shown with the first request")
 }
 
-pub fn mcp_no_such_tool(name: &str) -> String {
-    format!("It has no tool called {name}, which mcp.<name>.tools names.")
+pub fn mcp_no_such_tool(server: &str, name: &str) -> String {
+    format!("The MCP server {server} has no tool called {name}, which mcp.{server}.tools names.")
 }
 
 pub const MCP_WANTS_INPUT: &str =
@@ -794,8 +794,10 @@ pub fn mcp_image_shown(size: &str) -> String {
     format!("an image, {size}")
 }
 
-pub fn mcp_same_name(name: &str) -> String {
-    format!("Its tool {name} is left out: another tool has that name already.")
+pub fn mcp_same_name(server: &str, name: &str) -> String {
+    format!(
+        "The MCP server {server}'s tool {name} is left out: another of its tools has that name already."
+    )
 }
 pub const MCP_ENDED: &str = "the server ended.";
 

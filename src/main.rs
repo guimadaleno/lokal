@@ -162,16 +162,16 @@ fn run(started: Instant, resume: bool, request: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let folder = env::current_dir().unwrap_or_default();
+    let project = approvals::ProjectApprovals::load(approvals::project_root(&folder));
+    let mut input = Input::new(project);
     // MCP servers in a conversation at a terminal only, where each call can
     // be asked about; started now, so they're up by the first request.
-    let mcp = if talking {
+    let mcp = if talking && input.can_ask() {
         mcp::Mcp::start(&config.mcp)
     } else {
         None
     };
-    let folder = env::current_dir().unwrap_or_default();
-    let project = approvals::ProjectApprovals::load(approvals::project_root(&folder));
-    let mut input = Input::new(project);
     // Conversations only: a one-shot request often runs in a script, and
     // shouldn't reach the network on its own.
     let mut update = None;

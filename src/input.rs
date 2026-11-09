@@ -318,6 +318,11 @@ impl Input {
         }
     }
 
+    /// Whether there's a terminal to ask on: without one, nothing is.
+    pub fn can_ask(&self) -> bool {
+        self.editor.is_some()
+    }
+
     /// Whether this exact MCP call was approved for the session.
     pub fn call_approved_before(&self, call: &str) -> bool {
         self.approved_calls.contains(call)

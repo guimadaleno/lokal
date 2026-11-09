@@ -242,14 +242,18 @@ of MCP servers the person sets up. One binary, few dependencies.
     stopped reading; only the answer awaited is passed on; a line is at
     most 32 MB and an image 20 MB, and its stderr is read in bounded
     pieces.
-  - **A tool list shows whole before the model gets it:** each tool's
-    name, description and parameters as the JSON the model gets, control
-    and hidden characters as marks, asked on No ("Offer them to the
-    model?"). A curated view would leave a place for words to hide. Its hash is kept in the state
+  - **A tool list shows before the model gets it:** each tool's name,
+    description and parameters as the JSON the model gets, control and
+    hidden characters as marks, asked on No ("Offer them to the model?").
+    A curated view would leave a place for words to hide. A long one shows
+    its first lines and how many are left out, the rest a choice away, as
+    a long diff does. Its hash is kept in the state
     folder (`mcp-seen`), and a list that changes is shown again. The list
     is fixed for the session, so the prompt cache holds.
   - **Every call asks, on No** ("Call it?"), with the server, the tool and
-    its arguments. "Don't ask again" covers that exact call for the
+    its arguments as the JSON the server gets: a line break inside a value
+    shows as `\n`, so no value passes for another parameter. Long ones
+    show their start and count the rest. "Don't ask again" covers that exact call for the
     session, kept apart from commands, so a call's text can't let a
     command run unasked. A tool's name alone would be `cmd *`. Auto never
     judges a call, mail never approves one, and `readOnlyHint` is the
@@ -264,8 +268,9 @@ of MCP servers the person sets up. One binary, few dependencies.
     no resources or prompts, and a server's `instructions` aren't passed
     on. Both eras: `initialize` first, then `server/discover` with `_meta`
     (2026-07-28) when that fails.
-  - **Conversations at a terminal only:** a one-shot request starts no
-    server, since nothing there could be asked about.
+  - **Conversations at a terminal only:** a one-shot request, or a
+    conversation without a terminal, starts no server, since nothing
+    there could be asked about.
 - **Keep the model's reasoning.** It shows only when the person asks:
   `/reasoning` turns on, for the session, a small window where its last few
   lines show faint while it thinks, and which clears itself when the answer
@@ -282,7 +287,7 @@ of MCP servers the person sets up. One binary, few dependencies.
   picks Send. The menu starts on Don't send. It sends kinds, never names:
   no server address, no model. **The conversation is never part of it,**
   since it can hold files and secrets the model read.
-- **Grow on disk.** It keeps the last conversation only, a line a MCP
+- **Grow on disk.** It keeps the last conversation only, a line an MCP
   server for the tool list the person saw, and user.md is the person's own
   file.
   - **The scratch folder** (`src/scratch.rs`, `/tmp/lokal-<uid>/<pid>`) is
@@ -756,11 +761,13 @@ Measured on a current laptop, under WSL; the judge on a consumer GPU.
   The speed is timed by Lokal from the first token on. The spinner counts
   a token a piece, and so does the prompt's status where a server sends no
   `usage.completion_tokens`: tried with a fake server that sends none.
-- **MCP with a real server:** tried against `tests/mcp/fake_server.py` in
-  both eras (unit tests and a pseudo-terminal), and with Qwen 3.8 on
-  Ollama calling the fake's tools, an image included. A published server
-  (the official filesystem one through `npx`) is still owed, as is a
-  server that only speaks 2026-07-28 out in the world.
+- **MCP servers out in the world:** tried against `tests/mcp/fake_server.py`
+  in both eras, misbehaving servers (hidden text, one that stops reading,
+  one that outlives its stdin), and one real server, Vemka's
+  (`vemka.exe --mcp`, a Windows program found through WSL's PATH), with
+  Qwen 3.8 on Ollama calling it, seeing a screen and leaving. A published
+  server through `npx` was refused by a permission check, and a real one
+  that speaks only 2026-07-28 hasn't been met yet.
 - **Hooks in auto, the unasked PATH and control characters as marks:** run
   in a pseudo-terminal against a fake server only. A post-commit hook made
   auto ask on No, and without it the judge let the commit through; an
