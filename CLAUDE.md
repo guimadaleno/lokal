@@ -235,6 +235,8 @@ of MCP servers the person sets up. One binary, few dependencies.
     as for what runs unasked, and it runs in a session of its own, ended
     with Lokal (stdin closed, then SIGTERM, then SIGKILL), a closed
     terminal or a SIGTERM to Lokal included (`client::end_with_lokal`).
+    A SIGKILL to Lokal leaves them running, since nothing catches it;
+    most end anyway when their stdin closes.
   - **A server can't hang a turn or fill Lokal's memory:** its stdin is
     written on a thread of its own, so Esc still stops a call to one that
     stopped reading; only the answer awaited is passed on; a line is at
