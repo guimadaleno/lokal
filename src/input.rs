@@ -198,10 +198,13 @@ impl Input {
             match self.read_line(status.clone(), &initial) {
                 Read::Line(line) => return line,
                 Read::EmptyPaste(line, pos) => {
-                    // Lokal ended the line to read the image: it goes, and
-                    // comes back as it was, with the marker where the cursor was.
+                    // Lokal ended the line to read the image. It stays on
+                    // screen as it was while the clipboard is read, which can
+                    // take seconds, its cursor hidden: rustyline left it for
+                    // the next row, so the cursor goes back up, and the next
+                    // reading writes the line over it at once, marker in.
                     if style::enabled() {
-                        eprint!("\x1b[1A\r\x1b[2K");
+                        eprint!("\x1b[{}A\r\x1b[?25l", rows(&line));
                     }
                     let (left, right) = line.split_at(pos.min(line.len()));
                     initial = match paste(&self.pasted, self.vision) {
@@ -213,6 +216,9 @@ impl Input {
                             (left.to_string(), right.to_string())
                         }
                     };
+                    if style::enabled() {
+                        eprint!("\x1b[?25h");
+                    }
                 }
             }
         }
@@ -572,6 +578,12 @@ impl ConditionalEventHandler for PasteImage {
             }
         }
     }
+}
+
+/// The rows a line takes at the `>`, wrapped at the terminal's width.
+fn rows(line: &str) -> usize {
+    let width = tty::width().unwrap_or(80).max(1);
+    (PROMPT.chars().count() + line.chars().count()) / width + 1
 }
 
 /// The clipboard's image, kept as the session's next, and its marker; or
