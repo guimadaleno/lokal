@@ -624,8 +624,20 @@ impl ConditionalEventHandler for PasteImage {
 
 /// The rows a line takes at the `>`, wrapped at the terminal's width.
 fn rows(line: &str) -> usize {
-    let width = tty::width().unwrap_or(80).max(1);
-    (PROMPT.width() + line.width()) / width + 1
+    rows_at(line, tty::width().unwrap_or(80))
+}
+
+/// The same at `width` columns: each line break a paste kept starts a row
+/// of its own, at the left edge, and only the first follows the prompt.
+fn rows_at(line: &str, width: usize) -> usize {
+    let width = width.max(1);
+    line.split('\n')
+        .enumerate()
+        .map(|(n, piece)| {
+            let prompt = if n == 0 { PROMPT.width() } else { 0 };
+            (prompt + piece.width()) / width + 1
+        })
+        .sum()
 }
 
 /// The clipboard's image, kept as the session's next, and its marker; or
@@ -692,13 +704,28 @@ impl ConditionalEventHandler for WatchPaste {
     }
 }
 
-/// Whether the thread `tid` of this process waits in `read`, as rustyline's
-/// does in the middle of a paste: at the `>` it waits in `select`, since
-/// `Input` made a printer. Linux says so in `/proc`; where it can't be read,
-/// no.
+/// Whether the thread `tid` of this process is still at a paste: waiting in
+/// `read`, as rustyline's does in the middle of one, or running between two
+/// reads. Only a wait in another call, `select` at the `>` since `Input` made
+/// a printer, says it's done. Linux says so in `/proc`; where it can't be
+/// read, done.
 fn reading(tid: libc::c_long) -> bool {
     std::fs::read_to_string(format!("/proc/self/task/{tid}/syscall"))
-        .is_ok_and(|call| call.split_whitespace().next() == Some(&libc::SYS_read.to_string()))
+        .is_ok_and(|call| still_reading(&call))
+}
+
+/// What `/proc/<pid>/task/<tid>/syscall` says, read as above: a call's
+/// number and its arguments, or `running`.
+fn still_reading(call: &str) -> bool {
+    match call
+        .split_whitespace()
+        .next()
+        .map(str::parse::<libc::c_long>)
+    {
+        Some(Ok(number)) => number == libc::SYS_read || number < 0,
+        Some(Err(_)) => true,
+        None => false,
+    }
 }
 
 /// The numbers of the `[Image #N]` markers whole in `line`, in its order.
@@ -1016,6 +1043,28 @@ impl rustyline::Helper for Helper {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_line_break_in_a_line_starts_a_row() {
+        assert_eq!(rows_at("hello", 80), 1);
+        assert_eq!(rows_at(&"x".repeat(78), 80), 2);
+        assert_eq!(rows_at(&"x".repeat(77), 80), 1);
+        assert_eq!(rows_at("first line one\nline two\nline three", 80), 3);
+        assert_eq!(rows_at(&format!("a\n{}", "x".repeat(80)), 80), 3);
+        assert_eq!(rows_at(&"漢".repeat(40), 80), 2);
+    }
+
+    #[test]
+    fn a_reader_running_or_in_read_is_still_at_its_paste() {
+        let read = format!("{} 0x3 0x5a 0x400 0x0 0x0 0x0 0x7f 0x7f", libc::SYS_read);
+        assert!(still_reading(&read));
+        assert!(still_reading("running"));
+        assert!(still_reading("-1 0x7ffc 0x7f2e"));
+        assert!(!still_reading(
+            "270 0x9 0x7ffc 0x0 0x0 0x0 0x0 0x7ffc 0x7f2e"
+        ));
+        assert!(!still_reading(""));
+    }
 
     #[test]
     fn only_whole_markers_name_images_in_the_line_s_order() {
