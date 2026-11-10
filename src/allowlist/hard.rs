@@ -7,7 +7,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
-use super::{Program, glob_may_write, split, uses_any};
+use super::{Program, git_command, glob_may_write, split, uses_any};
 use crate::{config, gitconfig};
 
 /// Root, and other machines.
@@ -321,6 +321,10 @@ fn gh_only_reads(args: &[String]) -> bool {
 /// git that throws work away, rewrites what can't be had back, sends it
 /// somewhere new, or names a program for later git commands to run.
 fn git_is_hard(args: &[String], places: Option<&[PathBuf]>) -> bool {
+    // An option that brings settings of its own (`-c core.pager=…`).
+    let Some((_, args)) = git_command(args) else {
+        return true;
+    };
     let Some((sub, rest)) = args.split_first() else {
         return false;
     };
@@ -330,8 +334,6 @@ fn git_is_hard(args: &[String], places: Option<&[PathBuf]>) -> bool {
         return true;
     }
     match sub.as_str() {
-        // Options before the command (-C, -c) change where it runs, or what.
-        sub if sub.starts_with('-') => true,
         "push" => {
             uses_any(
                 rest,
@@ -436,6 +438,44 @@ fn listed(name: &str) -> String {
         ),
         _ => name.to_lowercase(),
     }
+}
+
+/// The folders whose settings apply to the git commands in `command`, run
+/// from `here` (`allowlist::git_folders`).
+pub(super) fn git_folders(command: &str, here: &Path) -> Option<Vec<PathBuf>> {
+    let (programs, whole) = match split(command) {
+        Some(programs) => (programs, true),
+        None => (rough_programs(command), false),
+    };
+    let mut places = Some(vec![here.to_path_buf()]);
+    // As for the hard core, a line read roughly runs everything from every
+    // place it reaches.
+    if !whole {
+        places = programs
+            .iter()
+            .fold(places, |places, program| moved(program, places));
+    }
+    let mut folders = Vec::new();
+    for program in &programs {
+        let words = without_assignments(&program.words);
+        if let Some((name, args)) = words.split_first()
+            && base_name(name) == "git"
+        {
+            let (given, _) = git_command(args)?;
+            for place in places.as_deref()? {
+                let folder = given.iter().try_fold(place.clone(), |folder, given| {
+                    Some(config::resolved(&folder.join(expanded(given)?)))
+                })?;
+                if !folders.contains(&folder) {
+                    folders.push(folder);
+                }
+            }
+        }
+        if whole {
+            places = moved(program, places.take());
+        }
+    }
+    Some(folders)
 }
 
 /// Where the line is after `program`: a `cd` or `pushd` adds where it goes,

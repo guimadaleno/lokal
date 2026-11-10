@@ -139,8 +139,8 @@ fn program_is_read_only(program: &Program) -> bool {
         return false;
     }
     match name.as_str() {
-        // Moving changes where the rest runs, and git there is asked about
-        // (`git_elsewhere`).
+        // Moving changes where the rest runs, and git there reads that
+        // folder's settings (`git_folders`).
         "cd" | "pushd" | "popd" => true,
         "command" => matches!(args, [option, _, ..] if option == "-v" || option == "-V"),
         "sed" => sed_only_prints(args),
@@ -174,6 +174,9 @@ fn glob_may_write(name: &str, program: &Program) -> bool {
 }
 
 fn git_is_read_only(args: &[String]) -> bool {
+    let Some((_, args)) = git_command(args) else {
+        return false;
+    };
     let Some((sub, rest)) = args.split_first() else {
         return false;
     };
@@ -258,26 +261,56 @@ pub fn uses_git(command: &str) -> bool {
     }
 }
 
-/// Whether git may run in another repository, or with other settings, than
-/// the working folder's, which are the ones `gitconfig` reads: after a `cd`,
-/// `pushd` or `popd` in the same line, or with options before its command
-/// (`-C`, `-c`, `--git-dir`). In a line Lokal can't read whole, git with
-/// any of those words anywhere counts.
-pub fn git_elsewhere(command: &str) -> bool {
-    let Some(programs) = split(command) else {
-        let words: Vec<&str> = hard::words(command).collect();
-        let named = |names: &[&str]| words.iter().any(|word| names.contains(word));
-        return named(&["git"]) && named(&["cd", "pushd", "popd", "-C", "-c", "--git-dir"]);
-    };
-    let mut moved = false;
-    programs.iter().any(|program| {
-        let Some((name, args)) = program.words.split_first() else {
-            return false;
-        };
-        let name = hard::base_name(name);
-        moved |= matches!(name, "cd" | "pushd" | "popd");
-        name == "git" && (moved || args.first().is_some_and(|arg| arg.starts_with('-')))
-    })
+/// The folders whose settings apply to the git commands in a line: where
+/// each runs, after a `cd`, `pushd` or `-C` with a folder written out, every
+/// place it may be, since a `cd` that fails stays where it was. Empty
+/// without git. None when that can't be told: after a `cd` Lokal can't
+/// follow, or with an option that brings settings of its own (`-c`,
+/// `--git-dir`). Those settings are what `gitconfig` reads.
+pub fn git_folders(command: &str) -> Option<Vec<PathBuf>> {
+    let here = env::current_dir()
+        .map(|folder| config::resolved(&folder))
+        .unwrap_or_default();
+    hard::git_folders(command, &here)
+}
+
+/// git's options before its command that change neither where it runs nor
+/// what it reads: anything else (`-c`, `--git-dir`, `--work-tree`…) may.
+const GIT_PLAIN_OPTIONS: &[&str] = &[
+    "--no-pager",
+    "-P",
+    "--no-optional-locks",
+    "--no-replace-objects",
+    "--literal-pathspecs",
+    "--no-lazy-fetch",
+];
+
+/// git's arguments split at its command: the folders given with `-C`, in
+/// order, and the command with its own arguments. None for an option
+/// before the command that isn't one of the plain ones, or a `-C` whose
+/// folder bash would read more into.
+fn git_command(args: &[String]) -> Option<(Vec<&str>, &[String])> {
+    let mut folders = Vec::new();
+    let mut at = 0;
+    while let Some(arg) = args.get(at) {
+        if arg == "-C" {
+            let folder = args.get(at + 1)?;
+            if folder.contains(['$', '`', '*', '?', '['])
+                || (folder.starts_with('~') && !folder.starts_with("~/"))
+            {
+                return None;
+            }
+            folders.push(folder.as_str());
+            at += 2;
+        } else if GIT_PLAIN_OPTIONS.contains(&arg.as_str()) {
+            at += 1;
+        } else if arg.starts_with('-') {
+            return None;
+        } else {
+            break;
+        }
+    }
+    Some((folders, &args[at..]))
 }
 
 /// Whether a command's question may open on Yes, so Enter approves it:
@@ -576,7 +609,7 @@ mod tests {
             "git branch -D main",
             "git diff --output=patch",
             "git diff --out=patch",
-            "git -C other status",
+            "git -c core.pager=x status",
             "git diff --submodule=diff",
             "git status --ignore-submodules=none",
             "git ls-files --recurse-submodules",
@@ -636,27 +669,53 @@ mod tests {
     }
 
     #[test]
-    fn finds_git_that_may_reach_another_repository() {
+    fn finds_the_folders_whose_git_settings_apply() {
+        let here = Path::new(HERE);
+        let folders = |command: &str| {
+            hard::git_folders(command, here).map(|folders| {
+                let mut folders: Vec<String> = folders
+                    .iter()
+                    .map(|folder| folder.display().to_string())
+                    .collect();
+                folders.sort();
+                folders
+            })
+        };
+        assert_eq!(folders("ls").unwrap(), [] as [&str; 0]);
+        assert_eq!(folders("git status").unwrap(), [HERE]);
+        assert_eq!(folders("git -C ../other log -p").unwrap(), ["/work/other"]);
+        assert_eq!(
+            folders("git -C a -C b status").unwrap(),
+            ["/work/project/a/b"]
+        );
+        assert_eq!(
+            folders("git --no-pager -C /srv/x diff").unwrap(),
+            ["/srv/x"]
+        );
+        assert_eq!(
+            folders("cd /tmp/other && git diff").unwrap(),
+            ["/tmp/other", HERE]
+        );
+        assert_eq!(
+            folders("pushd vendor/lib; git log -p").unwrap(),
+            [HERE, "/work/project/vendor/lib"]
+        );
+        assert_eq!(folders("echo $(git status)").unwrap(), [HERE]);
         for command in [
-            "cd /tmp/other && git diff",
-            "pushd vendor/lib; git log -p",
             "pushd a; popd; git log -p",
-            "cd sub && make && /usr/bin/git status",
-            "git -C ../other log -p",
+            "cd - && git status",
+            "cd $OTHER && git log -p",
             "git -c diff.x.textconv=sh diff",
             "git --git-dir=/tmp/x/.git log",
-            "cd $OTHER && git log -p",
+            "git --work-tree=/tmp/x status",
+            "git -C $X status",
+            "for d in a b; do cd $d; git status; done",
         ] {
-            assert!(git_elsewhere(command), "elsewhere: {command}");
+            assert!(folders(command).is_none(), "can't tell: {command}");
         }
-        for command in [
-            "git status",
-            "git diff; cd src",
-            "cd src && make",
-            "echo $(git status)",
-        ] {
-            assert!(!git_elsewhere(command), "here: {command}");
-        }
+        assert!(is_read_only("git -C ../other log --oneline -5"));
+        assert!(is_read_only("git --no-pager diff"));
+        assert!(!is_read_only("git -c core.pager=x log"));
     }
 
     #[test]
@@ -883,7 +942,7 @@ mod tests {
             "git config core.hooksPath .hooks",
             "git config --global core.pager less",
             "git config -e",
-            "git -C other commit -m x",
+            "git -c core.pager=x log",
             "for b in a b; do git checkout $b; done",
             // docker that reaches the machine or deletes data.
             "docker run -v /:/host alpine",

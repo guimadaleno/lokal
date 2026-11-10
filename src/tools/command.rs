@@ -79,7 +79,7 @@ fn decide(
     if on_yes
         && judge.is_some()
         && allowlist::uses_git(command)
-        && let Some(warning) = write_warning()
+        && let Some(warning) = write_warning(command)
     {
         eprintln!("  {}", layout::printable(&warning));
         on_yes = false;
@@ -107,30 +107,38 @@ fn decide(
 }
 
 /// git also runs what the repository's own settings name: then even a
-/// read is asked about, on No, whatever was approved before.
+/// read is asked about, on No, whatever was approved before. The settings
+/// are those of every folder git runs in (`allowlist::git_folders`).
 fn git_warning(command: &str) -> Option<String> {
-    if allowlist::git_elsewhere(command) {
-        Some(text::GIT_ELSEWHERE.to_string())
-    } else if allowlist::uses_git(command) {
-        match gitconfig::program_setting() {
+    if !allowlist::uses_git(command) {
+        return None;
+    }
+    let Some(folders) = allowlist::git_folders(command) else {
+        return Some(text::GIT_ELSEWHERE.to_string());
+    };
+    folders
+        .iter()
+        .find_map(|folder| match gitconfig::program_setting(folder) {
             Ok(None) => None,
             Ok(Some(setting)) => Some(text::git_runs_program(&setting)),
             Err(()) => Some(text::GIT_SETTINGS_UNREAD.to_string()),
-        }
-    } else {
-        None
-    }
+        })
 }
 
 /// Why a git command auto would judge is asked instead: a hook or a
 /// program the repository has git run as it writes. None when it has none.
-fn write_warning() -> Option<String> {
-    match gitconfig::write_program() {
-        Ok(None) => None,
-        Ok(Some(WriteProgram::Setting(setting))) => Some(text::git_unusual_setting(&setting)),
-        Ok(Some(WriteProgram::Hook(hook))) => Some(text::git_runs_hook(&hook)),
-        Err(()) => Some(text::GIT_SETTINGS_UNREAD.to_string()),
-    }
+fn write_warning(command: &str) -> Option<String> {
+    let Some(folders) = allowlist::git_folders(command) else {
+        return Some(text::GIT_ELSEWHERE.to_string());
+    };
+    folders
+        .iter()
+        .find_map(|folder| match gitconfig::write_program(folder) {
+            Ok(None) => None,
+            Ok(Some(WriteProgram::Setting(setting))) => Some(text::git_unusual_setting(&setting)),
+            Ok(Some(WriteProgram::Hook(hook))) => Some(text::git_runs_hook(&hook)),
+            Err(()) => Some(text::GIT_SETTINGS_UNREAD.to_string()),
+        })
 }
 
 /// The `$` line a command's step starts with, its later lines indented.

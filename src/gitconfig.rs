@@ -103,21 +103,21 @@ const SWITCHES: &[&str] = &["", "true", "false", "yes", "no", "on", "off", "1", 
 /// Reading settings is quick; a file they include could be one that never ends.
 const READ_TIME: Duration = Duration::from_secs(2);
 
-/// The first setting of the working folder's repository, its own or its
+/// The first setting of the repository at `folder`, its own or its
 /// worktree's, that names a program git runs while reading. The person's
 /// global settings are their own, so they don't count. Err when git
 /// couldn't say, in time or at all: a git before 2.26 can't tell where a
 /// setting comes from.
-pub fn program_setting() -> Result<Option<String>, ()> {
-    repository_setting(PROGRAMS)
+pub fn program_setting(folder: &Path) -> Result<Option<String>, ()> {
+    repository_setting(folder, PROGRAMS)
 }
 
 /// What of the repository's own could have git run a program as it does
 /// more than read: a hook in `.git/hooks`, or a setting beyond the plain
 /// ones. Auto's judge sees only the command, so a git command it would let
 /// through is asked about instead. Err when git couldn't say.
-pub fn write_program() -> Result<Option<WriteProgram>, ()> {
-    let listing = match git(&["config", "--show-scope", "--get-regexp", "."])? {
+pub fn write_program(folder: &Path) -> Result<Option<WriteProgram>, ()> {
+    let listing = match git(folder, &["config", "--show-scope", "--get-regexp", "."])? {
         None | Some((1, _)) => String::new(),
         Some((0, listing)) => listing,
         Some(_) => return Err(()),
@@ -125,7 +125,10 @@ pub fn write_program() -> Result<Option<WriteProgram>, ()> {
     if let Some(setting) = first_beyond_the_plain(&listing) {
         return Ok(Some(WriteProgram::Setting(setting)));
     }
-    let paths = match git(&["rev-parse", "--git-common-dir", "--git-path", "hooks"])? {
+    let paths = match git(
+        folder,
+        &["rev-parse", "--git-common-dir", "--git-path", "hooks"],
+    )? {
         Some((0, paths)) => paths,
         // Without git or outside a repository, there are no hooks.
         _ => return Ok(None),
@@ -138,7 +141,8 @@ pub fn write_program() -> Result<Option<WriteProgram>, ()> {
     if Path::new(common).join("hooks") != Path::new(hooks) {
         return Ok(None);
     }
-    Ok(active_hook(Path::new(hooks)).map(WriteProgram::Hook))
+    // git gives them from the folder it ran in.
+    Ok(active_hook(&folder.join(hooks)).map(WriteProgram::Hook))
 }
 
 pub enum WriteProgram {
@@ -164,9 +168,10 @@ fn active_hook(folder: &Path) -> Option<String> {
     hooks.into_iter().next()
 }
 
-/// The first setting matching `pattern` that the repository sets itself.
-fn repository_setting(pattern: &str) -> Result<Option<String>, ()> {
-    match git(&["config", "--show-scope", "--get-regexp", pattern])? {
+/// The first setting matching `pattern` that the repository at `folder`
+/// sets itself.
+fn repository_setting(folder: &Path, pattern: &str) -> Result<Option<String>, ()> {
+    match git(folder, &["config", "--show-scope", "--get-regexp", pattern])? {
         // Without git, a git command runs nothing at all.
         None => Ok(None),
         // Nothing matched.
@@ -176,16 +181,23 @@ fn repository_setting(pattern: &str) -> Result<Option<String>, ()> {
     }
 }
 
-/// What git printed with `args` and the code it ended with; None without
-/// git. Err when it couldn't run or didn't end in time.
-fn git(args: &[&str]) -> Result<Option<(i32, String)>, ()> {
+/// What git printed with `args`, run in `folder`, and the code it ended
+/// with; None without git. Err when it couldn't run or didn't end in time.
+fn git(folder: &Path, args: &[&str]) -> Result<Option<(i32, String)>, ()> {
     // Without git, a git command runs nothing at all.
     let Some(git) = system::program("git") else {
         return Ok(None);
     };
+    // A folder the line makes first (`mkdir x && cd x && git init`) is in the
+    // repository around it, if any.
+    let folder = folder
+        .ancestors()
+        .find(|folder| folder.is_dir())
+        .ok_or(())?;
     let mut command = Command::new(git);
     command
         .args(args)
+        .current_dir(folder)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -371,6 +383,38 @@ mod tests {
         assert_eq!(active_hook(&folder), None);
         file("post-merge", 0o755);
         assert_eq!(active_hook(&folder).as_deref(), Some("post-merge"));
+        fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn reads_the_settings_of_the_folder_git_runs_in() {
+        if system::program("git").is_none() {
+            return;
+        }
+        let folder = std::env::temp_dir().join(format!("lokal-gitconfig-{}", std::process::id()));
+        fs::create_dir_all(&folder).unwrap();
+        let run = |args: &[&str]| {
+            Command::new("git")
+                .args(args)
+                .current_dir(&folder)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+        };
+        assert!(run(&["init", "-q"]).success());
+        assert_eq!(program_setting(&folder), Ok(None));
+        assert!(run(&["config", "diff.x.textconv", "cat"]).success());
+        assert_eq!(
+            program_setting(&folder).unwrap().as_deref(),
+            Some("diff.x.textconv")
+        );
+        // A folder the line has yet to make is in the repository around it.
+        let made_later = folder.join("new/sub");
+        assert_eq!(
+            program_setting(&made_later).unwrap().as_deref(),
+            Some("diff.x.textconv")
+        );
         fs::remove_dir_all(&folder).unwrap();
     }
 }

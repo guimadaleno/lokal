@@ -33,8 +33,8 @@ of MCP servers the person sets up. One binary, few dependencies.
       Enter.
     - **Lokal's floor never reaches it:** the hard core, whose question
       opens on No (`allowlist::opens_on_yes`, below), or git with a
-      repository setting that runs a program or after a `cd`, asks as
-      always. Read-only commands and "don't ask again" approvals run as
+      repository setting that runs a program or after a `cd` Lokal can't
+      follow, asks as always. Read-only commands and "don't ask again" approvals run as
       they do in every mode.
     - **Nor git's hooks:** the judge sees the command, never what the
       repository has git run as it writes. So a git command it would judge
@@ -78,11 +78,16 @@ of MCP servers the person sets up. One binary, few dependencies.
     repository's settings, not the person's global ones, name none of them
     (`src/gitconfig.rs`). Otherwise it's asked, on No, with the setting
     named, whatever was approved before.
-    - **Lokal reads only the working folder's settings,** so git after a
-      `cd`, `pushd` or `popd` in the same line, or with options before its command
-      (`-C`, `-c`, `--git-dir`), is asked the same way
-      (`allowlist::git_elsewhere`): it may reach another repository, a
-      submodule included, or settings of the command's own.
+    - **Lokal reads the settings of every folder git runs in**
+      (`allowlist::git_folders`): the working folder, and any a `cd`,
+      `pushd` or `-C` with its folder written out reaches, from every place
+      the line may be, since a `cd` that fails stays where it was. A folder
+      the line has yet to make counts as the repository around it.
+    - **git where Lokal can't tell is asked the same way:** after a `cd` it
+      can't follow (`cd -`, `popd`, a variable), or with an option that
+      brings settings of its own (`-c`, `--git-dir`, `--work-tree`). It may
+      reach a repository Lokal didn't read, or settings of the command's
+      own.
   - **What runs unasked gets fsmonitor off and stays out of submodules**
     (`gitconfig::UNASKED`, through `GIT_CONFIG_PARAMETERS`), since a
     submodule's settings are its own and Lokal doesn't read them. So an
