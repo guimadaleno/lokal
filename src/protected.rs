@@ -54,17 +54,70 @@ pub fn is_protected(path: &Path) -> bool {
     let bare_hooks = parts
         .windows(2)
         .any(|pair| pair[0].ends_with(".git") && pair[1] == "hooks");
-    let home = config::resolved(&config::home());
-    let in_home = path.strip_prefix(&home).ok();
-    let home_settings = in_home
-        .and_then(|inside| inside.iter().next())
-        .is_some_and(|first| {
-            first.as_encoded_bytes().starts_with(b".") || first == OsStr::new("bin")
-        });
+    // Right in a home folder, Linux's or a Windows profile, a hidden name
+    // is the person's settings (`~/.bashrc`, `.wslconfig`).
+    let home_settings = path.ancestors().skip(1).any(|folder| {
+        is_home(folder)
+            && path
+                .strip_prefix(folder)
+                .ok()
+                .and_then(|inside| inside.iter().next())
+                .is_some_and(|first| {
+                    first.as_encoded_bytes().starts_with(b".")
+                        || (first == OsStr::new("bin") && folder == home())
+                })
+    });
     let on_path = path
         .parent()
         .is_some_and(|folder| path_folders().iter().any(|entry| entry == folder));
     listed || bare_hooks || home_settings || on_path
+}
+
+/// Whether `folder` is a home folder, where any name right inside may be
+/// the person's settings: Linux's, or a Windows profile under WSL
+/// (`/mnt/c/Users/<name>`).
+pub fn holds_settings(folder: &Path) -> bool {
+    is_home(&config::resolved(folder))
+}
+
+/// `holds_settings` for a folder already resolved.
+fn is_home(folder: &Path) -> bool {
+    let parts: Vec<String> = folder
+        .iter()
+        .map(|part| part.to_string_lossy().to_lowercase())
+        .collect();
+    folder == home()
+        || matches!(
+            parts
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .as_slice(),
+            ["/", "mnt", _, "users", _]
+        )
+}
+
+/// The home folder, resolved once a session.
+fn home() -> &'static Path {
+    static HOME: OnceLock<PathBuf> = OnceLock::new();
+    HOME.get_or_init(|| config::resolved(&config::home()))
+}
+
+/// The protected names a glob could stand for, in lowercase: each entry's
+/// last part, and a hidden first one (`.git`, `.github`).
+pub fn names() -> impl Iterator<Item = &'static str> {
+    PROTECTED.iter().chain(NOTES).chain(MORE).flat_map(|entry| {
+        let parts: Vec<&str> = entry.split('/').collect();
+        let first = parts
+            .first()
+            .filter(|first| first.starts_with('.') && parts.len() > 1);
+        parts
+            .last()
+            .into_iter()
+            .chain(first)
+            .copied()
+            .collect::<Vec<_>>()
+    })
 }
 
 /// The PATH's absolute folders, resolved once a session: under WSL it
@@ -110,6 +163,7 @@ mod tests {
             "/mnt/c/Users/ana/Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1",
             "/mnt/c/Users/ana/Documents/PowerShell/Microsoft.PowerShell_profile.ps1",
             "/mnt/c/Users/ana/.SSH/authorized_keys",
+            "/mnt/c/Users/ana/.wslconfig",
             "/usr/bin/ls",
         ] {
             assert!(is_protected(Path::new(path)), "{path}");

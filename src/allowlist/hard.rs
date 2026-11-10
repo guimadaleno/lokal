@@ -3,13 +3,16 @@
 //! that leave the machine, or that change what runs later; everything else
 //! opens on Yes. A line Lokal can't read whole is read roughly
 //! (`rough_programs`), and a program in it that Lokal can't name, or whose
-//! paths it can't place, counts as the hard core.
+//! paths it can't place, counts as the hard core. It's Lokal's best
+//! effort at reading bash, never complete: auto's judge stands behind it,
+//! and #2's box is what will bound it.
 
 use std::env;
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use super::{Output, Program, git_command, glob_may_write, split, uses_any};
-use crate::protected::is_protected;
+use crate::protected::{self, is_protected};
 use crate::{config, gitconfig};
 
 /// Root, and other machines.
@@ -209,7 +212,9 @@ const RUN_LATER: &[&str] = &[
     ".wgetrc",
     ".npmrc",
     ".config/autostart",
-    "systemd/",
+    ".config/systemd",
+    "/etc/systemd",
+    ".wslconfig",
     "/etc/cron",
     "/var/spool/cron",
     ".local/bin",
@@ -219,51 +224,70 @@ const RUN_LATER: &[&str] = &[
     "/dev/udp/",
 ];
 
+/// git's own variables that bring nothing to run or read.
+const GIT_PLAIN_VARIABLES: &[&str] = &[
+    "GIT_TERMINAL_PROMPT",
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
+    "GIT_AUTHOR_DATE",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL",
+    "GIT_COMMITTER_DATE",
+    "GIT_OPTIONAL_LOCKS",
+    "GIT_MERGE_AUTOEDIT",
+    "GIT_FLUSH",
+];
+/// git's variables that name a program, and the programs they may name
+/// without running anything of the project's.
+const GIT_PROGRAM_VARIABLES: &[&str] = &["GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR"];
+const PLAIN_PROGRAMS: &[&str] = &["cat", "true", ":", "less", "more"];
+
 /// Whether `command`, run from the folder `here` (the shell's own, which
 /// may be reached through a link), is the hard core. A delete, a move or a
 /// `>` that empties a file is let through only when what it touches lands
 /// in one of `folders`, and nothing may be written where programs run
 /// later.
 pub(super) fn is_hard(command: &str, here: &Path, folders: &[PathBuf]) -> bool {
-    if names_a_place_that_runs_later(command)
-        || sets_git_from_the_environment(command)
-        // ANSI-C quoting spells any name: `$'\x72m'` is rm.
-        || command.contains("$'")
-    {
+    // A here-document fed to anything but a shell or an interpreter is
+    // data: a commit message, a README.
+    let text = without_heredocs(command);
+    if sets_git_from_the_environment(&text) {
         return true;
     }
-    let (programs, whole) = read(command);
-    let named = |list: &[&str]| {
-        programs
+    let (programs, whole) = read(&text);
+    if names_a_place_that_runs_later(&programs, whole) {
+        return true;
+    }
+    // A download, also behind a wrapper (`command curl`).
+    let fetches = programs.iter().any(|program| {
+        command_of(&program.words)
             .iter()
-            .any(|program| list.contains(&name_of(program)))
-    };
-    if named(&["curl", "wget"]) && runs_a_download(command) {
+            .any(|word| matches!(base_name(word), "curl" | "wget"))
+    });
+    if fetches && runs_a_download(&text) {
         return true;
     }
-    let mut places = starting_places(command, &programs, here, whole);
-    if !whole {
-        let outputs = rough_outputs(command);
-        if outputs
+    if enters_a_protected_place(&programs, here) {
+        return true;
+    }
+    let mut places = starting_places(&text, &programs, here, whole);
+    if !whole
+        && rough_outputs(&text)
             .iter()
             .any(|output| output_is_hard(output, places.as_deref(), folders))
-        {
-            return true;
-        }
+    {
+        return true;
     }
     programs.iter().any(|program| {
         let hard = program
             .outputs
             .iter()
             .any(|output| output_is_hard(output, places.as_deref(), folders))
-            || program_is_hard(program, places.as_deref(), folders, whole);
+            || program_is_hard(program, places.as_deref(), folders);
         if whole {
             places = moved(program, places.take());
         }
-        // A `cd` into where programs run later, as `cd ~/.config`.
-        hard || places
-            .as_deref()
-            .is_some_and(|places| places.iter().any(|place| is_protected(place)))
+        hard
     })
 }
 
@@ -276,29 +300,81 @@ fn read(command: &str) -> (Vec<Program>, bool) {
     }
 }
 
+/// Whether a `cd` in the line goes into a protected place, as `cd
+/// ~/.config` before a write there. Going further into the working folder
+/// counts only when that isn't one itself: a project kept in `~/.dotfiles`
+/// is still worked on.
+fn enters_a_protected_place(programs: &[Program], here: &Path) -> bool {
+    let reached = programs
+        .iter()
+        .try_fold(vec![here.to_path_buf()], |places, program| {
+            moved(program, Some(places))
+        });
+    let here_resolved = config::resolved(here);
+    let here_protected = is_protected(here);
+    reached.unwrap_or_default().iter().any(|place| {
+        let resolved = config::resolved(place);
+        resolved != here_resolved
+            && is_protected(place)
+            && !(here_protected && resolved.starts_with(&here_resolved))
+    })
+}
+
 /// Where a line's programs may run from, as bash keeps it: `here`, and in a
 /// line read roughly every place any `cd` in it reaches, since its order
 /// isn't sure (a function, a loop). None when that can't be told: a link
-/// made in the line could take a path anywhere, and `CDPATH` or
-/// `cdable_vars` send a `cd` where its words don't say.
+/// made in the line that a later path goes through, `set -P`, which makes
+/// `cd` follow links, and `CDPATH` or `cdable_vars`, which send a `cd`
+/// where its words don't say.
 fn starting_places(
-    command: &str,
+    text: &str,
     programs: &[Program],
     here: &Path,
     whole: bool,
 ) -> Option<Vec<PathBuf>> {
-    let unseen = ["CDPATH", "cdable_vars", "shopt"]
+    let unseen = ["CDPATH", "cdable_vars"]
         .iter()
-        .any(|word| command.contains(word))
-        || programs.iter().any(|program| name_of(program) == "ln");
+        .any(|word| text.contains(word))
+        || programs.iter().any(sets_physical)
+        || uses_a_link_it_makes(programs);
     let places = (!unseen).then(|| vec![here.to_path_buf()]);
     if whole {
         places
     } else {
         programs
             .iter()
-            .fold(places, |places, program| moved(program, places))
+            .try_fold(places?, |places, program| moved(program, Some(places)))
     }
+}
+
+/// `set -P` or `set -o physical`: bash's `cd` then follows links.
+fn sets_physical(program: &Program) -> bool {
+    let words = command_of(&program.words);
+    words.first().is_some_and(|name| name == "set")
+        && words[1..].iter().any(|arg| {
+            arg == "physical"
+                || (arg.starts_with('-') && !arg.starts_with("--") && arg.contains('P'))
+        })
+}
+
+/// Whether a link `ln` makes in the line is a path another program in it
+/// goes through: `ln -s ~ h && rm -rf h/*` deletes the home folder's files.
+fn uses_a_link_it_makes(programs: &[Program]) -> bool {
+    let links: Vec<String> = programs
+        .iter()
+        .filter(|program| name_of(program) == "ln")
+        .flat_map(|program| destinations(&command_of(&program.words)[1..], None))
+        .collect();
+    !links.is_empty()
+        && programs
+            .iter()
+            .filter(|program| name_of(program) != "ln")
+            .flat_map(|program| command_of(&program.words).iter().skip(1))
+            .any(|word| {
+                links.iter().any(|link| {
+                    word == link || word.starts_with(&format!("{}/", link.trim_end_matches('/')))
+                })
+            })
 }
 
 /// An output that may not go where it goes: into a protected place, or
@@ -312,14 +388,13 @@ fn program_is_hard(
     whole_program: &Program,
     places: Option<&[PathBuf]>,
     folders: &[PathBuf],
-    whole: bool,
 ) -> bool {
     let Some((program, args)) = command_of(&whole_program.words).split_first() else {
         return false;
     };
-    // Read roughly, a program named by a variable or a substitution can be
-    // anything: `$X -rf ~`, `$(echo rm) -rf ~` leaves `-rf` in its place.
-    if !whole && (program.contains(['$', '`']) || program.starts_with('-')) {
+    // A program named by a variable or a substitution can be anything:
+    // `$X -rf ~`, `$(echo rm) -rf ~`, `$'\x72m' -rf ~`.
+    if program.contains(['$', '`']) {
         return true;
     }
     let name = base_name(program);
@@ -337,7 +412,7 @@ fn program_is_hard(
     let words = words_of(args);
     // Under WSL, a Windows program is out of every Linux rule's reach.
     if (lower.ends_with(".exe") || name == "pwsh")
-        && (names_the_hard_core(&words)
+        && (names_the_hard_core(&words, false)
             || words
                 .iter()
                 .any(|word| WINDOWS_HARD.contains(&word.to_lowercase().as_str())))
@@ -347,8 +422,19 @@ fn program_is_hard(
     // `command -v x` only looks a name up.
     let looks_up =
         name == "command" && matches!(args.first().map(String::as_str), Some("-v" | "-V"));
-    if PASSING_ON.contains(&name) && !looks_up && names_the_hard_core(&words) {
-        return true;
+    if PASSING_ON.contains(&name) && !looks_up {
+        // ANSI-C quoting spells any name: `bash -c $'r\x6d -rf ~'`.
+        if args.iter().any(|arg| arg.contains("$'")) {
+            return true;
+        }
+        // What find runs on what it finds in the folders may delete there.
+        let placed = name == "find"
+            && find_starts(args)
+                .iter()
+                .all(|start| lands_within(start, places, folders));
+        if names_the_hard_core(&words, placed) {
+            return true;
+        }
     }
     match name {
         "curl" => sends_with_curl(args),
@@ -362,8 +448,12 @@ fn program_is_hard(
                 .any(|arg| !arg.starts_with('-') && is_remote(arg))
         }
         "find" => find_is_hard(args, places, folders),
+        "tar" => {
+            extracts_outside(args, &["-C", "--directory"], places, folders) && tar_extracts(args)
+        }
+        "unzip" => extracts_outside(args, &["-d"], places, folders),
         "openssl" => uses_any(args, &["s_client", "s_server"]),
-        "gh" => !gh_only_reads(args),
+        "gh" => !gh_only_reads(args) || clones_with_settings(args),
         "git" => git_is_hard(args, places),
         "docker" | "podman" => uses_any(args, DOCKER_HARD),
         name if PUBLISHERS.contains(&name) => uses_any(args, PUBLISHING),
@@ -387,8 +477,12 @@ fn writes_where_it_may_not(
         return true;
     }
     let (written, overwrites): (Vec<String>, bool) = match name {
-        "mv" | "cp" | "install" => (destinations(args), name != "mv"),
-        "ln" => (destinations(args), uses_any(args, &["-f", "--force"])),
+        "mv" | "cp" | "install" => (destinations(args, places), name != "mv"),
+        "ln" => (
+            destinations(args, places),
+            uses_any(args, &["-f", "--force"]),
+        ),
+        "rsync" => (rsync_destinations(args, places), true),
         "tee" => (
             paths(args).map(str::to_string).collect(),
             !uses_any(args, &["-a", "--append"]),
@@ -398,10 +492,7 @@ fn writes_where_it_may_not(
         }
         "curl" => (values_of(args, &["-o", "--output"]), true),
         "wget" => (values_of(args, &["-O", "--output-document"]), true),
-        "rsync" => (
-            paths(args).last().map(str::to_string).into_iter().collect(),
-            true,
-        ),
+        "sort" => (values_of(args, &["-o", "--output"]), true),
         "touch" | "mkdir" | "chmod" | "chown" | "truncate" => {
             (paths(args).map(str::to_string).collect(), false)
         }
@@ -413,11 +504,10 @@ fn writes_where_it_may_not(
 }
 
 /// Where cp, mv, ln or install write: the folder `-t` names, or the last
-/// path, and each source's name inside it, in case it's a folder.
-fn destinations(args: &[String]) -> Vec<String> {
+/// path, and in it each source's name, a glob's as it matches now.
+fn destinations(args: &[String], places: Option<&[PathBuf]>) -> Vec<String> {
     let mut paths: Vec<&str> = paths(args).collect();
-    let target = target_folder(args);
-    let to = match target {
+    let to = match target_folder(args) {
         Some(folder) => {
             paths.retain(|path| *path != folder);
             folder
@@ -428,46 +518,117 @@ fn destinations(args: &[String]) -> Vec<String> {
         },
     };
     let mut written = vec![to.to_string()];
-    written.extend(paths.iter().filter_map(|source| {
-        Path::new(source)
-            .file_name()
-            .map(|name| Path::new(to).join(name).display().to_string())
-    }));
+    for source in paths {
+        written.extend(
+            source_names(source, places)
+                .iter()
+                .map(|name| Path::new(to).join(name).display().to_string()),
+        );
+    }
     written
 }
 
-/// The folder given with `-t`, `-tDIR`, `--target-directory=DIR` or
-/// `--target-directory DIR`.
-fn target_folder(args: &[String]) -> Option<&str> {
-    let mut words = args.iter();
-    while let Some(arg) = words.next() {
-        if let Some(folder) = arg.strip_prefix("--target-directory=") {
-            return Some(folder);
-        }
-        if arg == "--target-directory" || arg == "-t" {
-            return words.next().map(String::as_str);
-        }
-        if let Some(letters) = arg.strip_prefix('-')
-            && !letters.starts_with('-')
-            && let Some(at) = letters.find('t')
-            && at + 1 < letters.len()
-        {
-            return Some(&letters[at + 1..]);
-        }
+/// Where rsync writes on this machine: its last path, and in it each
+/// source's name, or what the source holds when it ends in `/`.
+fn rsync_destinations(args: &[String], places: Option<&[PathBuf]>) -> Vec<String> {
+    let mut paths: Vec<&str> = paths(args).filter(|path| !is_remote(path)).collect();
+    let Some(to) = paths.pop() else {
+        return Vec::new();
+    };
+    let mut written = vec![to.to_string()];
+    for source in paths {
+        let names = if source.ends_with('/') {
+            entries(source, places)
+        } else {
+            source_names(source, places)
+        };
+        written.extend(
+            names
+                .iter()
+                .map(|name| Path::new(to).join(name).display().to_string()),
+        );
     }
-    None
+    written
 }
 
-/// The values given after any of `options`, as `-o file` or `--output=file`.
+/// The names a source gives where it's copied: its own, or for a glob in
+/// its last part, the names that glob matches now.
+fn source_names(source: &str, places: Option<&[PathBuf]>) -> Vec<String> {
+    let path = Path::new(source);
+    let Some(name) = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+    else {
+        return Vec::new();
+    };
+    if !name.contains(['*', '?', '[']) {
+        return vec![name];
+    }
+    let folder = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map_or(".".to_string(), |parent| parent.display().to_string());
+    entries(&folder, places)
+        .into_iter()
+        .filter(|entry| glob_matches(&name, entry))
+        .collect()
+}
+
+/// The names in a folder, from every place it may be read from.
+fn entries(folder: &str, places: Option<&[PathBuf]>) -> Vec<String> {
+    let Some(folder) = expanded(folder) else {
+        return Vec::new();
+    };
+    places
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|place| fs::read_dir(place.join(&folder)).into_iter().flatten())
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect()
+}
+
+/// The folder given with `-t`, `-tDIR`, `-ft DIR`, `--target-directory=DIR`
+/// or `--target-directory DIR`.
+fn target_folder(args: &[String]) -> Option<&str> {
+    values_of_ref(args, &["-t", "--target-directory"])
+        .into_iter()
+        .next()
+}
+
+/// The values given after any of `options`: `-o file`, `-ofile`, `-sSLo
+/// file`, `--output file` or `--output=file`.
 fn values_of(args: &[String], options: &[&str]) -> Vec<String> {
+    values_of_ref(args, options)
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
+fn values_of_ref<'a>(args: &'a [String], options: &[&str]) -> Vec<&'a str> {
     let mut values = Vec::new();
-    let mut words = args.iter();
-    while let Some(arg) = words.next() {
+    let mut at = 0;
+    while let Some(arg) = args.get(at) {
+        at += 1;
         for option in options {
-            if arg == option {
-                values.extend(words.next().cloned());
+            if let Some(letter) = option.strip_prefix('-').filter(|rest| rest.len() == 1) {
+                // A letter in a group: the rest of it, or the next word.
+                if let Some(group) = arg
+                    .strip_prefix('-')
+                    .filter(|group| !group.starts_with('-'))
+                    && let Some(found) = group.find(letter)
+                {
+                    let rest = &group[found + 1..];
+                    if rest.is_empty() {
+                        values.extend(args.get(at).map(String::as_str));
+                    } else {
+                        values.push(rest);
+                    }
+                }
+            } else if arg == option {
+                values.extend(args.get(at).map(String::as_str));
             } else if let Some(value) = arg.strip_prefix(&format!("{option}=")) {
-                values.push(value.to_string());
+                values.push(value);
             }
         }
     }
@@ -500,23 +661,54 @@ fn overwrites_outside(path: &str, places: Option<&[PathBuf]>, folders: &[PathBuf
     })
 }
 
-/// Whether `path`, from any of `places`, is a protected place
-/// (`protected::is_protected`). One made of a variable is checked by its
-/// written name only (`names_a_place_that_runs_later`).
-fn protected_at(path: &str, places: Option<&[PathBuf]>) -> bool {
-    if path.contains(['$', '`']) {
-        return false;
-    }
-    let Some(path) = expanded(path) else {
+/// Whether `word`, from any of `places`, is a protected place
+/// (`protected::is_protected`), or could be once bash settles a variable
+/// or a glob in it: anything right in the home folder or a Windows
+/// profile, or a glob that could be one of the protected names. With no
+/// place known, a relative path is judged by its own names.
+fn protected_at(word: &str, places: Option<&[PathBuf]>) -> bool {
+    let Some(path) = expanded(word) else {
         return false;
     };
-    if path.is_absolute() {
-        return is_protected(&path);
+    let parts: Vec<Component> = path.components().collect();
+    let unsettled = parts.iter().position(|part| {
+        part.as_os_str()
+            .to_string_lossy()
+            .contains(['$', '`', '*', '?', '['])
+    });
+    let known: PathBuf = parts[..unsettled.unwrap_or(parts.len())].iter().collect();
+    let bases: Vec<PathBuf> = match (path.is_absolute(), places) {
+        (true, _) => vec![PathBuf::new()],
+        (false, Some(places)) => places.to_vec(),
+        (false, None) => vec![PathBuf::from("/")],
+    };
+    bases.iter().any(|base| {
+        let known = base.join(&known);
+        is_protected(&known)
+            || unsettled.is_some_and(|at| {
+                let part = parts[at].as_os_str().to_string_lossy().to_lowercase();
+                protected::holds_settings(&known)
+                    || (!part.contains(['$', '`'])
+                        && protected::names().any(|name| glob_matches(&part, &name.to_lowercase())))
+            })
+    })
+}
+
+/// find's starting points: the words before its expression, after the
+/// options about links (`-L`, `-H`, `-P`) and debugging; `.` without any.
+fn find_starts(args: &[String]) -> Vec<&str> {
+    let mut words = args.iter().map(String::as_str).peekable();
+    while let Some(option) =
+        words.next_if(|word| matches!(*word, "-H" | "-L" | "-P" | "-D") || word.starts_with("-O"))
+    {
+        if option == "-D" {
+            words.next();
+        }
     }
-    places
-        .unwrap_or_default()
-        .iter()
-        .any(|place| is_protected(&place.join(&path)))
+    let starts: Vec<&str> = words
+        .take_while(|arg| !arg.starts_with('-') && !matches!(*arg, "(" | "!"))
+        .collect();
+    if starts.is_empty() { vec!["."] } else { starts }
 }
 
 /// find that deletes, runs a program that isn't read-only on what it finds
@@ -525,15 +717,9 @@ fn find_is_hard(args: &[String], places: Option<&[PathBuf]>, folders: &[PathBuf]
     if uses_any(args, &["-delete"]) {
         return true;
     }
-    let starts: Vec<&str> = args
-        .iter()
-        .map(String::as_str)
-        .take_while(|arg| !arg.starts_with('-') && !matches!(*arg, "(" | "!"))
-        .collect();
-    let starts = if starts.is_empty() { vec!["."] } else { starts };
     let lists = values_of(args, &["-fprint", "-fprint0", "-fprintf", "-fls"]);
     (!runs_only_reads(args)
-        && !starts
+        && !find_starts(args)
             .iter()
             .all(|start| lands_within(start, places, folders)))
         || lists
@@ -558,6 +744,35 @@ fn runs_only_reads(args: &[String]) -> bool {
         }
     }
     true
+}
+
+/// tar that extracts, as `-x`, `--extract`, or `x` in its first word.
+fn tar_extracts(args: &[String]) -> bool {
+    uses_any(args, &["-x", "--extract", "--get"])
+        || args
+            .first()
+            .is_some_and(|first| !first.starts_with('-') && first.contains('x'))
+}
+
+/// Whether an archive is unpacked outside the folders: into the folder
+/// `options` name, or where the line is.
+fn extracts_outside(
+    args: &[String],
+    options: &[&str],
+    places: Option<&[PathBuf]>,
+    folders: &[PathBuf],
+) -> bool {
+    let into = values_of(args, options);
+    let into = into.last().map_or(".", String::as_str);
+    !lands_within(into, places, folders)
+}
+
+/// `gh repo clone owner/repo -- -c …`: gh hands what follows `--` to `git
+/// clone`, whose `-c` and `--template` bring hooks along.
+fn clones_with_settings(args: &[String]) -> bool {
+    args.iter()
+        .position(|arg| arg == "--")
+        .is_some_and(|at| uses_any(&args[at + 1..], &["-c", "--config", "--template"]))
 }
 
 /// curl that sends: data, a form, a file, a method, cookies or credentials,
@@ -747,112 +962,6 @@ fn listed(name: &str) -> String {
     }
 }
 
-/// Whether git is among the programs in a line, behind a wrapper (`env`,
-/// `timeout`) included (`allowlist::uses_git`).
-pub(super) fn names_git(command: &str) -> bool {
-    let (programs, _) = read(command);
-    programs.iter().any(|program| {
-        let words = command_of(&program.words);
-        words.first().is_some_and(|name| base_name(name) == "git") || wraps_git(words)
-    })
-}
-
-/// A wrapper with git among its words: git's own options and folder are
-/// then out of reach.
-fn wraps_git(words: &[String]) -> bool {
-    words.split_first().is_some_and(|(name, args)| {
-        WRAPPERS.contains(&base_name(name)) && args.iter().any(|arg| base_name(arg) == "git")
-    })
-}
-
-/// The folders whose settings apply to the git commands in `command`, run
-/// from `here` (`allowlist::git_folders`).
-pub(super) fn git_folders(command: &str, here: &Path) -> Option<Vec<PathBuf>> {
-    let (programs, whole) = read(command);
-    let mut places = starting_places(command, &programs, here, whole);
-    let mut folders = Vec::new();
-    for program in &programs {
-        let words = command_of(&program.words);
-        if wraps_git(words) {
-            return None;
-        }
-        if let Some((name, args)) = words.split_first()
-            && base_name(name) == "git"
-        {
-            let (given, _) = git_command(args)?;
-            for place in places.as_deref()? {
-                let folder = given.iter().try_fold(place.clone(), |folder, given| {
-                    Some(logical(&folder.join(expanded(given)?)))
-                })?;
-                let folder = config::resolved(&folder);
-                if !folders.contains(&folder) {
-                    folders.push(folder);
-                }
-            }
-        }
-        if whole {
-            places = moved(program, places.take());
-        }
-    }
-    Some(folders)
-}
-
-/// Where the line is after `program`, as bash's `cd` takes it: logically,
-/// `..` dropping the last name written rather than going up from where a
-/// link led. A `cd` or `pushd` adds where it goes, and one Lokal can't
-/// follow (`cd -`, `cd -P`, `popd`, a glob, a variable, a name `CDPATH`
-/// may find, or a `cd` behind `builtin`, `command` or `eval`) leaves it
-/// unknown.
-fn moved(program: &Program, places: Option<Vec<PathBuf>>) -> Option<Vec<PathBuf>> {
-    let Some((name, args)) = command_of(&program.words).split_first() else {
-        return places;
-    };
-    let name = base_name(name);
-    let hidden_cd = args
-        .iter()
-        .any(|arg| matches!(base_name(arg), "cd" | "pushd" | "popd"));
-    if matches!(name, "eval" | "source" | ".") || (WRAPPERS.contains(&name) && hidden_cd) {
-        return None;
-    }
-    match name {
-        "cd" | "pushd" => {
-            let mut places = places?;
-            if args
-                .iter()
-                .any(|arg| arg.starts_with('-') && arg != "-" && arg != "-L")
-            {
-                return None;
-            }
-            let targets: Vec<&String> = args.iter().filter(|arg| *arg != "-L").collect();
-            let to = match targets.as_slice() {
-                [] => config::home(),
-                [target]
-                    if *target != "-"
-                        && !target.starts_with('+')
-                        && !target.contains(['*', '?', '[', '$', '`']) =>
-                {
-                    let relative = !target.starts_with(['/', '.', '~']);
-                    if relative && env::var_os("CDPATH").is_some_and(|path| !path.is_empty()) {
-                        return None;
-                    }
-                    expanded(target)?
-                }
-                _ => return None,
-            };
-            let reached: Vec<PathBuf> = places
-                .iter()
-                .map(|place| logical(&place.join(&to)))
-                .collect();
-            places.extend(reached);
-            places.sort();
-            places.dedup();
-            Some(places)
-        }
-        "popd" => None,
-        _ => places,
-    }
-}
-
 /// A path with `.` and `..` taken by their names, as bash's `cd` does,
 /// links left as they are.
 fn logical(path: &Path) -> PathBuf {
@@ -949,31 +1058,25 @@ fn paths(args: &[String]) -> impl Iterator<Item = &str> {
     })
 }
 
-/// Whether a line names a place where programs run later, a PATH folder in
-/// the home folder included, however it's spelled: in any case, with quotes
-/// or backslashes inside, or as a glob in a hidden name (`~/.b?shrc`).
-fn names_a_place_that_runs_later(command: &str) -> bool {
-    let plain: String = command
-        .chars()
-        .filter(|c| !matches!(c, '\'' | '"' | '\\'))
-        .collect::<String>()
-        .to_lowercase();
-    // The hidden names of the list, each a glob in a hidden name could be.
-    let hidden: Vec<&str> = RUN_LATER
-        .iter()
-        .flat_map(|place| place.split('/'))
-        .filter(|part| part.starts_with('.') && part.len() > 1)
-        .collect();
-    let hidden_glob = plain
-        .split(|c: char| c.is_whitespace() || ";|&()<>=".contains(c))
-        .flat_map(|word| word.split('/'))
-        .filter(|part| part.starts_with('.') && part.contains(['*', '?', '[']))
-        .any(|glob| hidden.iter().any(|name| glob_matches(glob, name)));
-    RUN_LATER.iter().any(|place| plain.contains(place))
-        || path_folders_at_home()
-            .iter()
-            .any(|folder| plain.contains(&folder.to_lowercase()))
-        || hidden_glob
+/// The PATH's folders under the home folder, as a line may write them.
+fn path_folders_at_home() -> Vec<String> {
+    let home = config::home();
+    let Some(path) = env::var_os("PATH") else {
+        return Vec::new();
+    };
+    env::split_paths(&path)
+        .filter_map(|folder| {
+            let inside = folder.strip_prefix(&home).ok()?;
+            (!inside.as_os_str().is_empty()).then(|| inside.display().to_string())
+        })
+        .flat_map(|inside| {
+            [
+                format!("{}/{inside}", home.display()),
+                format!("~/{inside}"),
+                format!("$home/{inside}"),
+            ]
+        })
+        .collect()
 }
 
 /// Whether `glob` could be `name`: `*` as any run of characters, `?` and
@@ -997,206 +1100,6 @@ fn glob_matches(glob: &str, name: &str) -> bool {
         }
     }
     from(&glob, &name)
-}
-
-/// Whether a line sets one of git's own variables, which bring settings,
-/// a repository or a program of their own (`GIT_DIR=`, `GIT_CONFIG_COUNT=`,
-/// `GIT_EXTERNAL_DIFF=`).
-fn sets_git_from_the_environment(command: &str) -> bool {
-    command.match_indices("GIT_").any(|(at, _)| {
-        let rest = &command[at + 4..];
-        let name_end = rest
-            .find(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
-            .unwrap_or(rest.len());
-        name_end > 0 && rest[name_end..].starts_with('=')
-    })
-}
-
-/// The PATH's folders under the home folder, as a line may write them.
-fn path_folders_at_home() -> Vec<String> {
-    let home = config::home();
-    let Some(path) = env::var_os("PATH") else {
-        return Vec::new();
-    };
-    env::split_paths(&path)
-        .filter_map(|folder| {
-            let inside = folder.strip_prefix(&home).ok()?;
-            (!inside.as_os_str().is_empty()).then(|| inside.display().to_string())
-        })
-        .flat_map(|inside| {
-            [
-                format!("{}/{inside}", home.display()),
-                format!("~/{inside}"),
-                format!("$home/{inside}"),
-            ]
-        })
-        .collect()
-}
-
-/// Whether any of the hard core's names are among `words`: what a program
-/// passes on to another (a shell's `-c`, xargs, find's `-exec`).
-fn names_the_hard_core(words: &[String]) -> bool {
-    let names: Vec<&str> = words.iter().map(|word| base_name(word)).collect();
-    let named = |list: &[&str]| names.iter().any(|name| list.contains(name));
-    let said = |list: &[&str]| words.iter().any(|word| list.contains(&word.as_str()));
-    let options: Vec<String> = words
-        .iter()
-        .filter(|word| word.starts_with('-') && !word.starts_with("--user-agent"))
-        .cloned()
-        .collect();
-    // What follows a program's name, as its arguments.
-    let after = |name: &str| {
-        names
-            .iter()
-            .position(|named| *named == name)
-            .map(|at| words[at + 1..].to_vec())
-    };
-    [PAST_THE_PERSON, SENDERS, MACHINE, DELETERS]
-        .iter()
-        .any(|list| named(list))
-        || after("gh").is_some_and(|args| !gh_only_reads(&args))
-        || after("rsync").is_some_and(|args| {
-            uses_any(
-                &args,
-                &["--delete", "--remove-source-files", "--remove-sent-files"],
-            ) || args
-                .iter()
-                .any(|arg| !arg.starts_with('-') && is_remote(arg))
-        })
-        || names.iter().any(|name| {
-            let lower = name.to_lowercase();
-            name.starts_with("mkfs") || WINDOWS_PAST_THE_PERSON.contains(&lower.as_str())
-        })
-        || (named(&["git"]) && said(GIT_HARD_WORDS))
-        || (named(&["curl", "wget"])
-            && (uses_any(&options, CURL_SENDING)
-                || uses_any(&options, WGET_SENDING)
-                || words.iter().any(|word| word.starts_with('@'))))
-        || (named(&["docker", "podman"]) && uses_any(&options, DOCKER_HARD))
-        || (named(&["docker", "podman"]) && said(&["prune", "push"]))
-        || said(&["publish", "unpublish", "send-email"])
-        || (named(&["find"]) && said(&["-delete"]))
-}
-
-/// A line Lokal can't read whole, cut into the programs it may hold: at
-/// every mark that could start one (`;`, `|`, `&`, a parenthesis, a
-/// backtick, a line break). A brace's words stay with the program they're
-/// in (`find . {-delete,}`), quotes and backslashes go as bash would take
-/// them (`r''m` is rm), and `$` stays, so a path made of a variable is never
-/// placed and a program named by one is never trusted.
-fn rough_programs(text: &str) -> Vec<Program> {
-    text.split(|c: char| ";|&()`\n\r".contains(c))
-        .filter_map(|part| {
-            let words: Vec<String> = part
-                .split(|c: char| c.is_whitespace() || ",{}".contains(c))
-                .map(|word| {
-                    word.chars()
-                        .filter(|c| !matches!(c, '\'' | '"' | '\\'))
-                        .collect::<String>()
-                })
-                .filter(|word| !word.is_empty())
-                .collect();
-            (!words.is_empty()).then(|| Program {
-                globbed: unquoted_glob(part),
-                words,
-                outputs: Vec::new(),
-            })
-        })
-        .collect()
-}
-
-/// Whether `text` has a `*`, `?` or `[` outside quotes, which bash would
-/// turn into file names.
-fn unquoted_glob(text: &str) -> bool {
-    let mut quote = None;
-    text.chars().any(|c| match (quote, c) {
-        (None, '\'' | '"') => {
-            quote = Some(c);
-            false
-        }
-        (Some(open), c) if c == open => {
-            quote = None;
-            false
-        }
-        (None, '*' | '?' | '[') => true,
-        _ => false,
-    })
-}
-
-/// The outputs in a line read roughly: each `>` and `>>`, with its file as
-/// bash would take it, quotes and backslashes gone. `>&` merges, and `>&3`
-/// or `&>` count as files.
-fn rough_outputs(text: &str) -> Vec<Output> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut outputs = Vec::new();
-    let mut at = 0;
-    while at < chars.len() {
-        if chars[at] != '>' {
-            at += 1;
-            continue;
-        }
-        let adds = chars.get(at + 1) == Some(&'>');
-        let start = at + if adds { 2 } else { 1 };
-        let file: String = chars[start..]
-            .iter()
-            .skip_while(|c| **c == ' ' || **c == '\t' || **c == '|')
-            .take_while(|c| !c.is_whitespace() && !";|&()".contains(**c))
-            .filter(|c| !matches!(c, '\'' | '"' | '\\'))
-            .collect();
-        let merges = chars.get(start) == Some(&'&');
-        if !merges && file != "/dev/null" {
-            outputs.push(Output {
-                file: if file.is_empty() { "$".into() } else { file },
-                empties: !adds,
-            });
-        }
-        at = start;
-    }
-    outputs
-}
-
-/// Whether a line runs what it downloads: piped into a shell or an
-/// interpreter that reads its code from there (`| sh -x`, `| env bash`,
-/// `| python3 -`, but not `| python3 -c '…'`, which reads it as data), or
-/// handed over through a substitution (`sh -c "$( curl …)"`, `bash <(curl …)`).
-fn runs_a_download(text: &str) -> bool {
-    let plain: String = text
-        .chars()
-        .filter(|c| !matches!(c, '\'' | '"' | '\\'))
-        .collect();
-    let piped = plain.split('|').skip(1).any(|after| {
-        // `|&` pipes stderr along.
-        let after = after.strip_prefix('&').unwrap_or(after);
-        let program = after.split([';', '&', '\n', ')']).next().unwrap_or("");
-        let mut words = program
-            .split(|c: char| c.is_whitespace() || c == '(')
-            .filter(|word| !word.is_empty())
-            .skip_while(|word| WRAPPERS.contains(&base_name(word)) || word.contains('='))
-            .peekable();
-        let Some(first) = words.next() else {
-            return false;
-        };
-        let runner = base_name(first);
-        if !RUNNERS.contains(&runner) {
-            return false;
-        }
-        let args: Vec<&str> = words.collect();
-        let inline = args.iter().any(|arg| inline_flags(runner).contains(arg));
-        let script = args.iter().find(|arg| !arg.starts_with('-'));
-        !inline
-            && script.is_none_or(|script| {
-                matches!(*script, "-" | "/dev/stdin") || script.starts_with("/dev/fd/")
-            })
-    });
-    let handed = ["$(", "<(", "`"].iter().any(|start| {
-        plain.match_indices(start).any(|(at, _)| {
-            plain[at + start.len()..]
-                .split(|c: char| c.is_whitespace() || ")`|;".contains(c))
-                .find(|word| !word.is_empty())
-                .is_some_and(|word| matches!(base_name(word), "curl" | "wget"))
-        })
-    });
-    piped || handed
 }
 
 /// The options with which `runner` takes its code from its arguments, so
@@ -1238,6 +1141,608 @@ pub(super) fn base_name(word: &str) -> &str {
     word.rsplit('/').next().unwrap_or(word)
 }
 
+/// Whether git is among the programs in a line, behind a wrapper (`env`,
+/// `timeout`) or a program that runs another (`bash -c`, `find -execdir`)
+/// included (`allowlist::uses_git`).
+pub(super) fn names_git(command: &str) -> bool {
+    let (programs, _) = read(&without_heredocs(command));
+    programs.iter().any(|program| {
+        let words = command_of(&program.words);
+        words.first().is_some_and(|name| base_name(name) == "git") || wraps_git(words)
+    })
+}
+
+/// A program that runs another, with git among its words: git's own
+/// options and folder are then out of reach.
+fn wraps_git(words: &[String]) -> bool {
+    words.split_first().is_some_and(|(name, args)| {
+        let name = base_name(name);
+        (WRAPPERS.contains(&name) || PASSING_ON.contains(&name))
+            && words_of(args).iter().any(|word| base_name(word) == "git")
+    })
+}
+
+/// The folders whose settings apply to the git commands in `command`, run
+/// from `here` (`allowlist::git_folders`).
+pub(super) fn git_folders(command: &str, here: &Path) -> Option<Vec<PathBuf>> {
+    let text = without_heredocs(command);
+    let (programs, whole) = read(&text);
+    let mut places = starting_places(&text, &programs, here, whole);
+    let mut folders = Vec::new();
+    for program in &programs {
+        let words = command_of(&program.words);
+        if wraps_git(words) {
+            return None;
+        }
+        if let Some((name, args)) = words.split_first()
+            && base_name(name) == "git"
+        {
+            let (given, _) = git_command(args)?;
+            for place in places.as_deref()? {
+                let folder = given.iter().try_fold(place.clone(), |folder, given| {
+                    Some(logical(&folder.join(expanded(given)?)))
+                })?;
+                let folder = config::resolved(&folder);
+                if !folders.contains(&folder) {
+                    folders.push(folder);
+                }
+            }
+        }
+        if whole {
+            places = moved(program, places.take());
+        }
+    }
+    Some(folders)
+}
+
+/// Where the line is after `program`, as bash's `cd` takes it: logically,
+/// `..` dropping the last name written rather than going up from where a
+/// link led. A `cd` or `pushd` adds where it goes, and one Lokal can't
+/// follow (`cd -`, `cd -P`, `popd`, a glob, a variable, a name `CDPATH`
+/// may find, or a `cd` behind `builtin`, `command` or `eval`) leaves it
+/// unknown.
+fn moved(program: &Program, places: Option<Vec<PathBuf>>) -> Option<Vec<PathBuf>> {
+    let Some((name, args)) = command_of(&program.words).split_first() else {
+        return places;
+    };
+    let name = base_name(name);
+    let hidden_cd = args
+        .iter()
+        .any(|arg| matches!(base_name(arg), "cd" | "pushd" | "popd"));
+    if matches!(name, "eval" | "source" | ".") || (WRAPPERS.contains(&name) && hidden_cd) {
+        return None;
+    }
+    match name {
+        "cd" | "pushd" => {
+            let mut places = places?;
+            if args
+                .iter()
+                .any(|arg| arg.starts_with('-') && arg != "-" && arg != "-L")
+            {
+                return None;
+            }
+            let targets: Vec<&String> = args.iter().filter(|arg| *arg != "-L").collect();
+            let to = match targets.as_slice() {
+                [] => config::home(),
+                [target]
+                    if *target != "-"
+                        && !target.starts_with('+')
+                        && !target.contains(['*', '?', '[', '$', '`']) =>
+                {
+                    let relative = !target.starts_with(['/', '.', '~']);
+                    if relative && env::var_os("CDPATH").is_some_and(|path| !path.is_empty()) {
+                        return None;
+                    }
+                    expanded(target)?
+                }
+                _ => return None,
+            };
+            let reached: Vec<PathBuf> = places
+                .iter()
+                .map(|place| logical(&place.join(&to)))
+                .collect();
+            places.extend(reached);
+            places.sort();
+            places.dedup();
+            Some(places)
+        }
+        "popd" => None,
+        _ => places,
+    }
+}
+
+/// Whether a line names a place where programs run later, a PATH folder in
+/// the home folder included, however it's spelled: in any case, with quotes
+/// or backslashes inside, or as a glob in a hidden name (`~/.b?shrc`). The
+/// names count as a path's own parts (`~/.ssh/x`, not `user.profile.ts`),
+/// and a commit's message isn't a path.
+fn names_a_place_that_runs_later(programs: &[Program], whole: bool) -> bool {
+    let home_path = path_folders_at_home();
+    let hidden: Vec<&str> = RUN_LATER
+        .iter()
+        .flat_map(|place| place.split('/'))
+        .filter(|part| part.starts_with('.') && part.len() > 1)
+        .collect();
+    programs
+        .iter()
+        .flat_map(|program| {
+            // Every word, a `NAME=value` one's path included.
+            let words = &program.words;
+            let message = whole && is_a_message(command_of(words));
+            words
+                .iter()
+                .enumerate()
+                .filter(move |(at, _)| !(message && *at > 0 && words[at - 1].starts_with("-m")))
+                .map(|(_, word)| word.as_str())
+                .chain(program.outputs.iter().map(|output| output.file.as_str()))
+        })
+        .map(|word| {
+            word.chars()
+                .filter(|c| !matches!(c, '\'' | '"' | '\\'))
+                .collect::<String>()
+                .to_lowercase()
+        })
+        .any(|word| {
+            RUN_LATER.iter().any(|place| names_as_a_path(&word, place))
+                || home_path
+                    .iter()
+                    .any(|folder| names_as_a_path(&word, &folder.to_lowercase()))
+                || word
+                    .split('/')
+                    .filter(|part| part.starts_with('.') && part.contains(['*', '?', '[']))
+                    .any(|glob| hidden.iter().any(|name| glob_matches(glob, name)))
+        })
+}
+
+/// `git commit` or `git tag`, whose `-m` gives words, not a path.
+fn is_a_message(words: &[String]) -> bool {
+    matches!(words, [git, sub, ..] if base_name(git) == "git" && matches!(sub.as_str(), "commit" | "tag"))
+}
+
+/// Whether `place` shows in `word` as whole parts of a path: after its
+/// start, a `/`, `~`, `=` or `:`, and before its end or a `/`.
+fn names_as_a_path(word: &str, place: &str) -> bool {
+    word.match_indices(place).any(|(at, _)| {
+        let before = word[..at].chars().next_back();
+        let after = word[at + place.len()..].chars().next();
+        (place.starts_with('/') || before.is_none_or(|c| matches!(c, '/' | '~' | '=' | ':')))
+            && (place.ends_with('/') || after.is_none_or(|c| c == '/'))
+    })
+}
+
+/// Whether a line sets one of git's own variables that bring settings, a
+/// repository or a program of their own (`GIT_DIR=`, `GIT_CONFIG_COUNT=`,
+/// `GIT_EXTERNAL_DIFF=`). Names and dates, and a pager or an editor that
+/// runs nothing of the project's (`GIT_PAGER=cat`), are fine.
+fn sets_git_from_the_environment(text: &str) -> bool {
+    text.match_indices("GIT_").any(|(at, _)| {
+        let rest = &text[at..];
+        let name_end = rest[4..]
+            .find(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+            .map_or(rest.len(), |end| end + 4);
+        let name = &rest[..name_end];
+        let Some(value) = rest[name_end..].strip_prefix('=') else {
+            return false;
+        };
+        let value: String = value
+            .chars()
+            .take_while(|c| !c.is_whitespace() && !";|&".contains(*c))
+            .filter(|c| !matches!(c, '\'' | '"'))
+            .collect();
+        !(GIT_PLAIN_VARIABLES.contains(&name)
+            || (GIT_PROGRAM_VARIABLES.contains(&name) && PLAIN_PROGRAMS.contains(&value.as_str())))
+    })
+}
+
+/// Whether any of the hard core's names are among `words`: what a program
+/// passes on to another (a shell's `-c`, xargs, find's `-exec`). Deletes
+/// don't count when `placed`: find runs them only on what it finds in the
+/// folders.
+fn names_the_hard_core(words: &[String], placed: bool) -> bool {
+    let names: Vec<&str> = words.iter().map(|word| base_name(word)).collect();
+    let named = |list: &[&str]| names.iter().any(|name| list.contains(name));
+    let said = |list: &[&str]| words.iter().any(|word| list.contains(&word.as_str()));
+    let options: Vec<String> = words
+        .iter()
+        .filter(|word| word.starts_with('-') && !word.starts_with("--user-agent"))
+        .cloned()
+        .collect();
+    // What follows a program's name, as its arguments.
+    let after = |name: &str| {
+        names
+            .iter()
+            .position(|named| *named == name)
+            .map(|at| words[at + 1..].to_vec())
+    };
+    [PAST_THE_PERSON, SENDERS, MACHINE]
+        .iter()
+        .any(|list| named(list))
+        || (!placed && named(DELETERS))
+        || after("gh").is_some_and(|args| !gh_only_reads(&args) || clones_with_settings(&args))
+        || after("rsync").is_some_and(|args| {
+            uses_any(
+                &args,
+                &["--delete", "--remove-source-files", "--remove-sent-files"],
+            ) || args
+                .iter()
+                .any(|arg| !arg.starts_with('-') && is_remote(arg))
+        })
+        || names.iter().any(|name| {
+            let lower = name.to_lowercase();
+            name.starts_with("mkfs") || WINDOWS_PAST_THE_PERSON.contains(&lower.as_str())
+        })
+        || (named(&["git"]) && said(GIT_HARD_WORDS))
+        || (named(&["curl", "wget"])
+            && (uses_any(&options, CURL_SENDING)
+                || uses_any(&options, WGET_SENDING)
+                || words.iter().any(|word| word.starts_with('@'))))
+        || (named(&["docker", "podman"]) && uses_any(&options, DOCKER_HARD))
+        || (named(&["docker", "podman"]) && said(&["prune", "push"]))
+        || said(&["publish", "unpublish", "send-email"])
+        || (named(&["find"]) && said(&["-delete"]))
+}
+
+/// A line without the text of its here-documents, when what reads them
+/// isn't a shell or an interpreter: then it's data, a commit message or a
+/// file's text, and its lines are no programs.
+fn without_heredocs(text: &str) -> String {
+    let mut kept = Vec::new();
+    let mut lines = text.split('\n');
+    while let Some(line) = lines.next() {
+        kept.push(line);
+        let Some(at) = line.find("<<").filter(|at| !line[*at..].starts_with("<<<")) else {
+            continue;
+        };
+        let rest = line[at + 2..].trim_start_matches('-').trim_start();
+        let delimiter: String = rest
+            .chars()
+            .take_while(|c| !c.is_whitespace() && !";|&)<>".contains(*c))
+            .filter(|c| !matches!(c, '\'' | '"' | '\\'))
+            .collect();
+        if delimiter.is_empty() {
+            continue;
+        }
+        // What reads it: the program before `<<`, from the last mark that
+        // starts one.
+        let reader = line[..at]
+            .rsplit(|c: char| ";|&(`".contains(c))
+            .next()
+            .unwrap_or("")
+            .split_whitespace()
+            .find(|word| !is_assignment(word))
+            .map(base_name)
+            .unwrap_or("");
+        let code = RUNNERS.contains(&reader) || matches!(reader, "eval" | "source" | "." | "xargs");
+        if code {
+            continue;
+        }
+        for body in lines.by_ref() {
+            if body.trim() == delimiter {
+                break;
+            }
+        }
+    }
+    kept.join("\n")
+}
+
+/// A line Lokal can't read whole, cut into the programs it may hold, as a
+/// small reader of bash: quotes taken as bash takes them (`r''m` is rm), a
+/// program started at every `;`, `|`, `&`, line break and `(`, and a
+/// substitution's (`$(…)`, a backtick) read as programs of its own, quotes
+/// and all, while the word it's in goes on after it (`curl "…$(date)" -o
+/// out.json`). A word that takes a substitution's output keeps a `$`, so
+/// it's never placed, and one with braces stands for each word bash would
+/// make of it.
+fn rough_programs(text: &str) -> Vec<Program> {
+    let mut reader = Reader {
+        programs: vec![Program::default()],
+        current: 0,
+        word: String::new(),
+        in_word: false,
+    };
+    // What each open substitution or subshell goes back to.
+    let mut outer: Vec<Outer> = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            (Some('\''), '\'') => quote = None,
+            (Some('\''), c) => reader.push(c),
+            (Some('"'), '"') => quote = None,
+            (Some('"'), '\\') => reader.word.extend(chars.next()),
+            (None, '\\') => {
+                reader.in_word = true;
+                reader.word.extend(chars.next());
+            }
+            (None, '\'' | '"') => {
+                reader.in_word = true;
+                // `$'…'` keeps its mark: escapes in it spell any name.
+                if c == '\'' && reader.word.ends_with('$') {
+                    reader.word.push('\'');
+                }
+                quote = Some(c);
+            }
+            (_, '(') if quote.is_none() || reader.word.ends_with('$') => {
+                // A substitution's word goes on after it; a subshell, or a
+                // function's `()`, stands apart.
+                let substitution = reader.word.ends_with(['$', '<', '>']);
+                if !substitution {
+                    reader.end_word();
+                }
+                outer.push(reader.open(false, quote, substitution));
+                quote = None;
+            }
+            (None, ')') if !outer.is_empty() => {
+                if let Some(back) = outer.pop() {
+                    quote = reader.close(back);
+                }
+            }
+            (_, '`') if quote != Some('\'') => {
+                if outer.last().is_some_and(|back| back.backtick) {
+                    if let Some(back) = outer.pop() {
+                        quote = reader.close(back);
+                    }
+                } else {
+                    reader.push('$');
+                    outer.push(reader.open(true, quote, true));
+                    quote = None;
+                }
+            }
+            (Some(_), c) => reader.push(c),
+            (None, ';' | '|' | '&' | '\n' | '\r') => {
+                reader.end_word();
+                reader.next();
+            }
+            (None, c) if c.is_whitespace() => reader.end_word(),
+            (None, '*' | '?' | '[') => {
+                reader.programs[reader.current].globbed = true;
+                reader.push(c);
+            }
+            (None, c) => reader.push(c),
+        }
+    }
+    reader.end_word();
+    reader
+        .programs
+        .into_iter()
+        .filter(|program| !program.words.is_empty())
+        .collect()
+}
+
+/// The programs `rough_programs` has read, the one it's in, and the word
+/// it's reading.
+struct Reader {
+    programs: Vec<Program>,
+    current: usize,
+    word: String,
+    in_word: bool,
+}
+
+impl Reader {
+    fn push(&mut self, c: char) {
+        self.in_word = true;
+        self.word.push(c);
+    }
+
+    fn end_word(&mut self) {
+        if !self.in_word {
+            return;
+        }
+        let word = std::mem::take(&mut self.word);
+        self.in_word = false;
+        // A group's brace stands between programs: `f() { rm x; }`.
+        if word == "{" || word == "}" {
+            self.next();
+        } else {
+            self.programs[self.current]
+                .words
+                .extend(expand_braces(&word));
+        }
+    }
+
+    /// Starts the next program, after a mark that ends one.
+    fn next(&mut self) {
+        if !self.programs[self.current].words.is_empty() {
+            self.programs.push(Program::default());
+            self.current = self.programs.len() - 1;
+        }
+    }
+
+    /// Opens a substitution or a subshell: a program of its own, while
+    /// the word outside, if any, waits for it to close.
+    fn open(&mut self, backtick: bool, quote: Option<char>, substitution: bool) -> Outer {
+        let back = Outer {
+            program: self.current,
+            backtick,
+            quote,
+            word: std::mem::take(&mut self.word),
+            substitution,
+        };
+        self.in_word = false;
+        self.programs.push(Program::default());
+        self.current = self.programs.len() - 1;
+        back
+    }
+
+    /// Closes what `open` opened: after a substitution the outer word goes
+    /// on, with a `$` for what it gives; after a subshell, the next program
+    /// starts. Returns the quotes it was opened in.
+    fn close(&mut self, back: Outer) -> Option<char> {
+        self.end_word();
+        self.current = back.program;
+        if back.substitution {
+            self.word = back.word;
+            self.word.push('$');
+            self.in_word = true;
+        } else {
+            self.next();
+        }
+        back.quote
+    }
+}
+
+/// A substitution or subshell `rough_programs` is inside, and what it goes
+/// back to when it closes.
+struct Outer {
+    program: usize,
+    backtick: bool,
+    quote: Option<char>,
+    word: String,
+    substitution: bool,
+}
+
+/// The words bash makes of one with braces: `.g{i,}t` is `.git` and `.gt`,
+/// `{rm,-rf,~}` is three words. One without a comma in braces is itself.
+fn expand_braces(word: &str) -> Vec<String> {
+    let Some(open) = word.find('{') else {
+        return vec![word.to_string()];
+    };
+    let mut depth = 0;
+    let mut commas = Vec::new();
+    let mut close = None;
+    for (at, c) in word[open..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(open + at);
+                    break;
+                }
+            }
+            ',' if depth == 1 => commas.push(open + at),
+            _ => {}
+        }
+    }
+    let Some(close) = close.filter(|_| !commas.is_empty()) else {
+        return vec![word.to_string()];
+    };
+    let (prefix, suffix) = (&word[..open], &word[close + 1..]);
+    let mut starts = vec![open + 1];
+    starts.extend(commas.iter().map(|comma| comma + 1));
+    let mut ends = commas.clone();
+    ends.push(close);
+    starts
+        .iter()
+        .zip(ends)
+        .flat_map(|(start, end)| expand_braces(&format!("{prefix}{}{suffix}", &word[*start..end])))
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+/// The outputs in a line read roughly: each `>` and `>>` outside quotes,
+/// with its file as bash would take it. `>&` merges, and `>&3` or `&>`
+/// count as files.
+fn rough_outputs(text: &str) -> Vec<Output> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut outputs = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut at = 0;
+    while at < chars.len() {
+        let c = chars[at];
+        match (quote, c) {
+            (Some(open), c) if c == open => quote = None,
+            (None, '\'' | '"') => quote = Some(c),
+            (None, '\\') => at += 1,
+            (None, '>') => {
+                let adds = chars.get(at + 1) == Some(&'>');
+                let start = at + if adds { 2 } else { 1 };
+                let file: String = chars[start..]
+                    .iter()
+                    .skip_while(|c| **c == ' ' || **c == '\t' || **c == '|')
+                    .take_while(|c| !c.is_whitespace() && !";|&()".contains(**c))
+                    .filter(|c| !matches!(c, '\'' | '"' | '\\'))
+                    .collect();
+                let merges = chars.get(start) == Some(&'&');
+                if !merges && file != "/dev/null" {
+                    outputs.push(Output {
+                        file: if file.is_empty() { "$".into() } else { file },
+                        empties: !adds,
+                    });
+                }
+                at = start;
+                continue;
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    outputs
+}
+
+/// Whether a line runs what it downloads: piped into a shell or an
+/// interpreter that reads its code from there (`| sh -x`, `| env bash`,
+/// `| bash -s stable`, `| busybox sh`, `| xargs bash -c`, `| python3 -`,
+/// but not `| python3 -c '…'`, which reads it as data), or handed over
+/// through a substitution to one (`sh -c "$( curl …)"`, `bash <(curl …)`,
+/// `eval "$(curl …)"`). A download that only fills a variable is data.
+fn runs_a_download(text: &str) -> bool {
+    let plain: String = text
+        .chars()
+        .filter(|c| !matches!(c, '\'' | '"' | '\\'))
+        .collect();
+    let piped = plain.split('|').skip(1).any(|after| {
+        // `|&` pipes stderr along.
+        let after = after.strip_prefix('&').unwrap_or(after);
+        let program = after.split([';', '&', '\n', ')']).next().unwrap_or("");
+        let words: Vec<&str> = program
+            .split(|c: char| c.is_whitespace() || c == '(')
+            .filter(|word| !word.is_empty())
+            .collect();
+        let feeds_arguments = words
+            .first()
+            .is_some_and(|first| matches!(base_name(first), "xargs" | "parallel"));
+        let mut words = words
+            .into_iter()
+            .skip_while(|word| {
+                WRAPPERS.contains(&base_name(word))
+                    || word.contains('=')
+                    || (word.starts_with('-') && feeds_arguments)
+                    || base_name(word) == "busybox"
+            })
+            .peekable();
+        let Some(first) = words.next() else {
+            return false;
+        };
+        let runner = base_name(first);
+        if !RUNNERS.contains(&runner) {
+            return false;
+        }
+        let args: Vec<&str> = words.collect();
+        let inline = args.iter().any(|arg| inline_flags(runner).contains(arg));
+        let reads_input = ["$(cat", "`cat", "/dev/stdin"]
+            .iter()
+            .any(|input| after.contains(input));
+        let script = args.iter().find(|arg| !arg.starts_with('-'));
+        feeds_arguments
+            || (args.contains(&"-s") && !inline)
+            || (inline && reads_input)
+            || (!inline
+                && script.is_none_or(|script| {
+                    matches!(*script, "-" | "/dev/stdin") || script.starts_with("/dev/fd/")
+                }))
+    });
+    let handed = ["$(", "<(", "`"].iter().any(|start| {
+        plain.match_indices(start).any(|(at, _)| {
+            let fetches = plain[at + start.len()..]
+                .split(|c: char| c.is_whitespace() || ")`|;".contains(c))
+                .filter(|word| !word.is_empty())
+                .find(|word| !WRAPPERS.contains(&base_name(word)))
+                .is_some_and(|word| matches!(base_name(word), "curl" | "wget"));
+            let before = plain[..at]
+                .rsplit(|c: char| ";|&\n".contains(c))
+                .next()
+                .unwrap_or("");
+            let to_a_runner = before.split_whitespace().any(|word| {
+                RUNNERS.contains(&base_name(word))
+                    || matches!(base_name(word), "eval" | "source" | ".")
+            });
+            fetches && (to_a_runner || before.trim().is_empty())
+        })
+    });
+    piped || handed
+}
+
 /// The program's name, after what only leads into it.
 fn name_of(program: &Program) -> &str {
     command_of(&program.words)
@@ -1247,23 +1752,32 @@ fn name_of(program: &Program) -> &str {
 
 /// A program's own words: without the `NAME=value` ones that set its
 /// environment, and the shell's words that only lead into it (`if`,
-/// `then`, `do`, `!`, `time`). A loop's list, a case's word and the words
-/// that close a block hold no program, so they give none.
+/// `then`, `do`, `!`, `time -p`, `coproc`, `function name`). A loop's list,
+/// a case's word and the words that close a block hold no program, so they
+/// give none.
 fn command_of(words: &[String]) -> &[String] {
     let mut at = 0;
     while let Some(word) = words.get(at) {
         match word.as_str() {
-            "do" | "then" | "else" | "elif" | "if" | "while" | "until" | "!" | "time" | "{" => {
+            "do" | "then" | "else" | "elif" | "if" | "while" | "until" | "!" | "coproc" | "{" => {
                 at += 1;
             }
-            "for" | "select" | "case" | "in" | "done" | "fi" | "esac" | "function" | "}" => {
+            "time" => {
+                at += 1;
+                while words.get(at).is_some_and(|word| word.starts_with('-')) {
+                    at += 1;
+                }
+            }
+            // `function f { …; }`: the name, then the body's first program.
+            "function" => at += 2,
+            "for" | "select" | "case" | "in" | "done" | "fi" | "esac" | "}" => {
                 return &[];
             }
             word if is_assignment(word) => at += 1,
             _ => break,
         }
     }
-    &words[at..]
+    words.get(at..).unwrap_or_default()
 }
 
 fn is_assignment(word: &str) -> bool {

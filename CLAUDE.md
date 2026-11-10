@@ -87,10 +87,12 @@ of MCP servers the person sets up. One binary, few dependencies.
       `PWD` when that's the working folder reached through a link. A folder
       the line has yet to make counts as the repository around it.
     - **git where Lokal can't tell is asked the same way:** after a `cd` it
-      can't follow (`cd -`, `cd -P`, `popd`, a variable, a name `CDPATH` or
-      `cdable_vars` may send elsewhere, a `cd` behind `builtin`, `command`
-      or `eval`, a link made in the line), behind a wrapper (`env git`,
-      `timeout 60 git`), or with an option that brings settings of its own
+      can't follow (`cd -`, `cd -P`, `set -P`, `popd`, a variable, a name
+      `CDPATH` or `cdable_vars` may send elsewhere, a `cd` behind
+      `builtin`, `command` or `eval`, a link the line makes and goes
+      through), behind a program that runs another (`env git`, `timeout 60
+      git`, `bash -c 'git …'`, `find -execdir git`), or with an option that
+      brings settings of its own
       (`-c`, `--git-dir`, `--work-tree`). It may reach a repository Lokal
       didn't read, or settings of the command's own. git's own variables
       (`GIT_DIR=`, `GIT_CONFIG_COUNT=`, `GIT_EXTERNAL_DIFF=`) are the hard
@@ -152,8 +154,10 @@ of MCP servers the person sets up. One binary, few dependencies.
     on No, a slip's cost put on what costs nothing, and a question that
     always opens on No stops being read.
   - **On No, the hard core:** what can't be undone, what leaves the machine,
-    and what changes what runs later. A second session reviewed it for ways
-    around, and what it found is closed (#36).
+    and what changes what runs later. It's Lokal's best effort at reading
+    bash, never complete: a second session went looking for ways around it
+    twice, and what it found is closed (#36), but auto's judge is what
+    stands behind it, and #2's box is what will bound it.
     - Root and other machines (sudo, ssh, `wsl.exe`, Windows' script
       hosts), and sends: curl or wget that send (`--variable` included),
       scp, rsync to a remote, nc, `openssl s_client`, `/dev/tcp`, gh's
@@ -162,10 +166,13 @@ of MCP servers the person sets up. One binary, few dependencies.
       a path, and a new remote, by `git remote` or by `git config
       remote.*.url`, `.push`, `.mirror` or `url.*.insteadOf`.
     - Something downloaded and run: piped into a shell or an interpreter
-      that reads its code there (`| sh -x`, `| env bash`, `| bash
-      /dev/stdin`, but not `| python3 -c`, where it's data), or handed
-      over (`bash <(curl …)`, `sh -c "$( curl …)"`); and `git clone` with
-      `-c` or `--template`, whose hooks run on the clone.
+      that reads its code there (`| sh -x`, `| env bash`, `| bash -s
+      stable`, `| busybox sh`, `| xargs bash -c`, `| bash -c "$(cat)"`,
+      but not `| python3 -c`, where it's data), or handed over to one
+      (`bash <(curl …)`, `sh -c "$(command curl …)"`, `eval "$(curl …)"`);
+      and `git clone` with `-c` or `--template`, by git or after gh's `--`,
+      whose hooks run on the clone. A download that only fills a variable
+      (`v=$(curl …)`) is data.
     - Disks and power (mkfs, dd, shred, shutdown), and crontab.
     - A delete or a move (rm, mv, truncate, a `>` that empties a file) of
       anything Lokal can't place inside the working or scratch folder,
@@ -173,24 +180,33 @@ of MCP servers the person sets up. One binary, few dependencies.
       inside, `.*` may be `..`, a glob with `..` after it climbs out, and
       `mv -t/dir` is read with its folder.
     - An overwrite of a file that exists outside the folders: `cp`,
-      `install`, `ln -f`, `tee`, `sed -i`, `curl -o`, `wget -O`, rsync's
-      last path, and find running anything but a read-only program
-      outside them. A path made of a variable isn't checked as an
-      overwrite: the judge reads it.
+      `install`, `ln -f`, `tee`, `sed -i`, `curl -o`, `wget -O`, `sort
+      -o` (their options read in a group too, as `-sSLo file`), rsync, and
+      for cp and rsync each name a glob or a folder brings, as it matches
+      now; tar or unzip unpacking outside them; and find running anything
+      but a read-only program outside them (`find -L ~`). A path made of a
+      variable isn't checked as an overwrite: the judge reads it.
     - git that throws work away (`reset --hard`, `clean`, `restore`, a
       `checkout` of paths, `switch -f`, `stash drop`, `branch -D`,
       `checkout-index -f`, `read-tree -u`), names a program for later git
       commands (`git config core.pager`, `alias.*`: `gitconfig::is_plain`),
-      or brings settings of its own (`-c`, `GIT_*=`).
+      or brings settings of its own (`-c`, and `GIT_*=` but names, dates
+      and a pager or editor that runs nothing of the project's, as
+      `GIT_PAGER=cat`).
     - docker that reaches the machine or deletes (`-v`, `--privileged`,
-      `rm`, `prune`), and a Windows shell's delete, download-and-run or
-      upload (`ri`, `del`, `robocopy`, `iex`, `-InFile`).
+      `rm`, `prune`), and a Windows shell's delete, write, download-and-run
+      or upload (`ri`, `del`, `robocopy`, `Set-Content`, `iex`, `-InFile`).
     - A line that names where programs run later, keys, or Lokal's own
-      files, however it uses them and however it's spelled (any case,
-      quotes or a backslash inside, a glob that could be one of the
-      names): shell start-up, `~/.ssh`, `.git/hooks`, autostart, systemd,
-      a PATH folder under home. A `cd` into a protected place, an output
-      or a write into one (`cp`, `mv`, `ln`, `touch`, `chmod` included).
+      files, as whole parts of a path in any of its words (an assignment
+      included, a commit's message not), however it uses them and however
+      it's spelled (any case, quotes or a backslash inside, a glob that
+      could be one of the names): shell start-up, `~/.ssh`, `.git/hooks`,
+      autostart, systemd, `.wslconfig`, a PATH folder under home. A `cd`
+      into a protected place, an output or a write into one (`cp`, `mv`,
+      `ln`, `touch`, `chmod` included), or into what a variable or a glob
+      could make one: anything right in a home folder (`~/${f}rc`), or a
+      glob that could be a protected name (`AGENT?.md`, `App*`). With no
+      place known, a relative path is judged by its own names.
     - A glob where a file named like an option could write (`rg x *`,
       `sed -n 1p *`, whose `-e1e cmd` runs one).
     - A file in a protected place (`protected::is_protected`), in any
@@ -199,16 +215,19 @@ of MCP servers the person sets up. One binary, few dependencies.
       the project's notes (LOKAL.md, AGENTS.md), CI (`.github/workflows`,
       `.github/actions`, `.gitlab-ci.yml`), `.cargo/config.toml`,
       `mise.toml`, `.ssh` and `.gnupg`, a bare repository's hooks, the
-      person's settings hidden right in the home folder (`~/.config/…`),
-      `~/bin`, Windows' `AppData` (its Startup folder too) and PowerShell
-      profiles, and a PATH folder. And `remember`, which changes what every
+      person's settings hidden right in a home folder (`~/.config/…`, or a
+      Windows profile's `.wslconfig`), `~/bin`, Windows' `AppData` (its
+      Startup folder too) and PowerShell profiles, and a PATH folder. A
+      project kept in one (`~/.dotfiles`) is worked on with its commands
+      on Yes, and its writes on No. And `remember`, which changes what every
       conversation starts with.
   - **Accepted, and guarded by the judge only:** data written into a GET's
     URL, headers or user agent (`curl "…?q=$(cat .env)"`), until #2's box
     takes the network away; `python3 -m http.server`, which serves the
-    folder to the network, since previewing a site is everyday; and
-    `mv * dir/` with a planted file named `-t..`, which moves files out
-    of the folder, where they can be moved back.
+    folder to the network, since previewing a site is everyday; `mv *
+    dir/` with a planted file named `-t..`, which moves files out of the
+    folder, where they can be moved back; and a download saved, then run
+    in another program of the line (`curl -o i.sh … && bash i.sh`).
   - **On Yes, though Lokal can't see what runs:** a shell or a script,
     xargs, awk, sed, npx, `python -c`, a Windows program, `git push`,
     `commit --amend`, kill, `docker stop`, and a delete or a move inside
@@ -216,17 +235,25 @@ of MCP servers the person sets up. One binary, few dependencies.
     and `.env` included. Enter out of habit runs them; in auto, the judge
     reads them first.
   - **A line Lokal can't read whole** (a variable, a loop, `$(…)`, a
-    here-document) is read roughly (`hard::rough_programs`): cut at every
-    mark that could start a program, quotes and backslashes taken as bash
-    takes them (`r''m` is rm), each program taken as run from every place
-    a `cd` in the line reaches, and the hard core if any is. A program
-    named by a variable or a substitution (`$X -rf`, `$(echo rm) -rf`) is
-    the hard core, and so is `$'…'`, which spells any name. A path made of
-    a variable is never placed, and after a `cd` Lokal can't follow, no
-    place is.
+    here-document) is read roughly (`hard::rough_programs`), by a small
+    reader of bash: quotes and backslashes as bash takes them (`r''m` is
+    rm), a program at every `;`, `|`, `&`, line break, `(` and group
+    brace, braces expanded as bash would (`.g{i,}t` is `.git`), and a
+    substitution read as programs of its own while the word it's in goes
+    on after it (`curl "…$(date)" -o out.json` keeps its `-o`). Each
+    program is taken as run from every place a `cd` in the line reaches,
+    and the line is the hard core if any is.
+    - **A program named by a variable or a substitution** (`$X -rf`,
+      `$(echo rm) -rf`, `$'\x72m'`) is the hard core, and so is `$'…'`
+      handed to a shell. Elsewhere it's a word (`cut -d$'\t'`).
+    - **A here-document's text is data** unless a shell, an interpreter,
+      `eval` or `source` reads it: a commit message or a README's lines are
+      no programs.
+    - **A path made of a variable is never placed,** and after a `cd` Lokal
+      can't follow, no place is.
   - **Shell words that lead into a program** (`if`, `then`, `do`, `!`,
-    `time`) are skipped in either reading, so `if …; then sudo …; fi` is
-    sudo; a loop's list holds no program.
+    `time -p`, `coproc`, `function f`) are skipped in either reading, so
+    `if …; then sudo …; fi` is sudo; a loop's list holds no program.
   - **The rule only picks where the question starts,** never whether there is
     one, except in accept edits and auto, which the person picked (above).
   - **A working folder that holds every file doesn't count**
