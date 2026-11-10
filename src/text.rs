@@ -134,11 +134,10 @@ pub fn mode_name(mode: crate::mode::Mode) -> Option<&'static str> {
 /// Under a diff that went through without a question.
 pub const WRITTEN_UNASKED: &str = "written without asking: edits are accepted";
 
-/// Once a session, when auto is chosen or first acts.
-pub const AUTO_WARNING: &str = "Auto runs commands, and changes files outside the working folder, \
-    without asking when the model, asked apart, says they're fine. It's a local model, and it will \
-    get some wrong: use it at your own risk. Deleting outside the folder, sudo, sending your files \
-    and changing your settings still ask.";
+/// Once a session, as auto is chosen.
+pub const AUTO_WARNING: &str = "Auto lets the model approve its own steps, and it'll get some \
+    wrong: use it at your own risk. Deletes outside the folder, sudo, uploads and your settings \
+    still ask.";
 /// Beside the spinner while the judge decides.
 pub const JUDGING: &str = "auto · asking the model apart";
 /// Under a file change auto made.

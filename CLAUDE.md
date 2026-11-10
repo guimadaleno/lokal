@@ -22,11 +22,14 @@ of MCP servers the person sets up. One binary, few dependencies.
     PATH, which guard only what runs unasked. What it gives goes to the
     model with the person's next request, never with a turn mail starts.
   - **Auto, the last mode on Shift+Tab, is the one place a model decides**
-    (`src/judge.rs`), and the person is told, once a session, that it will
-    get some wrong and is used at their own risk. It's the model, asked
-    apart from the conversation, whether a command that would open on Yes
-    may run without the question, and a file change outside the working
-    and scratch folders be written (below).
+    (`src/judge.rs`), and the person is told, once a session and as they
+    pick it (`mode::show_warning`), that it will get some wrong and is used
+    at their own risk: at the `>`, the line makes way for the warning and
+    comes back under it; while Lokal works, it shows as soon as nothing is
+    mid-line, and before a step it would decide at the latest. It's the
+    model, asked apart from the conversation, whether a command that would
+    open on Yes may run without the question, and a file change outside
+    the working and scratch folders be written (below).
     - **It can only take away:** its yes runs the command or writes the
       file, and its no, or a reply Lokal can't read as yes or no, asks the
       person, on No, with its reason. A judge wrong toward caution costs an

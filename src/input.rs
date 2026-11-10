@@ -111,10 +111,12 @@ struct PasteWatch {
 /// often a slow one is looked at again.
 const EMPTY_PASTE_WAIT: Duration = Duration::from_millis(300);
 
-/// What a reading of the line gave: a line, or an empty paste to act on.
+/// What a reading of the line gave: a line, an empty paste to act on, or
+/// auto chosen for the first time, whose warning shows above the line.
 enum Read {
     Line(Line),
     EmptyPaste(String, usize),
+    AutoChosen(String, usize),
 }
 
 /// What shows after the line until it changes: the line, and the word.
@@ -248,6 +250,19 @@ impl Input {
                         eprint!("\x1b[?25h");
                     }
                 }
+                Read::AutoChosen(line, pos) => {
+                    first = false;
+                    // Lokal ended the line for auto's warning: the line goes
+                    // from the screen, rustyline having left the cursor on
+                    // the row after it, the warning takes its place, and the
+                    // next reading writes the line under it as it was.
+                    if style::enabled() {
+                        eprint!("\x1b[{}A\r\x1b[J", rows(&line));
+                    }
+                    mode::show_warning();
+                    let (left, right) = line.split_at(pos.min(line.len()));
+                    initial = (left.to_string(), right.to_string());
+                }
             }
         }
     }
@@ -296,7 +311,11 @@ impl Input {
             EventHandler::Conditional(Box::new(ctrl_c)),
         );
         let shift_tab = KeyEvent(KeyCode::BackTab, Modifiers::NONE);
-        editor.bind_sequence(shift_tab, EventHandler::Conditional(Box::new(NextMode)));
+        let auto_chosen = Arc::new(Mutex::new(None));
+        let next_mode = NextMode {
+            auto_chosen: auto_chosen.clone(),
+        };
+        editor.bind_sequence(shift_tab, EventHandler::Conditional(Box::new(next_mode)));
         // Ctrl+V, and Alt+V for terminals that keep Ctrl+V for their paste.
         for key in [KeyEvent::ctrl('V'), KeyEvent::alt('v')] {
             let paste = PasteImage {
@@ -345,10 +364,15 @@ impl Input {
         editor.unbind_sequence(KeyEvent::alt('v'));
         // A reminder left over must not show at the next question.
         self.quit_armed.store(false, Ordering::SeqCst);
+        let auto_chosen = auto_chosen.lock().ok().and_then(|mut at| at.take());
         match line {
             Err(ReadlineError::Interrupted) if !woken && empty.is_some() => {
                 let (line, pos) = empty.unwrap_or_default();
                 Read::EmptyPaste(line, pos)
+            }
+            Err(ReadlineError::Interrupted) if !woken && auto_chosen.is_some() => {
+                let (line, pos) = auto_chosen.unwrap_or_default();
+                Read::AutoChosen(line, pos)
             }
             Err(ReadlineError::Interrupted) if woken => {
                 // Mail ended an empty line, which rustyline leaves with the
@@ -776,7 +800,11 @@ fn markers(line: &str) -> Vec<usize> {
 }
 
 /// Shift+Tab at the `>`: the next mode, which shows at the right at once.
-struct NextMode;
+/// Auto, the first time this session, ends the line with what's typed and
+/// where the cursor is, so its warning can show above it.
+struct NextMode {
+    auto_chosen: Arc<Mutex<Option<(String, usize)>>>,
+}
 
 impl ConditionalEventHandler for NextMode {
     fn handle(
@@ -784,9 +812,15 @@ impl ConditionalEventHandler for NextMode {
         _event: &Event,
         _count: RepeatCount,
         _positive: bool,
-        _context: &EventContext,
+        context: &EventContext,
     ) -> Option<Cmd> {
         mode::next();
+        if mode::warning_due()
+            && let Ok(mut at) = self.auto_chosen.lock()
+        {
+            *at = Some((context.line().to_string(), context.pos()));
+            return Some(Cmd::Interrupt);
+        }
         Some(Cmd::Repaint)
     }
 }

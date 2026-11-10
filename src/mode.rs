@@ -4,6 +4,8 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
+use crate::{layout, style, text, tty};
+
 /// Kept in `MODE` as its number, which `current` reads back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -44,10 +46,28 @@ pub fn for_step(on_mail: bool) -> Mode {
     if on_mail { Mode::Manual } else { current() }
 }
 
+/// Auto is on, and its warning hasn't shown this session.
+pub fn warning_due() -> bool {
+    current() == Mode::Auto && !WARNED.load(Ordering::SeqCst)
+}
+
 /// True once a session, the first time it's asked with auto on: auto's
-/// warning shows then, when it's chosen or before it first acts.
+/// warning shows then. Shift+Tab shows it as auto is chosen, at the `>` or
+/// as soon as nothing is mid-line while Lokal works, and a step that auto
+/// would decide shows it first if it hasn't yet.
 pub fn warn_of_auto() -> bool {
     current() == Mode::Auto && !WARNED.swap(true, Ordering::SeqCst)
+}
+
+/// Auto's warning, when it's due, with a blank line after it.
+pub fn show_warning() {
+    if warn_of_auto() {
+        let width = tty::width().unwrap_or(80);
+        for line in layout::indented(text::AUTO_WARNING, 0, width).lines() {
+            eprintln!("{}", style::gray(line));
+        }
+        eprintln!();
+    }
 }
 
 #[cfg(test)]
@@ -66,7 +86,9 @@ mod tests {
         assert_eq!(current(), Mode::Auto);
         assert_eq!(for_step(true), Mode::Manual);
         // The warning, once.
+        assert!(warning_due());
         assert!(warn_of_auto());
+        assert!(!warning_due());
         assert!(!warn_of_auto());
         next();
         assert_eq!(current(), Mode::Manual);

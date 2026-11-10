@@ -21,9 +21,7 @@ use crate::server::{self, Server};
 use crate::spinner::Spinner;
 use crate::system::Facts;
 use crate::tools::{self, Outcome};
-use crate::{
-    config, http, interrupt, judge, keys, layout, mode, prompt, reasoning, style, text, tty,
-};
+use crate::{config, http, interrupt, judge, keys, layout, mode, prompt, reasoning, style, text};
 
 /// The project's notes go along with every request, so they get an eighth
 /// of the context; this much when its size isn't known, an eighth of 32K.
@@ -416,14 +414,6 @@ impl Conversation {
         if self.refresh_notes() {
             eprintln!("{}\n", style::gray(text::NOTES_CHANGED));
         }
-        // Chosen at the `>`, auto's warning shows here, before it acts.
-        if asked.is_some() && mode::warn_of_auto() {
-            let width = tty::width().unwrap_or(80);
-            for line in layout::indented(text::AUTO_WARNING, 0, width).lines() {
-                eprintln!("{}", style::gray(line));
-            }
-            eprintln!();
-        }
     }
 
     /// Adds the request to the conversation, with what the person's own
@@ -490,6 +480,9 @@ impl Conversation {
                 let calls_left = reply.tool_calls.len() - index;
                 let room = self.room_for_output().map(|room| room / calls_left);
                 let scratch = self.facts.scratch.as_deref().map(Path::new);
+                // Auto chosen during the step before: its warning goes
+                // ahead of this one, rather than inside it.
+                mode::show_warning();
                 let mode = mode::for_step(on_mail);
                 let case = judge::Case {
                     server: &self.server,
@@ -602,6 +595,14 @@ impl Conversation {
                     println!();
                 }
                 return Err(Failure::Stopped);
+            }
+            // Auto chosen while the model works: its warning shows now,
+            // above the spinner, unless the answer is mid-line.
+            if !mid_line && mode::warning_due() {
+                spinner.clear();
+                reasoning.clear();
+                mode::show_warning();
+                paused = false;
             }
             let event = request.next(Duration::from_millis(40));
             if matches!(
