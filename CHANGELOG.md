@@ -5,6 +5,16 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.8.1 — 2026-11-10
+
+- While the model writes a file after a sentence of text, the spinner shows
+  again under that text, with the time. With Ollama, which sends the step
+  only once it's written, the screen used to sit still for minutes.
+- Auto's warning shows as you pick auto, once a session, and in fewer
+  words, instead of in the middle of its first step.
+- The mode at the right of the > now says "(Shift+Tab to cycle)" when
+  there's room.
+
 ## 0.8.0 — 2026-11-09
 
 - Far fewer questions start on No. Only what can't be undone, leaves your
