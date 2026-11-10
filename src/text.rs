@@ -60,7 +60,8 @@ A line starting with ! runs the rest as your own command, and what it gives
 goes to the model with your next message.
 Shift+Tab goes from asking for everything to accept edits, where a change to
 a file in the working folder goes through once its diff shows, then to auto,
-where the model, asked apart, also lets everyday commands run.
+where the model, asked apart, also lets commands run and files change
+elsewhere. What can't be undone or leaves your machine always asks.
 Mail from your other Lokal sessions shows above the >. Waiting mail goes to
 the model with Enter on an empty line, and Esc drops it. A line starting
 with @name mails that session.
@@ -134,11 +135,19 @@ pub fn mode_name(mode: crate::mode::Mode) -> Option<&'static str> {
 pub const WRITTEN_UNASKED: &str = "written without asking: edits are accepted";
 
 /// Once a session, when auto is chosen or first acts.
-pub const AUTO_WARNING: &str = "Auto runs everyday commands without asking when the model, asked \
-    apart, says they're fine. It's a local model, and it will get some wrong: use it at your own \
-    risk. Risky commands still ask.";
+pub const AUTO_WARNING: &str = "Auto runs commands, and changes files outside the working folder, \
+    without asking when the model, asked apart, says they're fine. It's a local model, and it will \
+    get some wrong: use it at your own risk. What can't be undone or leaves your machine still asks.";
 /// Beside the spinner while the judge decides.
 pub const JUDGING: &str = "auto · asking the model apart";
+/// Under a file change auto made.
+pub fn judge_wrote(reason: &str) -> String {
+    if reason.is_empty() {
+        "auto wrote it".into()
+    } else {
+        format!("auto wrote it: {reason}")
+    }
+}
 /// Under a command auto ran.
 pub fn judge_ran(reason: &str) -> String {
     if reason.is_empty() {

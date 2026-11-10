@@ -25,10 +25,12 @@ of MCP servers the person sets up. One binary, few dependencies.
     (`src/judge.rs`), and the person is told, once a session, that it will
     get some wrong and is used at their own risk. It's the model, asked
     apart from the conversation, whether a command that would open on Yes
-    may run without the question.
-    - **It can only take away:** its yes runs the command, and its no, or a
-      reply Lokal can't read as yes or no, asks the person, on No, with its
-      reason. A judge wrong toward caution costs an Enter.
+    may run without the question, and a file change outside the working
+    and scratch folders be written (below).
+    - **It can only take away:** its yes runs the command or writes the
+      file, and its no, or a reply Lokal can't read as yes or no, asks the
+      person, on No, with its reason. A judge wrong toward caution costs an
+      Enter.
     - **Lokal's floor never reaches it:** the hard core, whose question
       opens on No (`allowlist::opens_on_yes`, below), or git with a
       repository setting that runs a program or after a `cd`, asks as
@@ -45,8 +47,10 @@ of MCP servers the person sets up. One binary, few dependencies.
       list of what can. The person's own global settings and hooks don't
       count.
     - **What it reads is the person's or Lokal's own:** the person's last
-      three requests as they typed them, the command, the working and
-      scratch folders and the files written this turn. The paths, the
+      three requests as they typed them, the command, or a file change's
+      path and whether it creates the file, replaces all of it or a part,
+      never its content; the working and scratch folders and the files
+      written this turn. The paths, the
       model's words, come as one short line each. Never the outputs or the
       files the model read, where text that steers a model comes from, nor
       the model's explanation, which shows to the person: a steered model
@@ -57,9 +61,10 @@ of MCP servers the person sets up. One binary, few dependencies.
       the requests. A prompt by purposes ("stays inside the project") said
       no to 6 of 28 harmless steps on the person's Ollama; this one was
       right on 33 of 33, steering in the command included.
-    - **What it lets through shows,** the `$` line and a faint "auto ran
-      it" with its reason, and runs as anything else no one said yes to
-      (`gitconfig::UNASKED`, the PATH's absolute folders).
+    - **What it lets through shows,** the `$` line or the diff, and a faint
+      "auto ran it" or "auto wrote it" with its reason. A command runs as
+      anything else no one said yes to (`gitconfig::UNASKED`, the PATH's
+      absolute folders).
     - **The model's own code still runs as the person:** a script it wrote
       (accepted as an edit) and then ran with `cargo test` or `python` is a
       command the judge sees, not what the script does. Only #2's box
@@ -103,12 +108,16 @@ of MCP servers the person sets up. One binary, few dependencies.
     the files keep the bytes as they are.
   - **Accept edits is the one exception, and the person picks it** with
     Shift+Tab (`src/mode.rs`), at the `>` or while Lokal works, from the
-    next step on, and auto after it includes it. Then a change whose
-    question would open on Yes (`files::write_opens_on_yes`) is written once
-    its diff shows, with a faint line saying so, since that rule already
-    calls it day to day.
-    - **Everything else asks as always:** a file outside the working and
-      scratch folders, anything hidden on the way, and `remember`.
+    next step on, and auto after it includes it. Then a change in the
+    working or scratch folder, with nothing hidden on the way and in no
+    protected place (`files::asking`), is written once its diff shows, with
+    a faint line saying so.
+    - **Auto adds the judge for the rest** (#36): a change anywhere else
+      that isn't protected, a working folder of `~` and the Windows desktop
+      under `/mnt/c` included, is written once the judge says yes. It reads
+      the path, never the content.
+    - **Everything else asks as always:** a protected place
+      (`files::is_protected`), on No, and `remember`.
     - **A turn mail started stays manual,** since another model wrote that
       mail, and it may have been steered.
     - **Every session starts on manual,** with no setting to start
@@ -121,7 +130,7 @@ of MCP servers the person sets up. One binary, few dependencies.
       applies there.
 - **Approve on a guess where a slip costs much.** A question opens on No
   only for the hard core, by Lokal's own rule (`allowlist::opens_on_yes`,
-  `src/allowlist/hard.rs`, `files::write_opens_on_yes`), never the model's
+  `src/allowlist/hard.rs`, `files::asking`), never the model's
   judgement. Everything else opens on Yes, so Enter alone approves, and in
   the modes the person picks on Shift+Tab (above) it may need no Enter at
   all. Esc is always No, and a key or a number only moves to its option,
@@ -154,13 +163,18 @@ of MCP servers the person sets up. One binary, few dependencies.
       files, however it uses them: shell start-up, `~/.ssh`, `.git/hooks`,
       autostart, systemd, a PATH folder under home.
     - A glob where a file named like an option could write (`rg x *`).
-    - A file outside the working and scratch folders, or in a hidden file
-      or folder on the way (.git, .env, CI); and `remember`, which changes
-      what every conversation starts with.
+    - A file in a protected place (`files::is_protected`): what programs
+      run or read as they start, the box's own list (`sandbox::PROTECTED`:
+      `.git`, shell start-up, `.vscode`, `.npmrc`…), the project's notes
+      (LOKAL.md, AGENTS.md), CI's workflows, `.ssh` and `.gnupg`, the
+      person's settings hidden right in the home folder (`~/.config/…`),
+      and a PATH folder. And `remember`, which changes what every
+      conversation starts with.
   - **On Yes, though Lokal can't see what runs:** a shell or a script,
     xargs, awk, sed, npx, `python -c`, a Windows program, `git push`,
     `commit --amend`, kill, `docker stop`, and a delete or a move inside
-    the working folder. Enter out of habit runs them; in auto, the judge
+    the working folder; a file anywhere that isn't protected, `.gitignore`
+    and `.env` included. Enter out of habit runs them; in auto, the judge
     reads them first.
   - **A line Lokal can't read whole** (a variable, a loop, `$(…)`, a
     here-document) is read roughly (`hard::rough_programs`): cut at every
@@ -169,10 +183,10 @@ of MCP servers the person sets up. One binary, few dependencies.
     made of a variable is never placed, and after a `cd` Lokal can't follow,
     no place is.
   - **The rule only picks where the question starts,** never whether there is
-    one, except for a file change in accept edits, which the person picked
-    (above).
+    one, except in accept edits and auto, which the person picked (above).
   - **A working folder that is the home folder or / doesn't count:** it would
-    hold every file, so there a delete or a move opens on No.
+    hold every file, so there a delete or a move opens on No, and a file
+    change isn't accepted unasked: in auto, the judge decides it.
 - **Approve more than the person saw.** "Don't ask again" covers that exact
   command text, for the session or for the project.
   - **A pattern like `docker *` would let in commands nobody saw**
@@ -411,7 +425,7 @@ of MCP servers the person sets up. One binary, few dependencies.
 | `server.rs`, `http.rs` | Finding the server and its model; plain-HTTP requests |
 | `tools.rs`, `shell.rs`, `diff.rs` | The model's tools, running a command, showing a change |
 | `tools/command.rs` | run_command and the person's `!` commands: who decides, what the model hears |
-| `tools/files.rs` | read_file, write_file and edit_file, and where a change may open on Yes |
+| `tools/files.rs` | read_file, write_file and edit_file, and how a change asks: protected places, accepted edits, auto's judge |
 | `image.rs` | What an image is to the model: its kind and size from its first bytes, its data URL, what it takes of the context |
 | `tools/remember.rs` | remember: a line added to user.md, or one swapped for it |
 | `tools/mcp.rs` | A call to an MCP server's tool: shown, asked, and what it gave as an output |

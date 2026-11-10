@@ -9,10 +9,10 @@ use serde_json::{Value, json};
 
 use crate::chat::ToolCall;
 use crate::input::{Approval, Input};
-use crate::judge;
+use crate::judge::{self, Verdict};
 use crate::mode::Mode;
 use crate::peers::{self, Peers};
-use crate::{config, diff, layout, style, text};
+use crate::{config, diff, layout, mode, style, text, tty};
 use files::FILE_LIMIT;
 
 mod command;
@@ -179,8 +179,8 @@ pub fn run(
                 command::run_command(&args, input, room, judge, &everyday_folders(scratch))
             }
             ("read_file", _) => files::read_file(&args, room, case.server.vision),
-            ("write_file", _) => files::write_file(&args, input, mode, scratch, peers),
-            ("edit_file", _) => files::edit_file(&args, input, mode, scratch, peers),
+            ("write_file", _) => files::write_file(&args, input, mode, judge, scratch, peers),
+            ("edit_file", _) => files::edit_file(&args, input, mode, judge, scratch, peers),
             ("remember", _) => remember::remember(&args, input),
             ("list_sessions", Some(peers)) => Ok(mail::list_sessions(peers)),
             ("mail", Some(peers)) => mail::mail(&args, peers),
@@ -220,26 +220,41 @@ fn everyday_folders(scratch: Option<&Path>) -> Vec<PathBuf> {
 }
 
 /// Whether a file change asks, and where its question starts.
-#[derive(Clone, Copy, PartialEq)]
-enum Asking {
+enum Asking<'a> {
     OnNo,
     OnYes,
-    /// Where it would start on Yes, with edits accepted.
+    /// Where edits are accepted: in the working or scratch folder.
     Not,
+    /// In auto, elsewhere: the judge decides, and its no asks on No.
+    Judge(&'a judge::Case<'a>, judge::Change),
 }
 
-/// How a file change is put to the person in `mode`, from whether its
-/// question would open on Yes (`write_opens_on_yes`).
-fn asking(opens_on_yes: bool, mode: Mode) -> Asking {
-    match (opens_on_yes, mode) {
-        (false, _) => Asking::OnNo,
-        (true, Mode::Manual) => Asking::OnYes,
-        (true, Mode::AcceptEdits | Mode::Auto) => Asking::Not,
+/// Auto's judge on a step, with auto's warning the first time it acts, and
+/// why it asks when it does. None when the person stopped it.
+fn judged(ask: impl FnOnce() -> Option<Verdict>) -> Option<Verdict> {
+    if mode::warn_of_auto() {
+        print_indented(text::AUTO_WARNING, style::gray);
+    }
+    let verdict = ask()?;
+    match &verdict {
+        Verdict::No(reason) => print_indented(&text::judge_asks(reason), style::gray),
+        Verdict::Unread => print_indented(text::JUDGE_UNREAD, style::gray),
+        Verdict::Yes(_) => {}
+    }
+    Some(verdict)
+}
+
+/// A line in a step, going on under its own start where it doesn't fit,
+/// each row painted on its own.
+fn print_indented(text: &str, paint: fn(&str) -> String) {
+    let width = tty::width().unwrap_or(80);
+    for line in layout::indented(text, 2, width).lines() {
+        eprintln!("{}", paint(line));
     }
 }
 
 /// Shows the change as a diff and writes it if the person agrees, or
-/// without asking when `asking` says so. The other sessions, when given,
+/// without asking when `asking` says so, or auto's judge does. The other sessions, when given,
 /// hear which file changed.
 fn propose(
     path: &Path,
@@ -252,14 +267,29 @@ fn propose(
 ) -> Result<Outcome, String> {
     eprintln!("{} {}", style::accent(step), shown(path));
     let rest = diff::show(old, new);
-    if asking != Asking::Not
-        && let Some(outcome) = refused(input.approve_write(rest, asking == Asking::OnYes))
+    let (asking, ran) = match asking {
+        Asking::Judge(case, change) => {
+            let path = config::resolved(path).display().to_string();
+            match judged(|| judge::ask_write(&path, change, case)) {
+                None => return Ok(Outcome::Stopped),
+                Some(Verdict::Yes(reason)) => (Asking::Not, Some(reason)),
+                Some(_) => (Asking::OnNo, None),
+            }
+        }
+        asking => (asking, None),
+    };
+    if !matches!(asking, Asking::Not)
+        && let Some(outcome) = refused(input.approve_write(rest, matches!(asking, Asking::OnYes)))
     {
         return Ok(outcome);
     }
     config::write(path, new).map_err(|error| format!("can't write {}: {error}", path.display()))?;
-    if asking == Asking::Not {
-        eprintln!("  {}", style::faint(text::WRITTEN_UNASKED));
+    match ran {
+        Some(reason) => print_indented(&text::judge_wrote(&reason), style::faint),
+        None if matches!(asking, Asking::Not) => {
+            eprintln!("  {}", style::faint(text::WRITTEN_UNASKED));
+        }
+        None => {}
     }
     if let Some(peers) = peers {
         peers.wrote(path);
@@ -381,15 +411,5 @@ mod tests {
         let end = text.find("line 601\n").unwrap();
         let kept = format!("{}{}", &text[..start], &text[end..]);
         assert_eq!(clip(&kept, 2000, 200), whole);
-    }
-
-    #[test]
-    fn accept_edits_skips_only_the_questions_that_open_on_yes() {
-        assert!(asking(true, Mode::Manual) == Asking::OnYes);
-        assert!(asking(true, Mode::AcceptEdits) == Asking::Not);
-        assert!(asking(false, Mode::Manual) == Asking::OnNo);
-        assert!(asking(false, Mode::AcceptEdits) == Asking::OnNo);
-        assert!(asking(true, Mode::Auto) == Asking::Not);
-        assert!(asking(false, Mode::Auto) == Asking::OnNo);
     }
 }

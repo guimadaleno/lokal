@@ -57,8 +57,9 @@ runs a command of your own. With a model that can see, Ctrl+V (or Alt+V)
 pastes the image on your clipboard as `[Image #1]`, and several can go in
 one request. Shift+Tab switches between asking for
 everything, accepting file edits once their diff shows, and auto, where the
-model, asked separately, also lets commands run. A question starts on No
-only for what can't be undone or leaves your machine.
+model, asked separately, also lets commands run and files change outside the
+working folder. A question starts on No only for what can't be undone,
+leaves your machine or changes what runs later.
 
 ## MCP servers
 

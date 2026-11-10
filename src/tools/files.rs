@@ -2,19 +2,24 @@
 //! may be put to the person on Yes.
 
 use std::env;
+use std::ffi::OsStr;
 use std::fs;
 use std::io::{ErrorKind, Read};
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
 
-use super::{CONTEXT_FULL, LEAST_ROOM, Outcome, asking, limit, propose, shown, text_arg};
+use super::{
+    Asking, CONTEXT_FULL, LEAST_ROOM, Outcome, everyday_folders, limit, propose, shown, text_arg,
+};
 use crate::context::CHARS_PER_TOKEN;
 use crate::image::{self, Image};
 use crate::input::Input;
+use crate::judge::{Case, Change};
 use crate::mode::Mode;
 use crate::peers::Peers;
+use crate::sandbox::{NOTES, PROTECTED};
 use crate::{config, style, text};
 
 /// How much of a file one read gives the model; a longer one says where to read on.
@@ -252,6 +257,7 @@ pub(super) fn write_file(
     args: &Value,
     input: &mut Input,
     mode: Mode,
+    judge: Option<&Case>,
     scratch: Option<&Path>,
     peers: Option<&Peers>,
 ) -> Result<Outcome, String> {
@@ -261,10 +267,9 @@ pub(super) fn write_file(
     if old.as_deref() == Some(content) {
         return Ok(Outcome::Done(UNCHANGED.into()));
     }
-    let step = if old.is_some() {
-        text::STEP_EDIT
-    } else {
-        text::STEP_CREATE
+    let (step, change) = match &old {
+        Some(old) => (text::STEP_EDIT, Change::Replace(old.lines().count())),
+        None => (text::STEP_CREATE, Change::Create),
     };
     propose(
         &path,
@@ -272,7 +277,7 @@ pub(super) fn write_file(
         old.as_deref().unwrap_or(""),
         content,
         input,
-        asking(write_opens_on_yes(&path, scratch), mode),
+        asking(&path, scratch, mode, judge, change),
         peers,
     )
 }
@@ -281,6 +286,7 @@ pub(super) fn edit_file(
     args: &Value,
     input: &mut Input,
     mode: Mode,
+    judge: Option<&Case>,
     scratch: Option<&Path>,
     peers: Option<&Peers>,
 ) -> Result<Outcome, String> {
@@ -310,24 +316,73 @@ pub(super) fn edit_file(
     if new == old {
         return Ok(Outcome::Done(UNCHANGED.into()));
     }
-    let asking = asking(write_opens_on_yes(&path, scratch), mode);
+    let asking = asking(&path, scratch, mode, judge, Change::Edit);
     propose(&path, text::STEP_EDIT, &old, &new, input, asking, peers)
 }
 
-/// Whether a file change's question may open on Yes: only for a file in the
-/// working folder or the scratch folder. A working folder that is the home
-/// folder or / would hold everything, so then it doesn't count.
-fn write_opens_on_yes(path: &Path, scratch: Option<&Path>) -> bool {
-    let home = config::resolved(&config::home());
-    let working = env::current_dir()
-        .ok()
-        .map(|folder| config::resolved(&folder))
-        .filter(|folder| *folder != home && folder.parent().is_some());
-    let folders: Vec<PathBuf> = working
-        .into_iter()
-        .chain(scratch.map(config::resolved))
+/// How a change to `path` is put to the person in `mode`, by Lokal's own
+/// rule first. A protected place asks on No in every mode, and auto's judge
+/// never decides it. In accept edits and auto, the working and scratch
+/// folders take a change unasked. Elsewhere, auto's judge decides, and
+/// manual and accept edits ask on Yes.
+fn asking<'a>(
+    path: &Path,
+    scratch: Option<&Path>,
+    mode: Mode,
+    judge: Option<&'a Case<'a>>,
+    change: Change,
+) -> Asking<'a> {
+    if is_protected(path) {
+        Asking::OnNo
+    } else if mode != Mode::Manual
+        && is_everyday_place(&config::resolved(path), &everyday_folders(scratch))
+    {
+        Asking::Not
+    } else {
+        match judge {
+            Some(case) => Asking::Judge(case, change),
+            None => Asking::OnYes,
+        }
+    }
+}
+
+/// Where a change opens on No in every mode, and auto's judge never
+/// decides: what programs run or read as they start, the box's own list
+/// (`sandbox::PROTECTED`: git's hooks and settings, shell start-up, editors'
+/// and package managers' settings) with the project's notes and CI's
+/// workflows; keys; the person's own settings, hidden right in the home
+/// folder; and a folder on the PATH, where a file could pass for a program.
+fn is_protected(path: &Path) -> bool {
+    let path = config::resolved(path);
+    let parts: Vec<&OsStr> = path
+        .components()
+        .filter_map(|part| match part {
+            Component::Normal(name) => Some(name),
+            _ => None,
+        })
         .collect();
-    is_everyday_place(&config::resolved(path), &folders)
+    let listed = PROTECTED
+        .iter()
+        .chain(NOTES)
+        .chain(&[".ssh", ".gnupg", ".github/workflows"])
+        .any(|entry| {
+            let entry: Vec<&OsStr> = Path::new(entry).iter().collect();
+            parts.windows(entry.len()).any(|window| window == entry)
+        });
+    let home = config::resolved(&config::home());
+    let home_settings = path
+        .strip_prefix(&home)
+        .ok()
+        .and_then(|inside| inside.iter().next())
+        .is_some_and(|first| first.as_encoded_bytes().starts_with(b"."));
+    let on_path = path.parent().is_some_and(|folder| {
+        env::var_os("PATH").is_some_and(|value| {
+            env::split_paths(&value)
+                .filter(|entry| entry.is_absolute())
+                .any(|entry| config::resolved(&entry) == folder)
+        })
+    });
+    listed || home_settings || on_path
 }
 
 /// Inside one of `folders`, with no hidden file or folder on the way there.
@@ -497,7 +552,83 @@ mod tests {
     }
 
     #[test]
-    fn writes_open_on_yes_only_in_plain_files_of_the_folders() {
+    fn protected_places_are_where_programs_start_keys_and_settings() {
+        let home = config::home();
+        for path in [
+            "/work/p/.git/hooks/pre-commit",
+            "/work/p/.git/config",
+            "/work/p/.github/workflows/ci.yml",
+            "/work/p/AGENTS.md",
+            "/work/p/sub/LOKAL.md",
+            "/work/p/.vscode/tasks.json",
+            "/work/p/.envrc",
+            "/work/p/gradle/wrapper/gradle-wrapper.properties",
+            "/work/p/keys/.ssh/id_ed25519",
+            "/usr/bin/ls",
+        ] {
+            assert!(is_protected(Path::new(path)), "{path}");
+        }
+        for inside in [".bashrc", ".config/autostart/x.desktop", ".local/bin/ls"] {
+            assert!(is_protected(&home.join(inside)), "~/{inside}");
+        }
+        for path in [
+            "/work/p/index.html",
+            "/work/p/.gitignore",
+            "/work/p/.env",
+            "/work/p/.github/dependabot.yml",
+            "/work/p/docs/agents.html",
+            "/mnt/c/Users/ana/Desktop/site/index.html",
+        ] {
+            assert!(!is_protected(Path::new(path)), "{path}");
+        }
+        for inside in ["notes.txt", "projects/site/.prettierrc"] {
+            assert!(!is_protected(&home.join(inside)), "~/{inside}");
+        }
+    }
+
+    #[test]
+    fn a_change_asks_by_the_mode_and_the_place() {
+        let server = crate::server::Server {
+            address: String::new(),
+            model: String::new(),
+            context: None,
+            max_context: None,
+            vision: None,
+            kind: crate::server::Kind::Other,
+            context_settled: true,
+            pinned: false,
+        };
+        let case = Case {
+            server: &server,
+            asked: &[],
+            folder: "/work/p",
+            scratch: None,
+            written: &[],
+        };
+        let scratch = Path::new("/tmp/lokal-1000/42");
+        let in_scratch = Path::new("/tmp/lokal-1000/42/page.html");
+        let elsewhere = Path::new("/mnt/c/Users/ana/Desktop/site/index.html");
+        let protected = Path::new("/work/p/.git/hooks/pre-commit");
+        let how = |path, mode, judge| match asking(path, Some(scratch), mode, judge, Change::Create)
+        {
+            Asking::OnNo => "no",
+            Asking::OnYes => "yes",
+            Asking::Not => "not",
+            Asking::Judge(..) => "judge",
+        };
+        assert_eq!(how(elsewhere, Mode::Manual, None), "yes");
+        assert_eq!(how(in_scratch, Mode::Manual, None), "yes");
+        assert_eq!(how(protected, Mode::Manual, None), "no");
+        assert_eq!(how(in_scratch, Mode::AcceptEdits, None), "not");
+        assert_eq!(how(elsewhere, Mode::AcceptEdits, None), "yes");
+        assert_eq!(how(protected, Mode::AcceptEdits, None), "no");
+        assert_eq!(how(in_scratch, Mode::Auto, Some(&case)), "not");
+        assert_eq!(how(elsewhere, Mode::Auto, Some(&case)), "judge");
+        assert_eq!(how(protected, Mode::Auto, Some(&case)), "no");
+    }
+
+    #[test]
+    fn edits_are_accepted_only_in_plain_files_of_the_folders() {
         let folders = [
             PathBuf::from("/home/ana/project"),
             PathBuf::from("/tmp/lokal-1000/42"),

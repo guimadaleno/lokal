@@ -5,12 +5,15 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use super::{CONTEXT_FULL, LEAST_ROOM, OUTPUT_LIMIT, Outcome, clip, limit, refused, text_arg};
+use super::{
+    CONTEXT_FULL, LEAST_ROOM, OUTPUT_LIMIT, Outcome, clip, judged, limit, print_indented, refused,
+    text_arg,
+};
 use crate::gitconfig::{self, WriteProgram};
 use crate::input::Input;
 use crate::judge::{self, Verdict};
 use crate::shell::{self, Run};
-use crate::{allowlist, interrupt, layout, mode, style, text, tty};
+use crate::{allowlist, interrupt, layout, style, text};
 
 /// Runs a command, asking first unless it's read-only. In auto, `judge`
 /// holds what the judge reads, and it decides what would open on Yes.
@@ -87,7 +90,7 @@ fn decide(
     }
     // The judge only ever sees what would open on Yes.
     let verdict = match judge.filter(|_| on_yes) {
-        Some(case) => Some(judged(command, case).ok_or(Outcome::Stopped)?),
+        Some(case) => Some(judged(|| judge::ask_command(command, case)).ok_or(Outcome::Stopped)?),
         None => None,
     };
     if let Some(Verdict::Yes(reason)) = &verdict {
@@ -130,34 +133,10 @@ fn write_warning() -> Option<String> {
     }
 }
 
-/// Auto's judge on a command, with auto's warning the first time it acts,
-/// and why it asks when it does. None when the person stopped it.
-fn judged(command: &str, case: &judge::Case) -> Option<Verdict> {
-    if mode::warn_of_auto() {
-        print_indented(text::AUTO_WARNING, style::gray);
-    }
-    let verdict = judge::ask_command(command, case)?;
-    match &verdict {
-        Verdict::No(reason) => print_indented(&text::judge_asks(reason), style::gray),
-        Verdict::Unread => print_indented(text::JUDGE_UNREAD, style::gray),
-        Verdict::Yes(_) => {}
-    }
-    Some(verdict)
-}
-
 /// The `$` line a command's step starts with, its later lines indented.
 fn print_command(command: &str) {
     let command = layout::printable(command).replace('\n', "\n  ");
     eprintln!("{} {command}", style::accent("$"));
-}
-
-/// A line in a step, going on under its own start where it doesn't fit,
-/// each row painted on its own.
-fn print_indented(text: &str, paint: fn(&str) -> String) {
-    let width = tty::width().unwrap_or(80);
-    for line in layout::indented(text, 2, width).lines() {
-        eprintln!("{}", paint(line));
-    }
 }
 
 /// A command the person typed at the `>` after a `!`. It runs without a

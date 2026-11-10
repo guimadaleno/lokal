@@ -66,6 +66,16 @@ pub struct Case<'a> {
     pub written: &'a [String],
 }
 
+/// How a file change changes the file, as the judge reads it.
+#[derive(Clone, Copy)]
+pub enum Change {
+    Create,
+    /// Everything in a file of so many lines.
+    Replace(usize),
+    /// A part of it.
+    Edit,
+}
+
 /// Asks the judge about running `command`. None when the person stopped it.
 pub fn ask_command(command: &str, case: &Case) -> Option<Verdict> {
     let fence = fence_for(command);
@@ -73,6 +83,19 @@ pub fn ask_command(command: &str, case: &Case) -> Option<Verdict> {
         &format!("Step: run this command\n{fence}\n{command}\n{fence}"),
         case,
     )
+}
+
+/// Asks the judge about changing the file at `path`. None when the person
+/// stopped it.
+pub fn ask_write(path: &str, change: Change, case: &Case) -> Option<Verdict> {
+    let how = match change {
+        Change::Create => "create the file".to_string(),
+        Change::Replace(lines) => format!("replace all of the file, of {lines} lines,"),
+        Change::Edit => "change part of the file".to_string(),
+    };
+    // The model chose the path: one short line, so it can't pass for more.
+    let path = layout::clean(path, PATH_LIMIT);
+    ask(&format!("Step: {how} {path}"), case)
 }
 
 /// Asks the judge about `step`, with the spinner meanwhile. None when the
