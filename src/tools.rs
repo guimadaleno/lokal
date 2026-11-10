@@ -175,7 +175,9 @@ pub fn run(
     let judge = (mode == Mode::Auto).then_some(case);
     let result = match serde_json::from_str::<Value>(&call.arguments) {
         Ok(args) => match (call.name.as_str(), peers) {
-            ("run_command", _) => command::run_command(&args, input, room, judge),
+            ("run_command", _) => {
+                command::run_command(&args, input, room, judge, &everyday_folders(scratch))
+            }
             ("read_file", _) => files::read_file(&args, room, case.server.vision),
             ("write_file", _) => files::write_file(&args, input, mode, scratch, peers),
             ("edit_file", _) => files::edit_file(&args, input, mode, scratch, peers),
@@ -201,6 +203,20 @@ pub fn run(
 /// A path the model gave, as the person reads it.
 fn shown(path: &Path) -> String {
     layout::printable(&config::shown(path)).into_owned()
+}
+
+/// The folders where a step is everyday: the working folder, unless it's
+/// the home folder or /, which would hold every file, and the scratch folder.
+fn everyday_folders(scratch: Option<&Path>) -> Vec<PathBuf> {
+    let home = config::resolved(&config::home());
+    let working = std::env::current_dir()
+        .ok()
+        .map(|folder| config::resolved(&folder))
+        .filter(|folder| *folder != home && folder.parent().is_some());
+    working
+        .into_iter()
+        .chain(scratch.map(config::resolved))
+        .collect()
 }
 
 /// Whether a file change asks, and where its question starts.

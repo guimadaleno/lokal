@@ -57,7 +57,8 @@ runs a command of your own. With a model that can see, Ctrl+V (or Alt+V)
 pastes the image on your clipboard as `[Image #1]`, and several can go in
 one request. Shift+Tab switches between asking for
 everything, accepting file edits once their diff shows, and auto, where the
-model, asked separately, also lets everyday commands run.
+model, asked separately, also lets commands run. A question starts on No
+only for what can't be undone or leaves your machine.
 
 ## MCP servers
 
@@ -82,8 +83,9 @@ what each server's tools cost in context.
 
 - Run a command that may change something without your yes. Which commands
   count as read-only is Lokal's own list, never the model's call. Auto is
-  the one exception: you switch it on for a session, and anything riskier,
-  like deleting files or sudo, still asks.
+  the one exception: you switch it on for a session, and what can't be
+  undone or leaves your machine, like deleting outside the project, sudo
+  or sending data, still asks.
 - Change a file without showing you the diff first.
 - Call an MCP server's tool without your yes, or give the model a server's
   tools before you've seen what it says about them. A project's own

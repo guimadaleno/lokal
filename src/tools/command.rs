@@ -1,6 +1,8 @@
 //! The run_command tool, and the person's own `!` commands: who decides
 //! whether one runs, and what the model hears of it.
 
+use std::path::PathBuf;
+
 use serde_json::Value;
 
 use super::{CONTEXT_FULL, LEAST_ROOM, OUTPUT_LIMIT, Outcome, clip, limit, refused, text_arg};
@@ -12,16 +14,18 @@ use crate::{allowlist, interrupt, layout, mode, style, text, tty};
 
 /// Runs a command, asking first unless it's read-only. In auto, `judge`
 /// holds what the judge reads, and it decides what would open on Yes.
+/// `folders` are where a delete or a move may land on Yes.
 pub(super) fn run_command(
     args: &Value,
     input: &mut Input,
     room: Option<usize>,
     judge: Option<&judge::Case>,
+    folders: &[PathBuf],
 ) -> Result<Outcome, String> {
     let command = text_arg(args, "command")?;
     print_command(command);
     let explanation = args["explanation"].as_str().map_or("", str::trim);
-    let unasked = match decide(command, explanation, input, judge) {
+    let unasked = match decide(command, explanation, input, judge, folders) {
         Ok(unasked) => unasked,
         Err(outcome) => return Ok(outcome),
     };
@@ -49,6 +53,7 @@ fn decide(
     explanation: &str,
     input: &mut Input,
     judge: Option<&judge::Case>,
+    folders: &[PathBuf],
 ) -> Result<bool, Outcome> {
     let git_warning = git_warning(command);
     if allowlist::is_read_only(command) && git_warning.is_none() {
@@ -65,7 +70,7 @@ fn decide(
         eprintln!("  {}", style::faint(note));
         return Ok(false);
     }
-    let mut on_yes = allowlist::opens_on_yes(command) && git_warning.is_none();
+    let mut on_yes = allowlist::opens_on_yes(command, folders) && git_warning.is_none();
     // The judge sees the command, never the hooks or programs the
     // repository has git run as it writes: those are the person's call.
     if on_yes

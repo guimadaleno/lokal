@@ -29,10 +29,11 @@ of MCP servers the person sets up. One binary, few dependencies.
     - **It can only take away:** its yes runs the command, and its no, or a
       reply Lokal can't read as yes or no, asks the person, on No, with its
       reason. A judge wrong toward caution costs an Enter.
-    - **Lokal's floor never reaches it:** a command whose question opens on
-      No (`allowlist::opens_on_yes`), or git with a repository setting that
-      runs a program or after a `cd`, asks as always. Read-only commands
-      and "don't ask again" approvals run as they do in every mode.
+    - **Lokal's floor never reaches it:** the hard core, whose question
+      opens on No (`allowlist::opens_on_yes`, below), or git with a
+      repository setting that runs a program or after a `cd`, asks as
+      always. Read-only commands and "don't ask again" approvals run as
+      they do in every mode.
     - **Nor git's hooks:** the judge sees the command, never what the
       repository has git run as it writes. So a git command it would judge
       asks instead, on No and with it named, when the repository has an
@@ -66,7 +67,7 @@ of MCP servers the person sets up. One binary, few dependencies.
     (`src/gitconfig.rs`). Otherwise it's asked, on No, with the setting
     named, whatever was approved before.
     - **Lokal reads only the working folder's settings,** so git after a
-      `cd` or `pushd` in the same line, or with options before its command
+      `cd`, `pushd` or `popd` in the same line, or with options before its command
       (`-C`, `-c`, `--git-dir`), is asked the same way
       (`allowlist::git_elsewhere`): it may reach another repository, a
       submodule included, or settings of the command's own.
@@ -111,28 +112,60 @@ of MCP servers the person sets up. One binary, few dependencies.
       while it isn't manual, so Shift+Tab is seen to take, also mid-turn.
       In a turn mail started they show the mode chosen, not the one that
       applies there.
-- **Approve on a guess where a slip costs much.** A question opens on Yes,
-  so Enter alone approves, only for what Lokal's own rule sees as day to day
-  (`allowlist::opens_on_yes`, `files::write_opens_on_yes`), never the
-  model's judgement, except in the modes the person picks on Shift+Tab
-  (above), where what opens on Yes may need no Enter at all. Esc is always
-  No, and a key or a number only moves to its option, for Enter to pick, so
-  a stray key never approves. Saying no ends the turn, so the person says
-  what to do instead.
-  - **On No:** anything the rule can't read whole; commands that reach past
-    the person (sudo, ssh), run code Lokal can't see (a shell, xargs, awk,
-    sed, npx, `deno eval`, `curl | sh`, a Windows program), delete or
-    overwrite (rm, mv, dd, `git rm`, `push`, `reset`, `clean`,
-    `commit --amend`, `switch -f`), change what later git commands run
-    (`git config`: `git status` runs unasked), or stop things (kill,
-    `docker stop`); a file outside the working and scratch
-    folders, or in a hidden file or folder on the way (.git, .env, CI); and
-    `remember`, which changes what every conversation starts with.
+- **Approve on a guess where a slip costs much.** A question opens on No
+  only for the hard core, by Lokal's own rule (`allowlist::opens_on_yes`,
+  `src/allowlist/hard.rs`, `files::write_opens_on_yes`), never the model's
+  judgement. Everything else opens on Yes, so Enter alone approves, and in
+  the modes the person picks on Shift+Tab (above) it may need no Enter at
+  all. Esc is always No, and a key or a number only moves to its option,
+  for Enter to pick, so a stray key never approves. Saying no ends the
+  turn, so the person says what to do instead.
+  - **The person asked for this (#36):** almost every question used to open
+    on No, a slip's cost put on what costs nothing, and a question that
+    always opens on No stops being read.
+  - **On No, the hard core:** what can't be undone, what leaves the machine,
+    and what changes what runs later.
+    - Root and other machines (sudo, ssh), and sends: curl or wget that
+      send, scp, rsync to a remote, nc, gh's writes and `gh auth`,
+      publishing a package, `docker push`, git push with force or delete,
+      a new remote.
+    - Something downloaded and run: piped into a shell or an interpreter
+      that reads its code there (`curl | sh`, but not `| python3 -c`), or
+      handed over (`bash <(curl …)`).
+    - Disks and power (mkfs, dd, shred, shutdown), and crontab.
+    - A delete or a move (rm, mv, truncate, a `>` that empties a file) of
+      anything Lokal can't place inside the working or scratch folder,
+      `find -delete` and `rsync --delete`. The folder itself is never
+      inside, and `.*` may be `..`.
+    - git that throws work away (`reset --hard`, `clean`, `restore`, a
+      `checkout` of paths, `switch -f`, `stash drop`, `branch -D`) or
+      names a program for later git commands (`git config core.pager`,
+      `alias.*`: `gitconfig::is_plain`).
+    - docker that reaches the machine or deletes (`-v`, `--privileged`,
+      `rm`, `prune`).
+    - A line that names where programs run later, keys, or Lokal's own
+      files, however it uses them: shell start-up, `~/.ssh`, `.git/hooks`,
+      autostart, systemd, a PATH folder under home.
+    - A glob where a file named like an option could write (`rg x *`).
+    - A file outside the working and scratch folders, or in a hidden file
+      or folder on the way (.git, .env, CI); and `remember`, which changes
+      what every conversation starts with.
+  - **On Yes, though Lokal can't see what runs:** a shell or a script,
+    xargs, awk, sed, npx, `python -c`, a Windows program, `git push`,
+    `commit --amend`, kill, `docker stop`, and a delete or a move inside
+    the working folder. Enter out of habit runs them; in auto, the judge
+    reads them first.
+  - **A line Lokal can't read whole** (a variable, a loop, `$(…)`, a
+    here-document) is read roughly (`hard::rough_programs`): cut at every
+    mark that could start a program, each program taken as run from every
+    place a `cd` in the line reaches, and the hard core if any is. A path
+    made of a variable is never placed, and after a `cd` Lokal can't follow,
+    no place is.
   - **The rule only picks where the question starts,** never whether there is
     one, except for a file change in accept edits, which the person picked
-    (above). A command it gets wrong opens on No, as every one did before.
+    (above).
   - **A working folder that is the home folder or / doesn't count:** it would
-    hold every file.
+    hold every file, so there a delete or a move opens on No.
 - **Approve more than the person saw.** "Don't ask again" covers that exact
   command text, for the session or for the project.
   - **A pattern like `docker *` would let in commands nobody saw**
@@ -380,6 +413,7 @@ of MCP servers the person sets up. One binary, few dependencies.
 | `mcp/seen.rs` | The tool lists the person has seen, a hash a server |
 | `tools/mail.rs` | list_sessions and mail, shown as steps |
 | `allowlist.rs` | Which commands run without asking, and which questions open on Yes |
+| `allowlist/hard.rs` | The hard core: what a command's question opens on No for, and what auto's judge never decides |
 | `gitconfig.rs` | What a repository's own git settings and hooks would have git run |
 | `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it |
 | `input.rs` | The `>` prompt (hints, completion, Ctrl+C twice, an image pasted as `[Image #N]`) and approvals |
