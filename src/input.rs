@@ -869,8 +869,8 @@ struct Helper {
 impl Helper {
     /// What shows at the right edge: the mail waiting, at the `>` only,
     /// where Enter and Esc act on it, and the mode, where Shift+Tab changes
-    /// it; then the status.
-    fn status(&self) -> Option<String> {
+    /// it, with the key when there's room (`keys`); then the status.
+    fn status(&self, keys: bool) -> Option<String> {
         let waiting = self
             .inbox
             .as_ref()
@@ -880,7 +880,13 @@ impl Helper {
             .map(text::mail_waiting);
         let mode = text::mode_name(mode::current())
             .filter(|_| self.accented)
-            .map(String::from);
+            .map(|name| {
+                if keys {
+                    format!("{name} {}", text::MODE_KEYS)
+                } else {
+                    name.to_string()
+                }
+            });
         let parts: Vec<String> = waiting
             .into_iter()
             .chain(mode)
@@ -919,16 +925,21 @@ impl Helper {
                 String::new()
             };
         }
-        // The status only beside a line on one row, at the right edge.
-        if let Some(status) = &self.status()
-            && rows == 1
-            && width.is_some()
-            && let Some(padding) = room
-                .checked_sub(display.width() + status.width())
+        // The status only beside a line on one row, at the right edge. The
+        // mode's key gives way first.
+        let fits = |status: &String| {
+            room.checked_sub(display.width() + status.width())
                 .filter(|padding| *padding >= 2)
+        };
+        if rows == 1
+            && width.is_some()
+            && let Some((status, padding)) = [true, false]
+                .into_iter()
+                .filter_map(|keys| self.status(keys))
+                .find_map(|status| fits(&status).map(|padding| (status, padding)))
         {
             display.push_str(&" ".repeat(padding));
-            display.push_str(status);
+            display.push_str(&status);
         }
         (!display.is_empty()).then_some(Hint {
             display,

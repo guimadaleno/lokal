@@ -131,6 +131,9 @@ pub fn mode_name(mode: crate::mode::Mode) -> Option<&'static str> {
     }
 }
 
+/// After the mode at the right of the `>`, when there's room.
+pub const MODE_KEYS: &str = "(Shift+Tab to cycle)";
+
 /// Under a diff that went through without a question.
 pub const WRITTEN_UNASKED: &str = "written without asking: edits are accepted";
 

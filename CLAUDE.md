@@ -141,7 +141,8 @@ of MCP servers the person sets up. One binary, few dependencies.
       be asked, and inside git, `git diff` shows the rest.
     - **The mode shows at the right of the `>` and in the spinner's label**
       while it isn't manual, so Shift+Tab is seen to take, also mid-turn.
-      In a turn mail started they show the mode chosen, not the one that
+      At the `>`, "(Shift+Tab to cycle)" follows it while there's room. In
+      a turn mail started they show the mode chosen, not the one that
       applies there.
 - **Approve on a guess where a slip costs much.** A question opens on No
   only for the hard core, by Lokal's own rule (`allowlist::opens_on_yes`,
