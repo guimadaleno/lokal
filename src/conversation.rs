@@ -489,6 +489,7 @@ impl Conversation {
                     server: &self.server,
                     asked: &self.asked,
                     folder: &self.facts.cwd,
+                    scratch: self.facts.scratch.as_deref(),
                     written: &self.written,
                 };
                 let peers = self.peers.as_ref();

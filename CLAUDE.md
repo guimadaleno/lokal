@@ -45,11 +45,18 @@ of MCP servers the person sets up. One binary, few dependencies.
       list of what can. The person's own global settings and hooks don't
       count.
     - **What it reads is the person's or Lokal's own:** the person's last
-      three requests as they typed them, the command, the model's
-      explanation, the working folder and the files written this turn. The
-      model's words, the explanation and the paths, come as one short line
-      each. Never the outputs or the files the model read, where text that
-      steers a model comes from.
+      three requests as they typed them, the command, the working and
+      scratch folders and the files written this turn. The paths, the
+      model's words, come as one short line each. Never the outputs or the
+      files the model read, where text that steers a model comes from, nor
+      the model's explanation, which shows to the person: a steered model
+      writes that too.
+    - **It's asked about harms, not purposes** (#36): no only for deleting
+      or overwriting what wasn't asked for, sending data off the machine,
+      changing what runs later, code it can't read, or work unrelated to
+      the requests. A prompt by purposes ("stays inside the project") said
+      no to 6 of 28 harmless steps on the person's Ollama; this one was
+      right on 33 of 33, steering in the command included.
     - **What it lets through shows,** the `$` line and a faint "auto ran
       it" with its reason, and runs as anything else no one said yes to
       (`gitconfig::UNASKED`, the PATH's absolute folders).
@@ -743,7 +750,7 @@ cargo clippy --all-targets
 | Release binary (static, stripped) | 2.5 MB (0.7.0) |
 | Start to the prompt, server found | ~40 ms |
 | Memory at the prompt | ~3 MB |
-| Auto's judge, a 27B model with reasoning off (Ollama 0.40.2) | 1.1–1.9 s a command; 6–22 s with reasoning; the conversation's prompt cache stays |
+| Auto's judge, a 27B model with reasoning off (Ollama 0.40.2) | 0.3–2 s a step; 6–22 s with reasoning; the conversation's prompt cache stays |
 
 Measured on a current laptop, under WSL; the judge on a consumer GPU.
 

@@ -87,7 +87,7 @@ fn decide(
     }
     // The judge only ever sees what would open on Yes.
     let verdict = match judge.filter(|_| on_yes) {
-        Some(case) => Some(judged(command, explanation, case).ok_or(Outcome::Stopped)?),
+        Some(case) => Some(judged(command, case).ok_or(Outcome::Stopped)?),
         None => None,
     };
     if let Some(Verdict::Yes(reason)) = &verdict {
@@ -132,11 +132,11 @@ fn write_warning() -> Option<String> {
 
 /// Auto's judge on a command, with auto's warning the first time it acts,
 /// and why it asks when it does. None when the person stopped it.
-fn judged(command: &str, explanation: &str, case: &judge::Case) -> Option<Verdict> {
+fn judged(command: &str, case: &judge::Case) -> Option<Verdict> {
     if mode::warn_of_auto() {
         print_indented(text::AUTO_WARNING, style::gray);
     }
-    let verdict = judge::ask(command, explanation, case)?;
+    let verdict = judge::ask_command(command, case)?;
     match &verdict {
         Verdict::No(reason) => print_indented(&text::judge_asks(reason), style::gray),
         Verdict::Unread => print_indented(text::JUDGE_UNREAD, style::gray),
