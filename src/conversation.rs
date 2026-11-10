@@ -42,6 +42,12 @@ const ASK_AGAIN_NOTE: &str = "(From Lokal, not the user: your last reply ran out
 const CUT_SHORT_RESULT: &str = "Not run: your reply ran out of room before this step was complete. \
     Reason briefly this time, then take it again. A file too long for one reply goes in parts: \
     write_file with its start, then edit_file to add the rest.";
+/// How long the answer's text may stop before it counts as done for now,
+/// and the spinner comes back under it. Ollama sends a tool call whole once
+/// it's written, and a file takes minutes: with the text still open, nothing
+/// would show meanwhile. A model writing text sends pieces many times a
+/// second.
+const TEXT_PAUSE: Duration = Duration::from_millis(1500);
 
 pub struct Conversation {
     pub server: Server,
@@ -549,10 +555,16 @@ impl Conversation {
         let prompt_tokens = self.estimated_tokens();
         let mut generated: u64 = 0;
         let mut first_piece: Option<Instant> = None;
+        let mut last_piece = Instant::now();
         let label = |generated: u64,
                      first_piece: Option<Instant>,
+                     last_piece: Instant,
                      writing: Option<&ToolProgress>|
          -> String {
+            // Once the pieces stop, as while a server holds a tool call
+            // back, only the time: a count that sits still and a speed
+            // that falls say nothing true.
+            let silent = first_piece.is_some() && last_piece.elapsed() >= TEXT_PAUSE;
             let used = self
                 .server
                 .context
@@ -560,7 +572,11 @@ impl Conversation {
             let rate = first_piece
                 .and_then(|first| speed(generated.saturating_sub(1), first.elapsed()))
                 .map(text::speed);
-            let progress: Vec<String> = [used, rate].into_iter().flatten().collect();
+            let progress: Vec<String> = [used, rate]
+                .into_iter()
+                .flatten()
+                .filter(|_| !silent)
+                .collect();
             working_label(
                 started,
                 writing,
@@ -573,6 +589,10 @@ impl Conversation {
         let mut reasoning = reasoning::Window::default();
         // Styled on a terminal only: piped, the answer stays as the model wrote it.
         let mut markdown = std::io::stdout().is_terminal().then(Markdown::new);
+        // The text was ended by a pause, a blank line under it: the spinner
+        // takes the row after.
+        let mut paused = false;
+        let mut last_text = Instant::now();
         loop {
             if interrupt::happened() {
                 spinner.clear();
@@ -590,6 +610,7 @@ impl Conversation {
             ) {
                 generated += 1;
                 first_piece.get_or_insert_with(Instant::now);
+                last_piece = Instant::now();
             }
             match event {
                 None => {}
@@ -598,19 +619,35 @@ impl Conversation {
                         reasoning.push(&text);
                         reasoning.draw();
                         // The window redrew over the spinner's row: put the spinner back.
-                        spinner.redraw(&label(generated, first_piece, writing.as_ref()));
+                        spinner.redraw(&label(
+                            generated,
+                            first_piece,
+                            last_piece,
+                            writing.as_ref(),
+                        ));
                     }
                 }
                 Some(Event::Text(text)) => {
-                    spinner.clear();
-                    reasoning.clear();
-                    let shown = match &mut markdown {
-                        Some(markdown) => markdown.push(&text),
-                        None => text,
+                    // Going on after a pause, on a row of its own: from its
+                    // first word.
+                    let text = if paused {
+                        text.trim_start()
+                    } else {
+                        text.as_str()
                     };
-                    print!("{shown}");
-                    let _ = std::io::stdout().flush();
-                    mid_line = true;
+                    if !text.is_empty() {
+                        spinner.clear();
+                        reasoning.clear();
+                        let shown = match &mut markdown {
+                            Some(markdown) => markdown.push(text),
+                            None => text.to_string(),
+                        };
+                        print!("{shown}");
+                        let _ = std::io::stdout().flush();
+                        mid_line = true;
+                        paused = false;
+                        last_text = Instant::now();
+                    }
                 }
                 Some(Event::ToolCall { name, path, bytes }) => {
                     if !reasoning.is_empty() {
@@ -623,6 +660,7 @@ impl Conversation {
                         println!("\n");
                         mid_line = false;
                     }
+                    paused = false;
                     writing = Some(ToolProgress { name, path, bytes });
                 }
                 Some(Event::Done(result)) => {
@@ -631,15 +669,34 @@ impl Conversation {
                     if mid_line {
                         print_rest(&mut markdown);
                         println!();
+                    } else if paused {
+                        // The answer ended in the pause: the blank line under
+                        // it goes, so what follows sits where it always does.
+                        eprint!("\x1b[1A");
                     }
                     return result.map_err(Failure::Server);
                 }
+            }
+            // Text that stopped coming is done for now, with a blank line
+            // under it as before a step, and the spinner shows again: what
+            // the model does next may take minutes. Only on a terminal: a
+            // piped answer stays as the model wrote it.
+            if mid_line
+                && markdown.is_some()
+                && style::enabled()
+                && last_text.elapsed() >= TEXT_PAUSE
+            {
+                print_rest(&mut markdown);
+                println!("\n");
+                let _ = std::io::stdout().flush();
+                mid_line = false;
+                paused = true;
             }
             // After every piece too, not only in a pause between them: hidden
             // reasoning or a file being written can stream with no pause for
             // seconds, and the spinner would freeze.
             if !mid_line && spinner.due() {
-                spinner.tick_with(&label(generated, first_piece, writing.as_ref()));
+                spinner.tick_with(&label(generated, first_piece, last_piece, writing.as_ref()));
             }
         }
     }
