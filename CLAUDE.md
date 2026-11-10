@@ -34,8 +34,8 @@ of MCP servers the person sets up. One binary, few dependencies.
     - **Lokal's floor never reaches it:** the hard core, whose question
       opens on No (`allowlist::opens_on_yes`, below), or git with a
       repository setting that runs a program or after a `cd` Lokal can't
-      follow, asks as always. Read-only commands and "don't ask again" approvals run as
-      they do in every mode.
+      follow, asks as always. Read-only commands and "don't ask again"
+      approvals run as they do in every mode.
     - **Nor git's hooks:** the judge sees the command, never what the
       repository has git run as it writes. So a git command it would judge
       asks instead, on No and with it named, when the repository has an
@@ -50,11 +50,10 @@ of MCP servers the person sets up. One binary, few dependencies.
       three requests as they typed them, the command, or a file change's
       path and whether it creates the file, replaces all of it or a part,
       never its content; the working and scratch folders and the files
-      written this turn. The paths, the
-      model's words, come as one short line each. Never the outputs or the
-      files the model read, where text that steers a model comes from, nor
-      the model's explanation, which shows to the person: a steered model
-      writes that too.
+      written this turn. The paths, the model's words, come as one short
+      line each. Never the outputs or the files the model read, where text
+      that steers a model comes from, nor the model's explanation, which
+      shows to the person: a steered model writes that too.
     - **It's asked about harms, not purposes** (#36): no only for deleting
       or overwriting what wasn't asked for, sending data off the machine,
       changing what runs later, code it can't read, or work unrelated to
@@ -92,11 +91,10 @@ of MCP servers the person sets up. One binary, few dependencies.
       `builtin`, `command` or `eval`, a link the line makes and goes
       through), behind a program that runs another (`env git`, `timeout 60
       git`, `bash -c 'git …'`, `find -execdir git`), or with an option that
-      brings settings of its own
-      (`-c`, `--git-dir`, `--work-tree`). It may reach a repository Lokal
-      didn't read, or settings of the command's own. git's own variables
-      (`GIT_DIR=`, `GIT_CONFIG_COUNT=`, `GIT_EXTERNAL_DIFF=`) are the hard
-      core.
+      brings settings of its own (`-c`, `--git-dir`, `--work-tree`). It may
+      reach a repository Lokal didn't read, or settings of the command's
+      own. git's own variables (`GIT_DIR=`, `GIT_CONFIG_COUNT=`,
+      `GIT_EXTERNAL_DIFF=`) are the hard core.
   - **What runs unasked gets fsmonitor off and stays out of submodules**
     (`gitconfig::UNASKED`, through `GIT_CONFIG_PARAMETERS`), since a
     submodule's settings are its own and Lokal doesn't read them. So an
