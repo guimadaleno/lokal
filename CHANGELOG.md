@@ -5,6 +5,27 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.8.0 — 2026-11-09
+
+- Far fewer questions start on No. Only what can't be undone, leaves your
+  machine or changes what runs later does: deleting or moving outside the
+  project, sudo and ssh, sending your files or data, running something
+  downloaded, git that throws work away, and your own settings. Everything
+  else starts on Yes, so Enter is enough.
+- Writing a file outside the working folder, like a site on your Windows
+  desktop, starts on Yes, and in auto the model, asked separately, decides
+  it without asking you. It reads where the file goes, never what's in it.
+- In auto, the model asked separately now looks only for harm, so it lets
+  through the everyday steps it used to stop: downloads, searches, loops,
+  scripts.
+- More reading runs without asking: `sed -n '10,40p'`, `cd`, `pushd`,
+  `popd` and `command -v`. git after a `cd` or `-C` reads that folder's
+  settings instead of always asking.
+- A line with a loop, a variable or `$(…)` is read for what it does,
+  instead of always starting on No.
+- Started in your Windows profile or a drive's root under WSL, Lokal
+  treats it as it treats your home folder: deleting there asks.
+
 ## 0.7.2 — 2026-11-09
 
 - Ctrl+V in Windows Terminal now says so when the model can't take images,
