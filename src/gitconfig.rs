@@ -142,7 +142,8 @@ pub fn write_program(folder: &Path) -> Result<Option<WriteProgram>, ()> {
         return Ok(None);
     }
     // git gives them from the folder it ran in.
-    Ok(active_hook(&folder.join(hooks)).map(WriteProgram::Hook))
+    let ran_in = existing(folder).ok_or(())?;
+    Ok(active_hook(&ran_in.join(hooks)).map(WriteProgram::Hook))
 }
 
 pub enum WriteProgram {
@@ -181,6 +182,12 @@ fn repository_setting(folder: &Path, pattern: &str) -> Result<Option<String>, ()
     }
 }
 
+/// The folder git runs in for `folder`: a folder the line makes first
+/// (`mkdir x && cd x && git init`) is in the repository around it, if any.
+fn existing(folder: &Path) -> Option<&Path> {
+    folder.ancestors().find(|folder| folder.is_dir())
+}
+
 /// What git printed with `args`, run in `folder`, and the code it ended
 /// with; None without git. Err when it couldn't run or didn't end in time.
 fn git(folder: &Path, args: &[&str]) -> Result<Option<(i32, String)>, ()> {
@@ -188,12 +195,7 @@ fn git(folder: &Path, args: &[&str]) -> Result<Option<(i32, String)>, ()> {
     let Some(git) = system::program("git") else {
         return Ok(None);
     };
-    // A folder the line makes first (`mkdir x && cd x && git init`) is in the
-    // repository around it, if any.
-    let folder = folder
-        .ancestors()
-        .find(|folder| folder.is_dir())
-        .ok_or(())?;
+    let folder = existing(folder).ok_or(())?;
     let mut command = Command::new(git);
     command
         .args(args)
@@ -411,6 +413,14 @@ mod tests {
         );
         // A folder the line has yet to make is in the repository around it.
         let made_later = folder.join("new/sub");
+        assert!(run(&["config", "--unset", "diff.x.textconv"]).success());
+        let hook = folder.join(".git/hooks/pre-commit");
+        fs::write(&hook, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            matches!(write_program(&made_later), Ok(Some(WriteProgram::Hook(name))) if name == "pre-commit")
+        );
+        assert!(run(&["config", "diff.x.textconv", "cat"]).success());
         assert_eq!(
             program_setting(&made_later).unwrap().as_deref(),
             Some("diff.x.textconv")

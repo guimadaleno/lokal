@@ -205,18 +205,37 @@ fn shown(path: &Path) -> String {
     layout::printable(&config::shown(path)).into_owned()
 }
 
-/// The folders where a step is everyday: the working folder, unless it's
-/// the home folder or /, which would hold every file, and the scratch folder.
+/// The folders where a step is everyday: the working folder, unless it
+/// would hold every file of the person's (`holds_everything`), and the
+/// scratch folder.
 fn everyday_folders(scratch: Option<&Path>) -> Vec<PathBuf> {
-    let home = config::resolved(&config::home());
     let working = std::env::current_dir()
         .ok()
         .map(|folder| config::resolved(&folder))
-        .filter(|folder| *folder != home && folder.parent().is_some());
+        .filter(|folder| !holds_everything(folder));
     working
         .into_iter()
         .chain(scratch.map(config::resolved))
         .collect()
+}
+
+/// The home folder, /, and under WSL a Windows drive, its Users folder or
+/// one person's profile there (`/mnt/c/Users/<name>`), where WSL often
+/// starts when opened from Windows.
+fn holds_everything(folder: &Path) -> bool {
+    let parts: Vec<String> = folder
+        .iter()
+        .map(|part| part.to_string_lossy().to_lowercase())
+        .collect();
+    let windows = matches!(
+        parts
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .as_slice(),
+        ["/", "mnt"] | ["/", "mnt", _] | ["/", "mnt", _, "users"] | ["/", "mnt", _, "users", _]
+    );
+    folder == config::resolved(&config::home()) || folder.parent().is_none() || windows
 }
 
 /// Whether a file change asks, and where its question starts.
@@ -400,6 +419,21 @@ mod tests {
     #[test]
     fn clip_leaves_short_text_alone() {
         assert_eq!(clip("short\n", 100, 0), "short\n");
+    }
+
+    #[test]
+    fn a_folder_that_holds_everything_isnt_everyday() {
+        for folder in ["/", "/mnt", "/mnt/c", "/mnt/c/Users", "/mnt/c/users/ana"] {
+            assert!(holds_everything(Path::new(folder)), "{folder}");
+        }
+        assert!(holds_everything(&config::resolved(&config::home())));
+        for folder in [
+            "/mnt/c/Users/ana/Desktop/site",
+            "/work/project",
+            "/mnt/d/projects",
+        ] {
+            assert!(!holds_everything(Path::new(folder)), "{folder}");
+        }
     }
 
     #[test]

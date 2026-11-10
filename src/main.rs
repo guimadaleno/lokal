@@ -26,6 +26,7 @@ mod mode;
 mod peers;
 mod progress;
 mod prompt;
+mod protected;
 mod reasoning;
 mod recon;
 // guimadaleno/base/release's client/release.rs, copied unchanged: no formatting or

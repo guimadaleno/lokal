@@ -81,13 +81,20 @@ of MCP servers the person sets up. One binary, few dependencies.
     - **Lokal reads the settings of every folder git runs in**
       (`allowlist::git_folders`): the working folder, and any a `cd`,
       `pushd` or `-C` with its folder written out reaches, from every place
-      the line may be, since a `cd` that fails stays where it was. A folder
+      the line may be, since a `cd` that fails stays where it was. A `cd` is
+      taken as bash takes it, logically: `L/..` is where the line was, not
+      the folder above where the link `L` leads, and the line starts from
+      `PWD` when that's the working folder reached through a link. A folder
       the line has yet to make counts as the repository around it.
     - **git where Lokal can't tell is asked the same way:** after a `cd` it
-      can't follow (`cd -`, `popd`, a variable), or with an option that
-      brings settings of its own (`-c`, `--git-dir`, `--work-tree`). It may
-      reach a repository Lokal didn't read, or settings of the command's
-      own.
+      can't follow (`cd -`, `cd -P`, `popd`, a variable, a name `CDPATH` or
+      `cdable_vars` may send elsewhere, a `cd` behind `builtin`, `command`
+      or `eval`, a link made in the line), behind a wrapper (`env git`,
+      `timeout 60 git`), or with an option that brings settings of its own
+      (`-c`, `--git-dir`, `--work-tree`). It may reach a repository Lokal
+      didn't read, or settings of the command's own. git's own variables
+      (`GIT_DIR=`, `GIT_CONFIG_COUNT=`, `GIT_EXTERNAL_DIFF=`) are the hard
+      core.
   - **What runs unasked gets fsmonitor off and stays out of submodules**
     (`gitconfig::UNASKED`, through `GIT_CONFIG_PARAMETERS`), since a
     submodule's settings are its own and Lokal doesn't read them. So an
@@ -122,7 +129,7 @@ of MCP servers the person sets up. One binary, few dependencies.
       under `/mnt/c` included, is written once the judge says yes. It reads
       the path, never the content.
     - **Everything else asks as always:** a protected place
-      (`files::is_protected`), on No, and `remember`.
+      (`protected::is_protected`), on No, and `remember`.
     - **A turn mail started stays manual,** since another model wrote that
       mail, and it may have been steered.
     - **Every session starts on manual,** with no setting to start
@@ -145,36 +152,63 @@ of MCP servers the person sets up. One binary, few dependencies.
     on No, a slip's cost put on what costs nothing, and a question that
     always opens on No stops being read.
   - **On No, the hard core:** what can't be undone, what leaves the machine,
-    and what changes what runs later.
-    - Root and other machines (sudo, ssh), and sends: curl or wget that
-      send, scp, rsync to a remote, nc, gh's writes and `gh auth`,
-      publishing a package, `docker push`, git push with force or delete,
-      a new remote.
+    and what changes what runs later. A second session reviewed it for ways
+    around, and what it found is closed (#36).
+    - Root and other machines (sudo, ssh, `wsl.exe`, Windows' script
+      hosts), and sends: curl or wget that send (`--variable` included),
+      scp, rsync to a remote, nc, `openssl s_client`, `/dev/tcp`, gh's
+      writes and `gh auth`, publishing a package, `docker push`,
+      `git send-email`, git push with force or delete or to an address or
+      a path, and a new remote, by `git remote` or by `git config
+      remote.*.url`, `.push`, `.mirror` or `url.*.insteadOf`.
     - Something downloaded and run: piped into a shell or an interpreter
-      that reads its code there (`curl | sh`, but not `| python3 -c`), or
-      handed over (`bash <(curl …)`).
+      that reads its code there (`| sh -x`, `| env bash`, `| bash
+      /dev/stdin`, but not `| python3 -c`, where it's data), or handed
+      over (`bash <(curl …)`, `sh -c "$( curl …)"`); and `git clone` with
+      `-c` or `--template`, whose hooks run on the clone.
     - Disks and power (mkfs, dd, shred, shutdown), and crontab.
     - A delete or a move (rm, mv, truncate, a `>` that empties a file) of
       anything Lokal can't place inside the working or scratch folder,
       `find -delete` and `rsync --delete`. The folder itself is never
-      inside, and `.*` may be `..`.
+      inside, `.*` may be `..`, a glob with `..` after it climbs out, and
+      `mv -t/dir` is read with its folder.
+    - An overwrite of a file that exists outside the folders: `cp`,
+      `install`, `ln -f`, `tee`, `sed -i`, `curl -o`, `wget -O`, rsync's
+      last path, and find running anything but a read-only program
+      outside them. A path made of a variable isn't checked as an
+      overwrite: the judge reads it.
     - git that throws work away (`reset --hard`, `clean`, `restore`, a
-      `checkout` of paths, `switch -f`, `stash drop`, `branch -D`) or
-      names a program for later git commands (`git config core.pager`,
-      `alias.*`: `gitconfig::is_plain`).
+      `checkout` of paths, `switch -f`, `stash drop`, `branch -D`,
+      `checkout-index -f`, `read-tree -u`), names a program for later git
+      commands (`git config core.pager`, `alias.*`: `gitconfig::is_plain`),
+      or brings settings of its own (`-c`, `GIT_*=`).
     - docker that reaches the machine or deletes (`-v`, `--privileged`,
-      `rm`, `prune`).
+      `rm`, `prune`), and a Windows shell's delete, download-and-run or
+      upload (`ri`, `del`, `robocopy`, `iex`, `-InFile`).
     - A line that names where programs run later, keys, or Lokal's own
-      files, however it uses them: shell start-up, `~/.ssh`, `.git/hooks`,
-      autostart, systemd, a PATH folder under home.
-    - A glob where a file named like an option could write (`rg x *`).
-    - A file in a protected place (`files::is_protected`): what programs
-      run or read as they start, the box's own list (`sandbox::PROTECTED`:
-      `.git`, shell start-up, `.vscode`, `.npmrc`…), the project's notes
-      (LOKAL.md, AGENTS.md), CI's workflows, `.ssh` and `.gnupg`, the
+      files, however it uses them and however it's spelled (any case,
+      quotes or a backslash inside, a glob that could be one of the
+      names): shell start-up, `~/.ssh`, `.git/hooks`, autostart, systemd,
+      a PATH folder under home. A `cd` into a protected place, an output
+      or a write into one (`cp`, `mv`, `ln`, `touch`, `chmod` included).
+    - A glob where a file named like an option could write (`rg x *`,
+      `sed -n 1p *`, whose `-e1e cmd` runs one).
+    - A file in a protected place (`protected::is_protected`), in any
+      case: what programs run or read as they start, the box's own list
+      (`sandbox::PROTECTED`: `.git`, shell start-up, `.vscode`, `.npmrc`…),
+      the project's notes (LOKAL.md, AGENTS.md), CI (`.github/workflows`,
+      `.github/actions`, `.gitlab-ci.yml`), `.cargo/config.toml`,
+      `mise.toml`, `.ssh` and `.gnupg`, a bare repository's hooks, the
       person's settings hidden right in the home folder (`~/.config/…`),
-      and a PATH folder. And `remember`, which changes what every
+      `~/bin`, Windows' `AppData` (its Startup folder too) and PowerShell
+      profiles, and a PATH folder. And `remember`, which changes what every
       conversation starts with.
+  - **Accepted, and guarded by the judge only:** data written into a GET's
+    URL, headers or user agent (`curl "…?q=$(cat .env)"`), until #2's box
+    takes the network away; `python3 -m http.server`, which serves the
+    folder to the network, since previewing a site is everyday; and
+    `mv * dir/` with a planted file named `-t..`, which moves files out
+    of the folder, where they can be moved back.
   - **On Yes, though Lokal can't see what runs:** a shell or a script,
     xargs, awk, sed, npx, `python -c`, a Windows program, `git push`,
     `commit --amend`, kill, `docker stop`, and a delete or a move inside
@@ -183,15 +217,24 @@ of MCP servers the person sets up. One binary, few dependencies.
     reads them first.
   - **A line Lokal can't read whole** (a variable, a loop, `$(…)`, a
     here-document) is read roughly (`hard::rough_programs`): cut at every
-    mark that could start a program, each program taken as run from every
-    place a `cd` in the line reaches, and the hard core if any is. A path
-    made of a variable is never placed, and after a `cd` Lokal can't follow,
-    no place is.
+    mark that could start a program, quotes and backslashes taken as bash
+    takes them (`r''m` is rm), each program taken as run from every place
+    a `cd` in the line reaches, and the hard core if any is. A program
+    named by a variable or a substitution (`$X -rf`, `$(echo rm) -rf`) is
+    the hard core, and so is `$'…'`, which spells any name. A path made of
+    a variable is never placed, and after a `cd` Lokal can't follow, no
+    place is.
+  - **Shell words that lead into a program** (`if`, `then`, `do`, `!`,
+    `time`) are skipped in either reading, so `if …; then sudo …; fi` is
+    sudo; a loop's list holds no program.
   - **The rule only picks where the question starts,** never whether there is
     one, except in accept edits and auto, which the person picked (above).
-  - **A working folder that is the home folder or / doesn't count:** it would
-    hold every file, so there a delete or a move opens on No, and a file
-    change isn't accepted unasked: in auto, the judge decides it.
+  - **A working folder that holds every file doesn't count**
+    (`tools::holds_everything`): the home folder, /, and under WSL a
+    Windows drive, its Users folder or a profile in it, where WSL often
+    starts when opened from Windows. There a delete or a move opens on
+    No, and a file change isn't accepted unasked: in auto, the judge
+    decides it.
 - **Approve more than the person saw.** "Don't ask again" covers that exact
   command text, for the session or for the project.
   - **A pattern like `docker *` would let in commands nobody saw**
@@ -440,6 +483,7 @@ of MCP servers the person sets up. One binary, few dependencies.
 | `tools/mail.rs` | list_sessions and mail, shown as steps |
 | `allowlist.rs` | Which commands run without asking, and which questions open on Yes |
 | `allowlist/hard.rs` | The hard core: what a command's question opens on No for, and what auto's judge never decides |
+| `protected.rs` | Where a change opens on No in every mode: what programs run or read as they start, keys, the person's settings |
 | `gitconfig.rs` | What a repository's own git settings and hooks would have git run |
 | `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it |
 | `input.rs` | The `>` prompt (hints, completion, Ctrl+C twice, an image pasted as `[Image #N]`) and approvals |

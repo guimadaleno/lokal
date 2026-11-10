@@ -1,12 +1,10 @@
 //! The file tools: read_file, write_file and edit_file, and where a change
 //! may be put to the person on Yes.
 
-use std::env;
-use std::ffi::OsStr;
 use std::fs;
 use std::io::{ErrorKind, Read};
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
@@ -19,7 +17,7 @@ use crate::input::Input;
 use crate::judge::{Case, Change};
 use crate::mode::Mode;
 use crate::peers::Peers;
-use crate::sandbox::{NOTES, PROTECTED};
+use crate::protected::is_protected;
 use crate::{config, style, text};
 
 /// How much of a file one read gives the model; a longer one says where to read on.
@@ -346,45 +344,6 @@ fn asking<'a>(
     }
 }
 
-/// Where a change opens on No in every mode, and auto's judge never
-/// decides: what programs run or read as they start, the box's own list
-/// (`sandbox::PROTECTED`: git's hooks and settings, shell start-up, editors'
-/// and package managers' settings) with the project's notes and CI's
-/// workflows; keys; the person's own settings, hidden right in the home
-/// folder; and a folder on the PATH, where a file could pass for a program.
-fn is_protected(path: &Path) -> bool {
-    let path = config::resolved(path);
-    let parts: Vec<&OsStr> = path
-        .components()
-        .filter_map(|part| match part {
-            Component::Normal(name) => Some(name),
-            _ => None,
-        })
-        .collect();
-    let listed = PROTECTED
-        .iter()
-        .chain(NOTES)
-        .chain(&[".ssh", ".gnupg", ".github/workflows"])
-        .any(|entry| {
-            let entry: Vec<&OsStr> = Path::new(entry).iter().collect();
-            parts.windows(entry.len()).any(|window| window == entry)
-        });
-    let home = config::resolved(&config::home());
-    let home_settings = path
-        .strip_prefix(&home)
-        .ok()
-        .and_then(|inside| inside.iter().next())
-        .is_some_and(|first| first.as_encoded_bytes().starts_with(b"."));
-    let on_path = path.parent().is_some_and(|folder| {
-        env::var_os("PATH").is_some_and(|value| {
-            env::split_paths(&value)
-                .filter(|entry| entry.is_absolute())
-                .any(|entry| config::resolved(&entry) == folder)
-        })
-    });
-    listed || home_settings || on_path
-}
-
 /// Inside one of `folders`, with no hidden file or folder on the way there.
 /// Hidden ones are mostly settings that change what other programs run
 /// (git's config and hooks, CI, a shell's start-up, an editor's tasks), or
@@ -425,6 +384,8 @@ fn path_arg(args: &Value) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+
     use super::*;
 
     fn numbered(count: usize) -> String {
@@ -549,41 +510,6 @@ mod tests {
             Some("hi\n")
         );
         fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn protected_places_are_where_programs_start_keys_and_settings() {
-        let home = config::home();
-        for path in [
-            "/work/p/.git/hooks/pre-commit",
-            "/work/p/.git/config",
-            "/work/p/.github/workflows/ci.yml",
-            "/work/p/AGENTS.md",
-            "/work/p/sub/LOKAL.md",
-            "/work/p/.vscode/tasks.json",
-            "/work/p/.envrc",
-            "/work/p/gradle/wrapper/gradle-wrapper.properties",
-            "/work/p/keys/.ssh/id_ed25519",
-            "/usr/bin/ls",
-        ] {
-            assert!(is_protected(Path::new(path)), "{path}");
-        }
-        for inside in [".bashrc", ".config/autostart/x.desktop", ".local/bin/ls"] {
-            assert!(is_protected(&home.join(inside)), "~/{inside}");
-        }
-        for path in [
-            "/work/p/index.html",
-            "/work/p/.gitignore",
-            "/work/p/.env",
-            "/work/p/.github/dependabot.yml",
-            "/work/p/docs/agents.html",
-            "/mnt/c/Users/ana/Desktop/site/index.html",
-        ] {
-            assert!(!is_protected(Path::new(path)), "{path}");
-        }
-        for inside in ["notes.txt", "projects/site/.prettierrc"] {
-            assert!(!is_protected(&home.join(inside)), "~/{inside}");
-        }
     }
 
     #[test]
