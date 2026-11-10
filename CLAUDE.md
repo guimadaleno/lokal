@@ -858,6 +858,16 @@ Measured on a current laptop, under WSL; the judge on a consumer GPU.
   auto ask on No, and without it the judge let the commit through; an
   answer and an output holding ESC and OSC 52 showed `^[` marks. Still
   owed: the same with a real model, and the PATH with a `.` in it.
+- **The hard core and auto's judge on file changes** (#36):
+  - **Against a scripted server, in a pseudo-terminal, with Lokal started
+    in `~`:** in manual, a file on the desktop opened on Yes, `sed -n` ran
+    unasked, a loop opened on Yes, and `rm -rf ~/Documents` and `~/.bashrc`
+    opened on No. In auto, the file and the loop went through the judge.
+  - **With Qwen 3.8 27B on Ollama 0.40.2, in the person's setup:** a site
+    written under `/mnt/c/Users/…/Desktop` in auto with no question, its
+    `wc -l` run unasked, and its `rm -rf` asked on No.
+  - **Still owed:** the same on LM Studio, and the rough reading of lines
+    Lokal can't read whole against what models write over a long session.
 
 ## Later, not decided
 
