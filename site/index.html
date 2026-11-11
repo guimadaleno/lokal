@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lokal — a terminal assistant that runs on your own model</title>
-<meta name="description" content="A terminal assistant for Linux and WSL that runs on a model on your own machine. It runs commands, reads and changes files, and asks before anything changes.">
+<title>Lokal — a terminal agent in one small file</title>
+<meta name="description" content="A terminal agent for Linux and WSL in one small file. It uses the model on your own machine, through Ollama or LM Studio, and asks before anything changes.">
 <link rel="icon" href="favicon.ico" sizes="any">
 <link rel="icon" href="lokal-logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="lokal-icon.png">
 <meta property="og:title" content="Lokal">
-<meta property="og:description" content="A terminal assistant that runs on a model on your own machine, and asks before anything changes.">
+<meta property="og:description" content="A terminal agent in one small file, on the model on your own machine. It asks before anything changes.">
 <meta property="og:image" content="https://guimadaleno.com/lokal/lokal-icon.png">
 <meta property="og:type" content="website">
 <style>
@@ -85,7 +85,9 @@ main { position: relative; }
 .hero { padding: 72px 0 32px; text-align: center; }
 .logo { display: inline-flex; align-items: center; gap: 12px; }
 .name { font: 600 44px/1 ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace; letter-spacing: -.02em; }
-.lead { font-size: 20px; color: var(--muted); max-width: 560px; margin: 18px auto 32px; }
+.claim { font-size: 32px; line-height: 1.2; font-weight: 600; letter-spacing: -.015em; max-width: 560px; margin: 4px auto 0; text-wrap: balance; }
+.lead { font-size: 19px; color: var(--muted); max-width: 580px; margin: 14px auto 32px; text-wrap: pretty; }
+@media (max-width: 480px) { .claim { font-size: 27px; } .lead { font-size: 17px; } }
 
 .install { display: flex; align-items: stretch; max-width: 760px; margin: 0 auto; background: var(--term); border-radius: 10px; overflow: hidden; text-align: left; }
 /* The whole command shows, wrapped under its "$ " rather than scrolled:
@@ -158,7 +160,8 @@ footer { margin-top: 64px; padding: 24px 0 48px; border-top: 1px solid var(--rul
       <svg width="52" height="52" viewBox="10 10 46 44" aria-hidden="true"><path d="M14 19L28 32L14 45" fill="none" stroke="var(--chevron)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><circle class="breathe" cx="44" cy="32" r="9.5" fill="var(--dot)"/></svg>
       <h1 class="name">lokal</h1>
     </div>
-    <p class="lead">A terminal assistant that runs on a model on your own machine. It runs commands, reads your files and changes them, and asks before anything changes.</p>
+    <p class="claim">A terminal agent in one small file.</p>
+    <p class="lead">It uses the model on your own machine: no account, no key, and your work stays on it. It runs commands, reads and changes files, and asks before anything changes.</p>
 
     <div class="install"><code id="install"><span>curl -fsSLo lokal</span> <span id="install-url">https://download.guimadaleno.com/lokal/0.3.0/lokal</span> <span>&amp;&amp; chmod +x lokal</span> <span>&amp;&amp; ./lokal --install</span></code><button type="button" data-copy="install">Copy</button></div>
     <p class="install-note">Version <span id="version">0.3.0</span>, for Linux and WSL on x86-64. One file, which installs itself in <code>~/.local/bin</code> and keeps itself up to date. <span id="checksum" class="checksum">Its SHA-256 is in <a href="https://download.guimadaleno.com/lokal/SHA256SUMS">SHA256SUMS</a>.</span></p>
@@ -194,9 +197,9 @@ footer { margin-top: 64px; padding: 24px 0 48px; border-top: 1px solid var(--rul
   </section>
 
   <section class="cols">
-    <div><h2>Your model, your machine</h2><p>LM Studio, or any server that speaks the OpenAI API. Lokal finds it on its own, from WSL too.</p></div>
+    <div><h2>Light</h2><p>One static file of <span id="size">2.8 MB</span>. It starts in about 40 ms and holds under 3 MB of memory. Nothing around it: no Node, no Python, no Docker.</p></div>
+    <div><h2>Your model, your machine</h2><p>Ollama, LM Studio, or any server that speaks the OpenAI API. Lokal finds the first two on its own, from WSL too.</p></div>
     <div><h2>Asks before it acts</h2><p>Read-only commands run at once. Anything else waits for your yes, and every file change shows its diff first.</p></div>
-    <div><h2>Quiet</h2><p>Only the answer stays. Its reasoning, when you ask for it with /reasoning, shows in a small window that clears itself. Beside the breathing dot: what it's doing, and for how long.</p></div>
   </section>
 
   <section class="steps" id="lm-studio">
@@ -243,6 +246,7 @@ fetch('https://download.guimadaleno.com/lokal/latest.json', { cache: 'no-cache' 
     document.getElementById('install-url').textContent = file.url;
     document.getElementById('version').textContent = release.version;
     document.getElementById('term-version').textContent = release.version;
+    if (file.size) document.getElementById('size').textContent = (file.size / 1e6).toFixed(1) + ' MB';
     var checksum = document.getElementById('checksum');
     checksum.textContent = 'SHA-256: ';
     var sha = document.createElement('code');

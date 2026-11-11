@@ -844,12 +844,14 @@ cargo clippy --all-targets
 
 | What | Measured |
 |---|---|
-| Release binary (static, stripped) | 2.5 MB (0.7.0) |
-| Start to the prompt, server found | ~40 ms |
-| Memory at the prompt | ~3 MB |
+| Release binary (static, stripped) | 2.8 MB (0.8.1) |
+| Start to the prompt, server found | ~40 ms (0.8.1) |
+| Memory at the prompt | 2.4 MB (0.8.1) |
 | Auto's judge, a 27B model with reasoning off (Ollama 0.40.2) | 0.3–2 s a step; 6–22 s with reasoning; the conversation's prompt cache stays |
 
-Measured on a current laptop, under WSL; the judge on a consumer GPU.
+Measured on a current laptop, under WSL; the judge on a consumer GPU. The
+page's "Light" column and the README quote the first three: a change that
+moves them past what's written there changes the words too.
 
 - **Several sessions on one LM Studio:** with `parallel = 1`, the usual
   per-model default, a second request waits for the first. With 2 slots

@@ -1,13 +1,15 @@
 # Lokal
 
-A terminal assistant for Linux that runs on a model on your own machine.
-You ask in plain words. It runs commands, reads your files and changes them,
+A terminal agent for Linux in one small file, on the model on your own
+machine: no account, no key, and your work stays on it. You ask in plain
+words. It runs commands, reads your files and changes them,
 and asks before anything changes. With a model that can see, it looks at
 images too.
 
-It talks to LM Studio, or to any server that speaks the OpenAI chat API
-(Ollama works too). It finds the server by itself, also from WSL when the
-server runs on Windows. It is one file of about 2 MB.
+It talks to Ollama, LM Studio, or any server that speaks the OpenAI chat
+API, and finds the first two by itself, also from WSL when the server runs
+on Windows. It is one static file of about 3 MB, starts in about 40 ms and
+holds under 3 MB of memory.
 
 ## Install
 
