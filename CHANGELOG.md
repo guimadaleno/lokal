@@ -5,6 +5,15 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.9.0 — 2026-11-11
+
+- Lokal finds Ollama on its own, as it does LM Studio: on this machine,
+  and from WSL on Windows. `server = localhost:11434` in the settings is
+  no longer needed. When both run, LM Studio comes first.
+- On Ollama, without a `model` in the settings, Lokal takes a model that
+  can use tools, a loaded one first, instead of the first one Ollama lists,
+  which could be an embedding model.
+
 ## 0.8.1 — 2026-11-10
 
 - While the model writes a file after a sentence of text, the spinner shows
