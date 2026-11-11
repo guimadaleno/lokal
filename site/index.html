@@ -99,6 +99,13 @@ main { position: relative; }
 .install-note code { font-size: 12px; }
 .install-note .sha { word-break: break-all; }
 .install-note .checksum { display: block; margin-top: 4px; }
+/* The source, right where the reader decides to trust the file. Raised, so
+   the backdrop's cells don't show through it. */
+.source { margin: 18px 0 0; }
+.source a { display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border: 1px solid var(--rule); border-radius: 999px; background: var(--raised); color: var(--muted); font-size: 14px; line-height: 1; text-decoration: none; transition: color .15s, border-color .15s; }
+.source a:hover, .source a:focus-visible { color: var(--ink); border-color: var(--muted); }
+.source a:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+.source svg { width: 16px; height: 16px; fill: currentColor; flex: none; }
 
 @keyframes breathe { 0%, 100% { transform: scale(.6); opacity: .6; } 50% { transform: scale(1); opacity: 1; } }
 .breathe { transform-origin: center; transform-box: fill-box; animation: breathe 1.6s ease-in-out infinite; }
@@ -155,6 +162,7 @@ footer { margin-top: 64px; padding: 24px 0 48px; border-top: 1px solid var(--rul
 
     <div class="install"><code id="install"><span>curl -fsSLo lokal</span> <span id="install-url">https://download.guimadaleno.com/lokal/0.3.0/lokal</span> <span>&amp;&amp; chmod +x lokal</span> <span>&amp;&amp; ./lokal --install</span></code><button type="button" data-copy="install">Copy</button></div>
     <p class="install-note">Version <span id="version">0.3.0</span>, for Linux and WSL on x86-64. One file, which installs itself in <code>~/.local/bin</code> and keeps itself up to date. <span id="checksum" class="checksum">Its SHA-256 is in <a href="https://download.guimadaleno.com/lokal/SHA256SUMS">SHA256SUMS</a>.</span></p>
+    <p class="source"><a href="https://github.com/guimadaleno/lokal"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>Source on GitHub</a></p>
 
     <!-- The last frame of the conversation the script plays, and what shows
          without it. data-type is typed at the prompt; data-think and data-run
@@ -219,6 +227,7 @@ footer { margin-top: 64px; padding: 24px 0 48px; border-top: 1px solid var(--rul
   <footer>
     <span>Made by Guilherme Madaleno</span>
     <a href="https://guimadaleno.com">guimadaleno.com</a>
+    <a href="https://github.com/guimadaleno/lokal">GitHub</a>
   </footer>
 </main>
 

@@ -996,7 +996,6 @@ Decided, and kept here so they aren't undone:
 ## Names that must appear
 
 Credits the product carries (`/about`, the page, `Cargo.toml`): the author,
-Guilherme Madaleno, and https://guimadaleno.com. **The repository's address,
-https://github.com/guimadaleno/lokal, stays in `Cargo.toml` only:** the
-repository is private, so a link to it on screen or on the page would lead
-nowhere.
+Guilherme Madaleno, and https://guimadaleno.com. **The repository,
+https://github.com/guimadaleno/lokal, is public:** `Cargo.toml` names it, and
+the page links to it under the install line and in the footer.
