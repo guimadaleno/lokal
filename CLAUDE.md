@@ -758,10 +758,12 @@ embedding model too. Last checked against **Ollama 0.40.15**, on
 | A tool call comes whole once the model has written it, with nothing streaming meanwhile: 19 s for a file of 60 lines, after a sentence of text (0.40.2). So text that stops for 1.5 s is ended there, with its blank line, and the spinner shows under it, the time alone while nothing comes (`TEXT_PAUSE`) | `conversation.rs` (`ask_model`) | a streamed request with one tool that asks for a sentence, then a file written with the tool |
 | An `image_url` part with a base64 `data:` URL in a `tool` message's content reaches a model with `vision` (tried with Qwen 3.8 27B and LFM3-VL 2B); a GIF gets HTTP 400 (`invalid image input`). An image adds about pixels / 1024 tokens with Qwen and with LFM3-VL, up to about 4 MP, where Ollama shrinks it | `image.rs`, `files.rs` | the same request as LM Studio's, with a PNG, a JPEG, a WebP and a GIF |
 
-**The page's "Set up LM Studio" steps name its screens and options** (the
-Developer tab, "Serve on Local Network", the mark on models that use tools).
-When LM Studio changes, check those words in `site/index.html` and
-`README.md` too. Both also list what Lokal won't do: a change to the
+**The page's "Set up a model" tabs name each server's screens and
+options:** LM Studio's Developer tab, "Serve on Local Network" and the mark
+on models that use tools; Ollama's context slider, `OLLAMA_CONTEXT_LENGTH`,
+`OLLAMA_HOST` and the `tools` that `ollama show` lists (from its FAQ and
+context-length pages, 2026-11-11). When either changes, check those words
+in `site/index.html` and `README.md` too. Both also list what Lokal won't do: a change to the
 refusals changes them with it.
 
 ## Build and validation
@@ -910,6 +912,10 @@ moves them past what's written there changes the words too.
 - **A turn mail started stays manual in every mode:** checked by a unit
   test (`mode::for_step`) and by reading `run_tools`, not run with two
   sessions in auto.
+- **Ollama on Windows, found from WSL:** Lokal looks at the Windows host's
+  11434 as it does at 1234, and the page says to set `OLLAMA_HOST` to
+  `0.0.0.0:11434` there. Only Ollama inside WSL has been found on its own
+  (0.40.2, 2026-11-11). Still owed: Ollama on Windows found from WSL.
 - **Servers other than LM Studio:** the chat path should work with any
   OpenAI-compatible server through `server = host:port`. Only Ollama 0.40.2
   has been tried, under WSL: a conversation with a command step, in auto.

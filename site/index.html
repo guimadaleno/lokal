@@ -138,6 +138,13 @@ main { position: relative; }
 .steps h2, .refuses h2 { font-size: 24px; margin: 0 0 6px; }
 .steps > p, .refuses > p { color: var(--muted); margin: 0 0 20px; }
 .steps ol { margin: 0; padding: 0; list-style: none; counter-reset: step; display: grid; gap: 12px; }
+.steps ol[hidden] { display: none; }
+/* One tab a server: a segmented control, the open one raised. */
+.tabs { display: inline-flex; gap: 2px; padding: 3px; margin: 0 0 16px; border: 1px solid var(--rule); border-radius: 999px; background: var(--ground); }
+.tabs button { border: 0; border-radius: 999px; padding: 7px 16px; background: transparent; color: var(--muted); font: 600 14px/1 system-ui, sans-serif; cursor: pointer; transition: color .15s, background-color .15s, box-shadow .15s; }
+.tabs button:hover { color: var(--ink); }
+.tabs button[aria-selected="true"] { background: var(--raised); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .12), 0 0 0 1px var(--rule); }
+.tabs button:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
 .steps li { counter-increment: step; display: grid; grid-template-columns: 32px 1fr; gap: 12px; background: var(--raised); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; }
 .steps li::before { content: counter(step); font: 600 14px/28px ui-monospace, Menlo, Consolas, monospace; color: var(--orange); text-align: center; border: 1px solid var(--rule); border-radius: 50%; width: 28px; height: 28px; }
 .steps li b { display: block; }
@@ -202,10 +209,21 @@ footer { margin-top: 64px; padding: 24px 0 48px; border-top: 1px solid var(--rul
     <div><h2>Asks before it acts</h2><p>Read-only commands run at once. Anything else waits for your yes, and every file change shows its diff first.</p></div>
   </section>
 
-  <section class="steps" id="lm-studio">
-    <h2>Set up LM Studio</h2>
-    <p>About five minutes, once.</p>
-    <ol>
+  <section class="steps" id="setup">
+    <h2>Set up a model</h2>
+    <p>About five minutes, once, with either server.</p>
+    <div class="tabs" role="tablist" aria-label="Model server">
+      <button type="button" role="tab" id="tab-ollama" aria-controls="ollama" aria-selected="true">Ollama</button>
+      <button type="button" role="tab" id="tab-lm-studio" aria-controls="lm-studio" aria-selected="false" tabindex="-1">LM Studio</button>
+    </div>
+    <ol id="ollama" role="tabpanel" aria-labelledby="tab-ollama">
+      <li><div><b>Install Ollama</b><span>From <a href="https://ollama.com">ollama.com</a>, on the machine that will run the model. Using WSL? It can run right inside it, as on any Linux.</span></div></li>
+      <li><div><b>Download a model that can use tools</b><span><code>ollama pull</code> one whose <code>ollama show</code> lists <code>tools</code>. Lokal needs one to run commands and edit files, and picks it on its own.</span></div></li>
+      <li><div><b>Give it room to work</b><span>A context of 32k tokens or more, with the slider in the app's settings or <code>OLLAMA_CONTEXT_LENGTH=32768</code> where Ollama runs: command output and files fill it up.</span></div></li>
+      <li><div><b>Ollama on Windows, Lokal in WSL? Let it reach Windows</b><span>Set <code>OLLAMA_HOST</code> to <code>0.0.0.0:11434</code> among your Windows account's environment variables, then restart Ollama. WSL reaches it over the network; Lokal finds the address by itself.</span></div></li>
+      <li><div><b>Run <code>lokal</code></b><span>That's it: it finds Ollama on its own. To pin a server or a model, write them in <code>~/.config/lokal/config</code>.</span></div></li>
+    </ol>
+    <ol id="lm-studio" role="tabpanel" aria-labelledby="tab-lm-studio">
       <li><div><b>Install LM Studio</b><span>From <a href="https://lmstudio.ai">lmstudio.ai</a>, on the machine that will run the model.</span></div></li>
       <li><div><b>Download a model that can use tools</b><span>LM Studio marks the models that support tool use; Lokal needs one to run commands and edit files.</span></div></li>
       <li><div><b>Load it with room to work</b><span>A context length of 32k tokens or more: command output and files fill it up.</span></div></li>
@@ -265,6 +283,31 @@ document.addEventListener('click', function (event) {
     setTimeout(function () { copy.textContent = 'Copy'; }, 1500);
   });
 });
+
+// The setup's tabs. Without this script, both lists show, one after the other.
+(function () {
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tabs [role="tab"]'));
+  function open(tab, focus) {
+    tabs.forEach(function (each) {
+      var on = each === tab;
+      each.setAttribute('aria-selected', on);
+      each.tabIndex = on ? 0 : -1;
+      document.getElementById(each.getAttribute('aria-controls')).hidden = !on;
+    });
+    if (focus) tab.focus();
+  }
+  tabs.forEach(function (tab, i) {
+    tab.addEventListener('click', function () { open(tab, false); });
+    tab.addEventListener('keydown', function (event) {
+      var to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[event.key];
+      if (to === undefined) return;
+      event.preventDefault();
+      open(tabs[(to + tabs.length) % tabs.length], true);
+    });
+  });
+  var asked = document.getElementById(location.hash.slice(1));
+  open(tabs.filter(function (tab) { return document.getElementById(tab.getAttribute('aria-controls')) === asked; })[0] || tabs[0], false);
+})();
 
 // #dark or #light, and -still to hold the animation: how screenshots are taken.
 (function () {

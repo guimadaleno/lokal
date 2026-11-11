@@ -29,19 +29,30 @@ A copy you build never updates itself.
 
 ## Set up a model
 
-1. Install [LM Studio](https://lmstudio.ai) on the machine that will run the
-   model.
+With [Ollama](https://ollama.com):
+
+1. Install it on the machine that will run the model. Using WSL? It can run
+   right inside it, as on any Linux.
+2. `ollama pull` a model whose `ollama show` lists `tools`. Lokal needs one
+   to run commands and edit files, and picks it on its own.
+3. Give it a context of 32K tokens or more, with the slider in the app's
+   settings or `OLLAMA_CONTEXT_LENGTH=32768` where Ollama runs: command
+   output and files fill it up.
+4. With Ollama on Windows and Lokal in WSL, set `OLLAMA_HOST` to
+   `0.0.0.0:11434` among your Windows account's environment variables, then
+   restart Ollama, so WSL can reach it.
+
+With [LM Studio](https://lmstudio.ai):
+
+1. Install it on the machine that will run the model.
 2. Download a model that can use tools. LM Studio marks them.
-3. Load it with a context of 32K tokens or more: command output and files
-   fill it up.
+3. Load it with a context of 32K tokens or more.
 4. In the Developer tab, switch the server on. Lokal looks for it on port
-   1234.
+   1234, and before Ollama's when both run.
 5. On WSL, turn on "Serve on Local Network" in the server's settings, so WSL
    can reach Windows.
 
-Ollama works the same way: Lokal finds it on its port, 11434, and takes a
-model that uses tools. With another server, set its address in
-`~/.config/lokal/config`:
+With another server, set its address in `~/.config/lokal/config`:
 
 ```
 server = 192.0.2.10:8080
