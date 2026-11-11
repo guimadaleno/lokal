@@ -541,6 +541,7 @@ of MCP servers the person sets up. One binary, few dependencies.
 | `spinner.rs`, `style.rs`, `interrupt.rs`, `text.rs` | Spinner, colors, Ctrl+C flag, every word on screen |
 | `site/` | The page at guimadaleno.com/lokal/, published by `.github/workflows/site.yml` |
 | `README.md` | What a person reads first in the repository: what Lokal is, setting up a model, what it won't do |
+| `.github/actions/publish/` | guimadaleno/base/release's publish action, **copied unchanged**: signs the manifest and uploads the release |
 | `.github/workflows/ci.yml` | Formatting, lints and tests on every push to main and every pull request |
 | `tools/icon.py` | Draws the mark and writes `site/`'s icons from one definition |
 
@@ -552,6 +553,10 @@ of MCP servers the person sets up. One binary, few dependencies.
   `guimadaleno/base/issues` (`client/report.rs`, `testdata/`). That's why both
   modules are declared with `#[rustfmt::skip]` and `#[allow(clippy::all)]`:
   an edit here makes the copies disagree.
+  - **So is `.github/actions/publish/`,** `guimadaleno/base/release`'s
+    `publish/` at `release-v1.2.0`: base is private, and a public repository
+    can't use an action from a private one (#42). A newer release tool comes
+    in as a fresh copy of its tag, named in `release.yml`'s comment.
 - **Only the release workflow's build updates itself.** `update.rs` is
   compiled in only with `LOKAL_RELEASE_BUILD` set. Without that, a
   development build would replace itself and undo the rebuild.
@@ -818,7 +823,8 @@ cargo clippy --all-targets
 
 - **A release is a `v<version>` tag.** `.github/workflows/release.yml`
   builds it and publishes it to `download.guimadaleno.com/lokal/` with
-  `guimadaleno/base/release`'s action. Read its README before
+  `guimadaleno/base/release`'s action, copied into `.github/actions/publish/`.
+  Read its README before
   touching `update.rs`, `install.rs`, the workflow or the key.
 - **Every tag reaches every installed copy, unasked,** so a tag is pushed
   only when the user says so.
@@ -837,6 +843,9 @@ cargo clippy --all-targets
 - **`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` are the repository's
   secrets** for the `guimadaleno-update-lokal` bucket, and are scoped to that
   bucket only.
+- **The R2 endpoint in `.github/actions/publish/action.yml` names the
+  Cloudflare account's ID.** It's no secret, the upload can't do without
+  it, and the token above is what guards the bucket.
 - **The page publishes with the same R2 token,** like the other apps' pages:
   `site.yml` copies `site/` into `page/` in Lokal's bucket, never deleting,
   and the site's Worker serves that prefix at guimadaleno.com/lokal/. Without

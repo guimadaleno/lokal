@@ -1,0 +1,106 @@
+# The part of every release that is the same for every app: sign the manifest,
+# put the files in the app's bucket, put the manifest after them, and read it
+# all back from download.guimadaleno.com as an installed copy would.
+#
+#   - uses: guimadaleno/release/publish@v1.2.0
+#     with:
+#       app: kent
+#       version: 0.6.0
+#       dir: out            # out/files/, out/downloads/, out/notes/
+#       update-key: ${{ secrets.UPDATE_KEY }}
+#       r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+#       r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+#
+# The caller has checked out its repository (update.pub is read from it), and
+# runs this job in a concurrency group, so two releases of one app never race.
+# What goes in `dir` and why is README.md's.
+name: Publish a release
+description: Signs the manifest and publishes the release to download.guimadaleno.com.
+
+inputs:
+  app:                  { description: "The app's name, as in its URL", required: true }
+  version:              { description: "The version, without the v", required: true }
+  dir:                  { description: "The laid-out release", required: false, default: out }
+  public-key:           { description: "The public half, 64 hex characters", required: false, default: update.pub }
+  update-key:           { description: "The private half: PEM, or the seed as 64 hex", required: true }
+  r2-access-key-id:     { description: "R2 token for this app's bucket only", required: true }
+  r2-secret-access-key: { description: "R2 token for this app's bucket only", required: true }
+
+runs:
+  using: composite
+  steps:
+    # Before anything is uploaded: a version that is not after the published
+    # one is either a re-run of an old tag or a mistake, and clients would never
+    # take it anyway. This is also what makes overwriting the version's own
+    # folder below safe: no published manifest can name it yet.
+    - name: The version must be after the published one
+      shell: bash
+      env:
+        APP: ${{ inputs.app }}
+        VERSION: ${{ inputs.version }}
+      run: python3 "$GITHUB_ACTION_PATH/release.py" newer --app "$APP" --version "$VERSION"
+
+    - name: Sign the manifest
+      shell: bash
+      env:
+        APP: ${{ inputs.app }}
+        VERSION: ${{ inputs.version }}
+        DIR: ${{ inputs.dir }}
+        PUBLIC_KEY: ${{ inputs.public-key }}
+        UPDATE_KEY: ${{ inputs.update-key }}
+      run: |
+        python3 "$GITHUB_ACTION_PATH/release.py" sign \
+          --app "$APP" --version "$VERSION" --dir "$DIR" --public-key "$PUBLIC_KEY"
+
+    # The files first and the manifest last, so nothing is ever announced
+    # before it is there. A failure in between leaves files nobody points at,
+    # and running the release again replaces them.
+    - name: Upload the files, then the manifest
+      shell: bash
+      env:
+        APP: ${{ inputs.app }}
+        VERSION: ${{ inputs.version }}
+        DIR: ${{ inputs.dir }}
+        AWS_ACCESS_KEY_ID: ${{ inputs.r2-access-key-id }}
+        AWS_SECRET_ACCESS_KEY: ${{ inputs.r2-secret-access-key }}
+        # R2 has one region and calls it this.
+        AWS_DEFAULT_REGION: auto
+        # Recent versions of the CLI add a checksum to every upload that R2
+        # may refuse; these restore sending one only when the API asks.
+        AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+        AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+        R2: https://a19ad1e47e79dcf2e1dd764cb0559a66.r2.cloudflarestorage.com
+      run: |
+        set -euo pipefail
+        bucket="guimadaleno-update-$APP"
+        put() {
+          case "$2" in
+            *.json) type="application/json; charset=utf-8" ;;
+            *SHA256SUMS) type="text/plain; charset=utf-8" ;;
+            *.zip)  type="application/zip" ;;
+            *)      type="application/octet-stream" ;;
+          esac
+          aws s3 cp "$1" "s3://$bucket/$2" --endpoint-url "$R2" \
+            --content-type "$type" --no-progress --only-show-errors
+          echo "uploaded $2"
+        }
+        for f in "$DIR"/files/* "$DIR"/downloads/*; do
+          if [ -f "$f" ]; then put "$f" "$VERSION/$(basename "$f")"; fi
+        done
+        # The two names that always mean the newest release, and so the only
+        # two that change: the checksums a page links to, then the manifest.
+        put "$DIR/downloads/SHA256SUMS" SHA256SUMS
+        put "$DIR/latest.json" latest.json
+
+    - name: Read it back as an installed copy would
+      shell: bash
+      env:
+        APP: ${{ inputs.app }}
+        DIR: ${{ inputs.dir }}
+        PUBLIC_KEY: ${{ inputs.public-key }}
+      run: |
+        set -euo pipefail
+        curl -fsS -H 'Cache-Control: no-cache' "https://download.guimadaleno.com/$APP/latest.json" \
+          | cmp -s - "$DIR/latest.json" \
+          || { echo "::error::download.guimadaleno.com/$APP/latest.json is not the one just signed"; exit 1; }
+        python3 "$GITHUB_ACTION_PATH/release.py" verify --app "$APP" --url --fetch --public-key "$PUBLIC_KEY"
