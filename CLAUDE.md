@@ -741,14 +741,18 @@ Its About screen shows the same thing.
 
 ### Ollama, too
 
-With the server set to Ollama (`server = localhost:11434`), Lokal reads what
-it says about the model. Last checked against **Ollama 0.40.15**, on
+Lokal finds Ollama on its own on port 11434, after LM Studio's 1234 at
+each place it looks (`server::candidates`), or takes it from `server =
+localhost:11434`, and reads what it says about the model. Without `model =`,
+it takes the first loaded model that uses tools, or else the first listed
+that does (`server::pick_ollama_model`): Ollama lists every model pulled, an
+embedding model too. Last checked against **Ollama 0.40.15**, on
 2026-11-09.
 
 | Lokal relies on | Where | How to check |
 |---|---|---|
 | `GET /api/version` answers `{"version": "..."}`, which is how Lokal knows it's Ollama | `server.rs` (`is_ollama`) | `curl <host>:11434/api/version` |
-| `POST /api/show` with `{"model": "<id>"}` gives `capabilities` (`vision` when the model sees), `model_info["<general.architecture>.context_length"]` (the most it takes) and `parameters`, a text with the model's own `num_ctx` when it has one | `server.rs` (`ollama_model`) | `curl <host>:11434/api/show -d '{"model": "<id>"}'` |
+| `POST /api/show` with `{"model": "<id>"}` gives `capabilities` (`vision` when the model sees, `tools` when it calls them), `model_info["<general.architecture>.context_length"]` (the most it takes) and `parameters`, a text with the model's own `num_ctx` when it has one | `server.rs` (`ollama_model`) | `curl <host>:11434/api/show -d '{"model": "<id>"}'` |
 | `GET /api/ps` lists the loaded models, each `name` tagged (`:latest` when none was given), with `context_length` | `server.rs` (`loaded_context`) | `curl <host>:11434/api/ps` |
 | `max_tokens` caps a reply on `/v1/chat/completions` | `conversation.rs` | a request with `"max_tokens": 40` and a long question |
 | A tool call comes whole once the model has written it, with nothing streaming meanwhile: 19 s for a file of 60 lines, after a sentence of text (0.40.2). So text that stops for 1.5 s is ended there, with its blank line, and the spinner shows under it, the time alone while nothing comes (`TEXT_PAUSE`) | `conversation.rs` (`ask_model`) | a streamed request with one tool that asks for a sentence, then a file written with the tool |

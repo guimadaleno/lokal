@@ -10,6 +10,8 @@ use crate::{http, system, text};
 
 /// LM Studio's default port.
 const PORT: u16 = 1234;
+/// Ollama's.
+const OLLAMA_PORT: u16 = 11434;
 
 /// Which server it is: what Lokal can ask it beyond the chat API.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -90,17 +92,27 @@ fn address_from_setting(server: &str) -> Result<String, String> {
 
 /// Tries this machine first, then, under WSL, the Windows host.
 fn look_for_server() -> Result<String, String> {
-    let mut candidates = vec![format!("localhost:{PORT}")];
+    let mut hosts = vec!["localhost".to_string()];
     if system::is_wsl()
         && let Some(gateway) = system::default_gateway()
     {
-        candidates.push(format!("{gateway}:{PORT}"));
+        hosts.push(gateway.to_string());
     }
+    let candidates = candidates(&hosts);
     candidates
         .iter()
         .find(|address| is_listening(address))
         .cloned()
         .ok_or_else(|| text::no_server(&candidates))
+}
+
+/// At each host, LM Studio before Ollama: Ollama's service runs whenever
+/// it's installed, while LM Studio's server is switched on to be used.
+fn candidates(hosts: &[String]) -> Vec<String> {
+    hosts
+        .iter()
+        .flat_map(|host| [PORT, OLLAMA_PORT].map(|port| format!("{host}:{port}")))
+        .collect()
 }
 
 fn is_listening(address: &str) -> bool {
@@ -112,9 +124,10 @@ fn is_listening(address: &str) -> bool {
         .any(|socket| TcpStream::connect_timeout(&socket, Duration::from_millis(300)).is_ok())
 }
 
-/// The configured model, or else the one loaded in LM Studio, or else the
-/// first one an OpenAI-compatible server lists; with what the server says
-/// about it, when it's LM Studio or Ollama.
+/// The configured model, or else the one loaded in LM Studio, or else on
+/// Ollama one that uses tools (`pick_ollama_model`), or else the first one
+/// an OpenAI-compatible server lists; with what the server says about it,
+/// when it's LM Studio or Ollama.
 fn pick_model(address: &str, wanted: Option<&str>) -> Result<Model, String> {
     // LM Studio's own API says which model is loaded and with what context.
     if let Ok(listing) = http::get_json(address, "/api/v0/models")
@@ -123,22 +136,24 @@ fn pick_model(address: &str, wanted: Option<&str>) -> Result<Model, String> {
         return pick_lm_studio_model(models, wanted);
     }
     let listing = http::get_json(address, "/v1/models")?;
+    let listed: Vec<String> = listing["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|model| model["id"].as_str().map(String::from))
+        .collect();
+    if is_ollama(address) {
+        let running = http::get_json(address, "/api/ps").unwrap_or_default();
+        let (id, shown) = match wanted {
+            Some(model) => (model.to_string(), show(address, model)),
+            None => pick_ollama_model(address, &listed, &running)?,
+        };
+        return Ok(ollama_model(id, &shown, &running));
+    }
     let id = match wanted {
         Some(model) => model.to_string(),
-        None => listing["data"][0]["id"]
-            .as_str()
-            .ok_or(text::NO_MODELS)?
-            .to_string(),
+        None => listed.first().ok_or(text::NO_MODELS)?.clone(),
     };
-    if is_ollama(address) {
-        let shown = http::post_for_json(address, "/api/show", &json!({"model": id}));
-        let running = http::get_json(address, "/api/ps");
-        return Ok(ollama_model(
-            id,
-            &shown.unwrap_or_default(),
-            &running.unwrap_or_default(),
-        ));
-    }
     Ok(Model {
         id,
         context: None,
@@ -170,6 +185,52 @@ fn pick_lm_studio_model(models: &[Value], wanted: Option<&str>) -> Result<Model,
         kind: Kind::LmStudio,
         context_settled: true,
     })
+}
+
+/// Without a model in the settings: the first loaded one that uses tools,
+/// or else the first listed that does, since a model without them can't
+/// run a command or touch a file; or else the first listed. Ollama lists
+/// every model pulled, an embedding model too, and loads one on request.
+fn pick_ollama_model(
+    address: &str,
+    listed: &[String],
+    running: &Value,
+) -> Result<(String, Value), String> {
+    for id in ollama_candidates(listed, running) {
+        let shown = show(address, &id);
+        if uses_tools(&shown) {
+            return Ok((id, shown));
+        }
+    }
+    let first = listed.first().ok_or(text::NO_MODELS)?;
+    Ok((first.clone(), show(address, first)))
+}
+
+/// The loaded models first, as `/api/ps` lists them, then the rest.
+fn ollama_candidates(listed: &[String], running: &Value) -> Vec<String> {
+    let loaded = running["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|model| model["name"].as_str());
+    let mut candidates: Vec<String> = Vec::new();
+    for id in loaded.chain(listed.iter().map(String::as_str)) {
+        if !candidates.iter().any(|seen| seen == id) {
+            candidates.push(id.to_string());
+        }
+    }
+    candidates
+}
+
+/// What Ollama says about one model, or nothing.
+fn show(address: &str, id: &str) -> Value {
+    http::post_for_json(address, "/api/show", &json!({"model": id})).unwrap_or_default()
+}
+
+fn uses_tools(shown: &Value) -> bool {
+    shown["capabilities"]
+        .as_array()
+        .is_some_and(|capabilities| capabilities.iter().any(|capability| capability == "tools"))
 }
 
 /// Ollama says its version at an address of its own, where other servers
@@ -304,6 +365,39 @@ mod tests {
 
     fn running(name: &str, context: u64) -> Value {
         json!({"models": [{"name": name, "model": name, "context_length": context}]})
+    }
+
+    #[test]
+    fn looks_here_then_at_windows_lm_studio_before_ollama() {
+        assert_eq!(
+            candidates(&["localhost".into(), "192.0.2.1".into()]),
+            [
+                "localhost:1234",
+                "localhost:11434",
+                "192.0.2.1:1234",
+                "192.0.2.1:11434"
+            ]
+        );
+    }
+
+    #[test]
+    fn on_ollama_a_loaded_model_comes_first_and_each_once() {
+        let listed = ["embed:latest".to_string(), "qwen:latest".to_string()];
+        assert_eq!(
+            ollama_candidates(&listed, &running("qwen:latest", 32768)),
+            ["qwen:latest", "embed:latest"]
+        );
+        assert_eq!(
+            ollama_candidates(&listed, &Value::Null),
+            ["embed:latest", "qwen:latest"]
+        );
+    }
+
+    #[test]
+    fn a_model_uses_tools_when_ollama_says_so() {
+        assert!(uses_tools(&shown("")));
+        assert!(!uses_tools(&json!({"capabilities": ["embedding"]})));
+        assert!(!uses_tools(&Value::Null));
     }
 
     #[test]

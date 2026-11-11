@@ -75,7 +75,8 @@ pub const SETTINGS_TEMPLATE: &str = "\
 # The model server, when Lokal shouldn't look for it on its own:
 # server = 192.0.2.10:1234
 
-# The model, when it shouldn't take the one LM Studio has loaded:
+# The model, when it shouldn't take the one LM Studio has loaded, or on
+# Ollama the first that uses tools, a loaded one before the rest:
 # model = name-of-a-model
 
 # The daily update check:
@@ -919,9 +920,13 @@ pub fn bad_mail_turns_setting(path: &str, line: usize) -> String {
 }
 
 pub fn no_server(tried: &[String]) -> String {
+    let tried = match tried.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
+    };
     format!(
-        "Couldn't find a model server (tried {}). Is LM Studio's server running? You can also set `server` in ~/.config/lokal/config.",
-        tried.join(" and ")
+        "Couldn't find a model server (tried {tried}). Is Ollama or LM Studio's server running? You can also set `server` in ~/.config/lokal/config."
     )
 }
 
@@ -955,6 +960,14 @@ mod tests {
         assert_eq!(duration(Duration::from_secs(42)), "42s");
         assert_eq!(duration(Duration::from_secs(65)), "1m 05s");
         assert_eq!(duration(Duration::from_secs(2 * 3600 + 65)), "2h 01m 05s");
+    }
+
+    #[test]
+    fn the_addresses_tried_read_as_a_list() {
+        let tried = |n: usize| -> Vec<String> { (1..=n).map(|i| format!("h{i}:1")).collect() };
+        assert!(no_server(&tried(1)).contains("(tried h1:1)"));
+        assert!(no_server(&tried(2)).contains("(tried h1:1 and h2:1)"));
+        assert!(no_server(&tried(4)).contains("(tried h1:1, h2:1, h3:1 and h4:1)"));
     }
 
     #[test]

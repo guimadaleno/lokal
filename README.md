@@ -37,10 +37,12 @@ A copy you build never updates itself.
 5. On WSL, turn on "Serve on Local Network" in the server's settings, so WSL
    can reach Windows.
 
-With another server, set its address in `~/.config/lokal/config`:
+Ollama works the same way: Lokal finds it on its port, 11434, and takes a
+model that uses tools. With another server, set its address in
+`~/.config/lokal/config`:
 
 ```
-server = localhost:11434
+server = 192.0.2.10:8080
 model = some-model
 ```
 
