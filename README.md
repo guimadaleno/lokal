@@ -115,3 +115,7 @@ what each server's tools cost in context.
 ## Made by
 
 Guilherme Madaleno, [guimadaleno.com](https://guimadaleno.com).
+
+## License
+
+MIT, in [LICENSE](LICENSE).

@@ -4,6 +4,7 @@ version = "0.9.0"
 edition = "2024"
 description = "A terminal assistant that runs on a local model"
 authors = ["Guilherme Madaleno"]
+license = "MIT"
 homepage = "https://guimadaleno.com"
 repository = "https://github.com/guimadaleno/lokal"
 

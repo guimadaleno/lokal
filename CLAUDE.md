@@ -976,9 +976,10 @@ Tracked as issues:
   default, with a `context` setting**, and `server.rs` moved to `/api/v1`
   with it (#19).
 
-Not tracked: a license, not chosen yet.
 
 Decided, and kept here so they aren't undone:
+
+- **The MIT license** (`LICENSE`), chosen as the repository went public.
 
 - **No `/allow <program>`:** the person vouches for the program, but the
   model picks the arguments, and one program alone (yt-dlp) has `--exec`, a
