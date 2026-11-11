@@ -2,9 +2,9 @@
 # put the files in the app's bucket, put the manifest after them, and read it
 # all back from download.guimadaleno.com as an installed copy would.
 #
-#   - uses: guimadaleno/release/publish@v1.2.0
+#   - uses: guimadaleno/base/release/publish@release-v1.2.0
 #     with:
-#       app: kent
+#       app: molde
 #       version: 0.6.0
 #       dir: out            # out/files/, out/downloads/, out/notes/
 #       update-key: ${{ secrets.UPDATE_KEY }}

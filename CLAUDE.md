@@ -554,9 +554,10 @@ of MCP servers the person sets up. One binary, few dependencies.
   modules are declared with `#[rustfmt::skip]` and `#[allow(clippy::all)]`:
   an edit here makes the copies disagree.
   - **So is `.github/actions/publish/`,** `guimadaleno/base/release`'s
-    `publish/` at `release-v1.2.0`: base is private, and a public repository
-    can't use an action from a private one (#42). A newer release tool comes
-    in as a fresh copy of its tag, named in `release.yml`'s comment.
+    `publish/` as of base's 2541007, `release-v1.2.0`'s code with examples
+    that name no app: base is private, and a public repository can't use an
+    action from a private one (#42). A newer one comes in as a fresh copy,
+    its commit named in `release.yml`'s comment.
 - **Only the release workflow's build updates itself.** `update.rs` is
   compiled in only with `LOKAL_RELEASE_BUILD` set. Without that, a
   development build would replace itself and undo the rebuild.

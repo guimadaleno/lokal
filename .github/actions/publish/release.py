@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Makes and checks the one manifest every app updates from.
 
-    release.py sign   --app kent --version 0.6.0 --dir out [--public-key update.pub]
-    release.py newer  --app kent --version 0.6.0
-    release.py verify --app kent (FILE | --url) [--public-key update.pub] [--fetch]
+    release.py sign   --app molde --version 0.6.0 --dir out [--public-key update.pub]
+    release.py newer  --app molde --version 0.6.0
+    release.py verify --app molde (FILE | --url) [--public-key update.pub] [--fetch]
 
 `sign` reads the release laid out in --dir (files/, downloads/, notes/) and
 writes --dir/latest.json, signed with UPDATE_KEY from the environment: an
 Ed25519 private key in PEM, or its 32-byte seed as 64 hex characters (the form
-vovo-release keeps). `newer` refuses a version that is not after the one
+the key's offline copy keeps). `newer` refuses a version that is not after the one
 already published. `verify` opens a manifest the way an installed copy does,
 and with --fetch also downloads every file it names and checks it.
 

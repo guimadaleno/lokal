@@ -69,8 +69,9 @@ jobs:
           awk -v head="## $version " 'index($0, head) == 1 { on = 1; next } on && /^## / { exit } on' \
             CHANGELOG.md | sed '/./,$!d' > out/notes/en.txt
 
-      # guimadaleno/base/release's action at release-v1.2.0, copied here
-      # unchanged: a public repository can't use one from a private one.
+      # guimadaleno/base/release's action as of base's 2541007 (release-v1.2.0's
+      # code), copied here unchanged: a public repository can't use one from a
+      # private one.
       - name: Publish to download.guimadaleno.com
         uses: ./.github/actions/publish
         with:
