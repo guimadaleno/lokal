@@ -684,6 +684,15 @@ of MCP servers the person sets up. One binary, few dependencies.
     model gets it; nothing of it is written to disk.
 - **One reply gets at most half the context** (`max_tokens`). A model
   reasoning in circles then stops there instead of filling all of it.
+- **`/context` shows what fills the context, part by part,** as Claude
+  Code's does: the system prompt's sections (`prompt::sections`, which
+  join to the prompt itself), each tool, the conversation and its outputs,
+  what's free and the quarter kept for replies. They're Lokal's estimates,
+  on the high side, with the server's own count beside them once a reply
+  has given one. `/context raw` prints the next request as it goes: each
+  message's text under its role, the tools as JSON, control characters as
+  marks and an image as its size. What the server's chat template adds
+  around them never passes through Lokal.
 - **`/compact` sums up what came before the last turn** (`compact.rs`, #4),
   and the summary takes its place. The last turn stays exact.
   - **The model gets those messages as a transcript,** as data, in a

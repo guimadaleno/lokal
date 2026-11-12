@@ -30,6 +30,10 @@ mail = ask).";
 pub const COMMANDS: &[(&str, &str)] = &[
     ("/new", "start fresh"),
     ("/compact", "sum up the conversation to free context"),
+    (
+        "/context",
+        "show what fills the context; raw prints all of it",
+    ),
     ("/prefs", "edit what Lokal knows about you"),
     ("/memory", "edit the project's notes"),
     ("/config", "edit Lokal's settings"),
@@ -362,6 +366,51 @@ pub fn folder_stays(folder: &str) -> String {
 
 pub const THINKING: &str = "thinking";
 pub const NOTHING_TO_COMPACT: &str = "Nothing to compact yet.";
+
+/// `/context`'s rows: the system prompt's parts, then the rest.
+pub const PART_HOW_TO_WORK: &str = "how to work";
+pub const PART_MACHINE: &str = "this computer";
+pub const PART_SESSIONS: &str = "your sessions";
+pub const PART_RECON: &str = "/recon";
+pub const PART_CONTEXT: &str = "context size";
+pub const PART_NOTES: &str = "project notes";
+pub const PART_USER_MD: &str = "user.md";
+pub const CONTEXT_PROMPT: &str = "system prompt";
+pub const CONTEXT_TOOLS: &str = "tools";
+pub const CONTEXT_CONVERSATION: &str = "conversation";
+pub const CONTEXT_OUTPUTS: &str = "outputs";
+pub const CONTEXT_FREE: &str = "free";
+pub const CONTEXT_REPLY: &str = "kept for replies";
+pub const CONTEXT_RAW_HINT: &str = "/context raw prints all of it.";
+
+/// `/context`'s first line: "qwen3 · ~2.1k of 65,536 tokens · 3%".
+pub fn context_total(model: &str, tokens: u64, context: Option<u64>) -> String {
+    match context {
+        Some(context) => format!(
+            "{model} · ~{} of {} tokens · {}%",
+            short(tokens),
+            number(context),
+            (tokens * 100 / context.max(1)).min(100)
+        ),
+        None => format!("{model} · ~{} tokens · context size unknown", short(tokens)),
+    }
+}
+
+/// Under `/context`'s rows: where the numbers come from.
+pub fn context_estimated(counted: Option<u64>) -> String {
+    match counted {
+        Some(tokens) => format!(
+            "Lokal's estimates, on the high side. The server counted {} at the last reply.",
+            number(tokens)
+        ),
+        None => "Lokal's estimates, on the high side.".into(),
+    }
+}
+
+/// "~1.2k", for `/context`'s columns.
+pub fn about(tokens: u64) -> String {
+    format!("~{}", short(tokens))
+}
 pub const NOTHING_CHANGED: &str = "Nothing changed.";
 pub const NO_SUMMARY: &str = "The model wrote no summary. Nothing changed.";
 

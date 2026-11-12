@@ -99,6 +99,17 @@ enum Failure {
     Server(http::Failure),
 }
 
+/// What fills the context, part by part, in estimated tokens (`/context`).
+pub struct ContextUse {
+    /// The system prompt's parts, named.
+    pub prompt: Vec<(&'static str, u64)>,
+    /// Each tool the model is offered, by name.
+    pub tools: Vec<(String, u64)>,
+    /// The messages, and of them what the tools gave.
+    pub conversation: u64,
+    pub outputs: u64,
+}
+
 /// How `/compact` ended. Anything but `Done` leaves the conversation as it was.
 pub enum Compacted {
     /// Nothing before the last turn to sum up.
@@ -179,6 +190,48 @@ impl Conversation {
             .filter_map(|tool| tool["function"]["name"].as_str().map(String::from))
             .collect();
         (&self.system, names, context::estimate(self.fixed(), &[]))
+    }
+
+    /// What fills the context now, part by part (`/context`).
+    pub fn context_use(&self) -> ContextUse {
+        let prompt = prompt::sections(
+            &self.facts,
+            self.peers.as_ref().map(Peers::name),
+            &self.recon,
+            self.server.context,
+            &self.notes,
+            config::read_user_md().as_deref(),
+        )
+        .into_iter()
+        .map(|(name, text)| (name, context::tokens_in(&text)))
+        .collect();
+        let tools = self
+            .tools()
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|tool| {
+                let name = tool["function"]["name"].as_str().unwrap_or("?").to_string();
+                (name, context::tokens_in(&tool.to_string()))
+            })
+            .collect();
+        let outputs: Vec<Value> = self
+            .messages
+            .iter()
+            .filter(|message| message["role"] == "tool")
+            .cloned()
+            .collect();
+        ContextUse {
+            prompt,
+            tools,
+            conversation: context::estimate(0, &self.messages),
+            outputs: context::estimate(0, &outputs),
+        }
+    }
+
+    /// The next request as it would go to the server (`/context raw`).
+    pub fn next_request(&self) -> Value {
+        self.request_body()
     }
 
     /// Picks user.md up again after it changed.

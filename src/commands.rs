@@ -10,8 +10,8 @@ use crate::context;
 use crate::conversation::{Compacted, Conversation};
 use crate::input::Input;
 use crate::{
-    config, feedback, layout, memory, peers, recon, server, spinner, style, system, text, tty,
-    update,
+    config, feedback, image, layout, memory, peers, recon, server, spinner, style, system, text,
+    tty, update,
 };
 
 /// Past this many lines, user.md costs noticeable context on every turn.
@@ -38,13 +38,15 @@ pub struct Session {
 
 /// `/prefs` is a command; `/etc/hosts is broken` is a request.
 pub fn is_command(line: &str) -> bool {
-    compact_focus(line).is_some()
+    argument(line, "/compact").is_some()
+        || argument(line, "/context").is_some()
         || (line.starts_with('/') && !line.contains(' ') && !line[1..].contains('/'))
 }
 
-/// `/compact`, alone or with what the summary should focus on.
-fn compact_focus(line: &str) -> Option<&str> {
-    let rest = line.strip_prefix("/compact")?;
+/// What follows `command` on the line, for the commands that take a word
+/// or more: `/compact` what to focus on, `/context raw`.
+fn argument<'a>(line: &'a str, command: &str) -> Option<&'a str> {
+    let rest = line.strip_prefix(command)?;
     (rest.is_empty() || rest.starts_with(char::is_whitespace)).then(|| rest.trim())
 }
 
@@ -55,8 +57,18 @@ pub fn run_command(
     input: &mut Input,
     session: &mut Session,
 ) -> bool {
-    if let Some(focus) = compact_focus(command) {
+    if let Some(focus) = argument(command, "/compact") {
         compact(conversation, focus);
+        return true;
+    }
+    if let Some(what) = argument(command, "/context") {
+        eprintln!();
+        if what == "raw" {
+            print_raw_request(conversation);
+        } else {
+            print_context(conversation);
+        }
+        eprintln!();
         return true;
     }
     match command {
@@ -296,6 +308,121 @@ fn print_rows(rows: &[(&str, String)]) {
         for (index, line) in layout::wrapped(value, room).iter().enumerate() {
             let label = if index == 0 { *label } else { "" };
             eprintln!("  {}{line}", style::gray(&format!("{label:<10}")));
+        }
+    }
+}
+
+/// `/context`: what fills the context, part by part, in estimated tokens,
+/// with each part's share; then what's free and what's kept for replies.
+fn print_context(conversation: &Conversation) {
+    let used = conversation.context_use();
+    let context = conversation.server.context;
+    let prompt: u64 = used.prompt.iter().map(|(_, tokens)| tokens).sum();
+    let tools: u64 = used.tools.iter().map(|(_, tokens)| tokens).sum();
+    let total = prompt + tools + used.conversation;
+    let share = |tokens: u64| {
+        context.map_or_else(String::new, |context| {
+            format!("{:>4}%", (tokens * 100).div_ceil(context.max(1)))
+        })
+    };
+    let row = |label: &str, tokens: u64, indent: bool| {
+        let (label, tokens) = if indent {
+            (
+                format!("  {label}"),
+                style::gray(&format!("{:>7}", text::about(tokens))),
+            )
+        } else {
+            (
+                label.to_string(),
+                format!("{:>7}{}", text::about(tokens), style::gray(&share(tokens))),
+            )
+        };
+        eprintln!("  {}{tokens}", style::gray(&format!("{label:<18}")));
+    };
+    eprintln!(
+        "  {}\n",
+        text::context_total(&conversation.server.model, total, context)
+    );
+    row(text::CONTEXT_PROMPT, prompt, false);
+    for (name, tokens) in &used.prompt {
+        row(name, *tokens, true);
+    }
+    row(text::CONTEXT_TOOLS, tools, false);
+    for (name, tokens) in &used.tools {
+        row(&layout::printable(name), *tokens, true);
+    }
+    row(text::CONTEXT_CONVERSATION, used.conversation, false);
+    if used.outputs > 0 {
+        row(text::CONTEXT_OUTPUTS, used.outputs, true);
+    }
+    if let Some(context) = context {
+        // A quarter stays for the model's reasoning and reply (`context::budget`).
+        let kept = context / 4;
+        row(
+            text::CONTEXT_FREE,
+            context.saturating_sub(total + kept),
+            false,
+        );
+        row(text::CONTEXT_REPLY, kept, false);
+    }
+    eprintln!();
+    eprintln!(
+        "{}",
+        style::gray(&text::context_estimated(conversation.tokens()))
+    );
+    eprintln!("{}", style::gray(text::CONTEXT_RAW_HINT));
+}
+
+/// `/context raw`: the next request as the server would get it, each
+/// message under its role, its text as the model gets it. Control
+/// characters show as marks, and an image as its size, not its data.
+fn print_raw_request(conversation: &Conversation) {
+    let mut request = conversation.next_request();
+    let messages = request["messages"].take();
+    let tools = request["tools"].take();
+    if let Some(fields) = request.as_object_mut() {
+        fields.retain(|_, value| !value.is_null());
+    }
+    eprintln!("{}", style::faint(&request.to_string()));
+    for message in messages.as_array().into_iter().flatten() {
+        let role = message["role"].as_str().unwrap_or("?");
+        eprintln!("\n{}", style::faint(&format!("── {role} ──")));
+        match &message["content"] {
+            serde_json::Value::String(content) if !content.is_empty() => {
+                eprintln!("{}", layout::printable(content));
+            }
+            serde_json::Value::Array(parts) => {
+                for part in parts {
+                    match part["text"].as_str() {
+                        Some(text) => eprintln!("{}", layout::printable(text)),
+                        None => eprintln!(
+                            "{}",
+                            style::faint(&format!(
+                                "[image, {}]",
+                                text::about(
+                                    image::tokens_in_url(
+                                        part["image_url"]["url"].as_str().unwrap_or_default()
+                                    )
+                                    .unwrap_or(0)
+                                )
+                            ))
+                        ),
+                    }
+                }
+            }
+            _ => {}
+        }
+        for call in message["tool_calls"].as_array().into_iter().flatten() {
+            let name = call["function"]["name"].as_str().unwrap_or("?");
+            let arguments = call["function"]["arguments"].as_str().unwrap_or_default();
+            eprintln!("{}", style::faint(&format!("→ {name}")));
+            eprintln!("{}", layout::printable(arguments));
+        }
+        // The system prompt's place: the tools follow it in the request.
+        if role == "system" {
+            eprintln!("\n{}", style::faint("── tools ──"));
+            let tools = serde_json::to_string_pretty(&tools).unwrap_or_default();
+            eprintln!("{}", layout::printable(&tools));
         }
     }
 }
