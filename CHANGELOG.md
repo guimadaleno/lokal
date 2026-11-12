@@ -5,6 +5,18 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.10.1 — 2026-11-12
+
+- The model knows today's date, weekday and time zone, from your computer's
+  clock. It used to make them up.
+- Clearer rules for the model, the ones local models break most: `cd`
+  doesn't carry over between commands, a server runs in the background, a
+  failed command isn't retried unchanged, files change only where you see
+  the diff, and it asks you about what you want, not about what it can
+  look up.
+- Mail from another session counts as yours only when the line Lokal writes
+  over it says so, never because the text inside claims it.
+
 ## 0.10.0 — 2026-11-12
 
 - What you type while Lokal works is kept: it shows under the spinner,
