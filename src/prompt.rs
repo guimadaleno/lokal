@@ -60,6 +60,16 @@ pub fn sections(
 ) -> Vec<(&'static str, String)> {
     let mut sections = vec![(text::PART_HOW_TO_WORK, HOW_TO_WORK.to_string())];
     let mut machine = String::from("\n\nThis computer:\n");
+    if let Some(today) = &facts.today {
+        let zone = facts
+            .zone
+            .as_ref()
+            .map(|zone| format!(", time zone {zone}"))
+            .unwrap_or_default();
+        machine.push_str(&format!(
+            "- Today, from this computer's clock: {today}{zone}\n"
+        ));
+    }
     let system = if facts.wsl {
         format!("{}, in WSL on Windows", facts.os)
     } else {

@@ -19,6 +19,11 @@ pub struct Facts {
     pub windows_folders: Vec<(&'static str, String)>,
     /// The session's folder for temporary files, when there is one (`scratch.rs`).
     pub scratch: Option<String>,
+    /// The local date as the session started, "Thursday, 2026-11-12": a
+    /// model has no idea what year it is, and makes up the weekday.
+    pub today: Option<String>,
+    /// The time zone, as `/recon` finds it.
+    pub zone: Option<String>,
 }
 
 pub fn gather() -> Facts {
@@ -33,7 +38,39 @@ pub fn gather() -> Facts {
             .unwrap_or_default(),
         windows_folders: if wsl { windows_folders() } else { Vec::new() },
         scratch: None,
+        today: today(),
+        zone: crate::recon::time_zone(),
     }
+}
+
+/// Today's local date, as "Thursday, 2026-11-12".
+fn today() -> Option<String> {
+    // SAFETY: time with a null pointer only returns the time; localtime_r
+    // fills the tm it's given, which is plain data.
+    let date = unsafe {
+        let now = libc::time(std::ptr::null_mut());
+        let mut local: libc::tm = std::mem::zeroed();
+        if libc::localtime_r(&now, &mut local).is_null() {
+            return None;
+        }
+        local
+    };
+    const WEEKDAYS: [&str; 7] = [
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+    ];
+    Some(format!(
+        "{}, {:04}-{:02}-{:02}",
+        WEEKDAYS.get(date.tm_wday as usize)?,
+        date.tm_year + 1900,
+        date.tm_mon + 1,
+        date.tm_mday
+    ))
 }
 
 pub fn is_wsl() -> bool {

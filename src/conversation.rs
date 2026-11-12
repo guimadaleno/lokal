@@ -1120,6 +1120,8 @@ mod tests {
                 cwd: String::new(),
                 windows_folders: Vec::new(),
                 scratch: None,
+                today: None,
+                zone: None,
             },
             recon: Vec::new(),
             notes: Vec::new(),

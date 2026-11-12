@@ -162,7 +162,9 @@ fn memory_gigabytes() -> Option<u64> {
     Some((kilobytes + 512 * 1024) / (1024 * 1024))
 }
 
-fn time_zone() -> Option<String> {
+/// The time zone's name, from `TZ`, `/etc/timezone` or where `/etc/localtime`
+/// leads; one short clean line.
+pub fn time_zone() -> Option<String> {
     let zone = env::var("TZ")
         .ok()
         .or_else(|| fs::read_to_string("/etc/timezone").ok())
