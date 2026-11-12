@@ -452,6 +452,14 @@ of MCP servers the person sets up. One binary, few dependencies.
 - **Every word on screen lives in `src/text.rs`.** The voice is casual but
   precise, like a colleague, with no jokes and no emoji. Approval prompts,
   "Stopped." and errors stay plain.
+  - **Short first (#45):** one line, the fact first, and a why only where
+    it changes what the person does next ("Reasoning on for this
+    session."). An approval question, the auto warning, the reason a
+    question opens on No, and an error that says what to do keep theirs:
+    cut short there, Lokal reads as offhand where it needs to be taken
+    seriously, and a No without its reason looks like a bug. What goes to
+    the model (a bracketed note in an output) is written for the model,
+    not shortened for the screen.
   - **The page's terminal plays the real screen** (`site/index.html`): the
     approval's options, the working labels, the prompt's status, the
     spinner's frames, the reasoning window (as `/reasoning` shows it) and

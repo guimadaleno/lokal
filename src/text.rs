@@ -17,11 +17,11 @@ pub const MADE_BY: &str = "Made by";
 pub const USAGE: &str = "\
 Usage:
   lokal              start a conversation
-  lokal <request>    ask one thing, get the answer, done
+  lokal <request>    ask one thing, get the answer
   lokal -r           pick up the last conversation
   lokal -r <request> add to the last conversation
-  lokal --install    put this copy in ~/.local/bin, where it keeps itself up to date
-  lokal --uninstall  remove it from ~/.local/bin, and your files if you say so
+  lokal --install    install to ~/.local/bin, where it keeps itself up to date
+  lokal --uninstall  remove it, and your files if you say so
 
 Settings live in ~/.config/lokal/config (server = 192.0.2.10:1234, model = name, updates = off,
 mail = ask).";
@@ -30,23 +30,14 @@ mail = ask).";
 pub const COMMANDS: &[(&str, &str)] = &[
     ("/new", "start fresh"),
     ("/prefs", "edit what Lokal knows about you"),
-    ("/memory", "edit the project's notes for the model"),
+    ("/memory", "edit the project's notes"),
     ("/config", "edit Lokal's settings"),
-    ("/info", "show the model, the server and what's in use"),
-    (
-        "/recon",
-        "tell the model about this machine and the project",
-    ),
-    ("/update", "check for a newer Lokal now"),
+    ("/info", "show the model, server and context in use"),
+    ("/recon", "tell the model about this machine and project"),
+    ("/update", "check for updates"),
     ("/reasoning", "show or hide the model's reasoning"),
-    (
-        "/sysprompt",
-        "show what the model is told before your first message",
-    ),
-    (
-        "/sessions",
-        "list your other Lokal sessions and what each is doing",
-    ),
+    ("/sysprompt", "show the system prompt"),
+    ("/sessions", "list your other sessions"),
     ("/feedback", "report a problem or an idea"),
     ("/help", "show commands and keys"),
     ("/about", "who made Lokal"),
@@ -54,19 +45,16 @@ pub const COMMANDS: &[(&str, &str)] = &[
 ];
 
 pub const HELP_KEYS: &str = "\
-Tab completes a command. Ctrl+C or Esc stops whatever's running; at the >,
-Ctrl+C clears what you typed, and twice on an empty line it quits.
-A line starting with ! runs the rest as your own command, and what it gives
-goes to the model with your next message.
-Shift+Tab goes from asking for everything to accept edits, where a change to
-a file in the working folder goes through once its diff shows, then to auto,
-where the model, asked apart, also lets commands run and files change
-elsewhere. What can't be undone or leaves your machine always asks.
-Mail from your other Lokal sessions shows above the >. Waiting mail goes to
-the model with Enter on an empty line, and Esc drops it. A line starting
-with @name mails that session.
-Ctrl+V or Alt+V pastes the clipboard's image as [Image #1], for a model that sees.
-MCP servers set as mcp.<name> in /config offer their tools; each call asks.
+Tab completes a command. Esc or Ctrl+C stops what's running; at the >,
+Ctrl+C clears the line, and twice on an empty one quits.
+!command runs your own command; its output goes with your next message.
+Shift+Tab cycles: asking for everything, accept edits (file changes in the
+working folder go through), auto (the model, asked apart, approves the rest).
+What can't be undone or leaves your machine always asks.
+Mail from your other sessions shows above the >: Enter passes it on, Esc
+drops it. @name mails a session.
+Ctrl+V or Alt+V pastes an image as [Image #1], for a model that sees.
+MCP servers (mcp.<name> in /config) offer their tools; each call asks.
 lokal -r picks up the last conversation.";
 
 pub const SETTINGS_TEMPLATE: &str = "\
@@ -95,15 +83,15 @@ pub const SETTINGS_TEMPLATE: &str = "\
 # Only some of a server's tools, to save context:
 # mcp.files.tools = read_text_file, list_directory
 ";
-pub const SETTINGS_NEXT_START: &str = "Saved. Settings apply the next time Lokal starts.";
+pub const SETTINGS_NEXT_START: &str = "Saved. It applies the next time Lokal starts.";
 
-pub const FIRST_QUESTION: &str = "Before we start: how do you like your answers? (Enter to skip)";
+pub const FIRST_QUESTION: &str = "How do you like your answers? (Enter skips)";
 pub const PREFS_HEADING: &str = "How I like answers:";
 pub const NEW_CONVERSATION: &str = "Fresh start.";
 pub const RESUMED: &str = "Picking up where we left off.";
 pub const NOTHING_TO_RESUME: &str = "Nothing to pick up yet.";
 pub const STOPPED: &str = "Stopped.";
-pub const QUIT_AGAIN: &str = "Press Ctrl+C again to quit";
+pub const QUIT_AGAIN: &str = "Ctrl+C again to quit";
 
 pub const RUN_QUESTION: &str = "Run it?";
 pub const WRITE_QUESTION: &str = "Write it?";
@@ -119,7 +107,7 @@ pub const APPROVALS_HEADER: &str = "\
 # Commands Lokal runs without asking, by project: the project's folder, a tab,
 # then the exact command. Delete a line to be asked again.
 ";
-pub const NO_TERMINAL: &str = "Skipped: there's no terminal to ask you on.";
+pub const NO_TERMINAL: &str = "Skipped: no terminal to ask on.";
 
 /// The mode, at the right of the `>` and beside the spinner. Manual has
 /// none: it's how Lokal always works.
@@ -136,7 +124,7 @@ pub fn mode_name(mode: crate::mode::Mode) -> Option<&'static str> {
 pub const MODE_KEYS: &str = "(Shift+Tab to cycle)";
 
 /// Under a diff that went through without a question.
-pub const WRITTEN_UNASKED: &str = "written without asking: edits are accepted";
+pub const WRITTEN_UNASKED: &str = "written: accept edits is on";
 
 /// Once a session, as auto is chosen.
 pub const AUTO_WARNING: &str = "Auto lets the model approve its own steps, and it'll get some \
@@ -175,9 +163,9 @@ pub fn cant_start_bash(error: &str) -> String {
     format!("Couldn't start bash: {error}")
 }
 pub const GIT_SETTINGS_UNREAD: &str =
-    "Lokal couldn't read this repository's git settings, so it asks first.";
-pub const GIT_ELSEWHERE: &str = "git may run in another repository here, or with other settings, \
-    and Lokal read only this folder's, so it asks first.";
+    "Couldn't read this repository's git settings, so Lokal asks.";
+pub const GIT_ELSEWHERE: &str =
+    "git may run in another repository or with other settings here, so Lokal asks.";
 
 /// From `lokal --box`, when the box couldn't be set up and nothing ran.
 pub fn box_unavailable(step: &str) -> String {
@@ -186,21 +174,16 @@ pub fn box_unavailable(step: &str) -> String {
 
 /// In auto, before a git command the judge would otherwise see.
 pub fn git_unusual_setting(setting: &str) -> String {
-    format!(
-        "This repository sets {setting} in its own git settings, and git may run a program for it, \
-         so Lokal asks first."
-    )
+    format!("This repository sets {setting}, which may make git run a program, so Lokal asks.")
 }
 
 pub fn git_runs_program(setting: &str) -> String {
-    format!(
-        "This repository's git settings name a program for git to run ({setting}), so Lokal asks first."
-    )
+    format!("This repository's git settings name a program to run ({setting}), so Lokal asks.")
 }
 
 /// In auto, before a git command the judge would otherwise see.
 pub fn git_runs_hook(hook: &str) -> String {
-    format!("This repository has a git hook ({hook}) that git may run, so Lokal asks first.")
+    format!("This repository has a git hook ({hook}), so Lokal asks.")
 }
 
 pub const STEP_READ: &str = "read";
@@ -213,18 +196,16 @@ pub const STEP_CREATE: &str = "create";
 pub const STEP_EDIT: &str = "edit";
 pub const STEP_REMEMBER: &str = "remember";
 pub const STEP_SESSIONS: &str = "sessions";
-pub const ALREADY_REMEMBERED: &str = "Already there, so nothing changes.";
+pub const ALREADY_REMEMBERED: &str = "Already there.";
 pub const NO_SESSIONS: &str = "no others open";
 pub const WORKING: &str = "working";
 pub const SESSION_ASKING: &str = "needs you";
 pub const SESSION_IDLE: &str = "idle";
-pub const MAIL_KEYS: &str = "Enter passes it to the model, Esc drops it.";
-pub const MAIL_TAKEN_UP: &str = "The model takes it up on its own; Esc stops it.";
-pub const MAIL_LATER: &str = "It goes along with the next turn.";
-pub const MAIL_AFTER_YOU: &str =
-    "It goes to the model once you're done here; Enter on an empty line passes it now.";
-pub const MAIL_HELD: &str = "You stopped the last turn mail started, so this one waits for \
-    your next request here; Enter passes it on now.";
+pub const MAIL_KEYS: &str = "Enter passes it on, Esc drops it.";
+pub const MAIL_TAKEN_UP: &str = "Taken up on its own; Esc stops it.";
+pub const MAIL_LATER: &str = "Goes with the next turn.";
+pub const MAIL_AFTER_YOU: &str = "Waits until you're done; Enter on an empty line passes it on.";
+pub const MAIL_HELD: &str = "On hold since you stopped the last mail turn; Enter passes it on.";
 
 /// Above a mail: "api-1:".
 pub fn mail_from(name: &str) -> String {
@@ -237,8 +218,7 @@ pub const MAIL_FROM_YOU: &str = "You:";
 /// Under a mail that waits since mail started as many turns as it may.
 pub fn mail_limit(turns: usize) -> String {
     format!(
-        "Mail started {turns} turns in a row on its own, the most it may, so this one waits for \
-         your next request here; Enter passes it on now."
+        "Mail started {turns} turns in a row, the limit, so this one waits; Enter passes it on."
     )
 }
 
@@ -279,22 +259,22 @@ pub fn session_doing(request: &str, files: &[String]) -> String {
 
 /// /sessions with no other session open.
 pub fn no_other_sessions(name: &str) -> String {
-    format!("No other Lokal session is open. This one is {name}.")
+    format!("No other sessions open. This one is {name}.")
 }
 
 /// /sessions where this session doesn't listen.
 pub fn sessions_unreachable(mail_off: bool) -> &'static str {
     if mail_off {
-        "Mail is off in your settings, so the sessions don't see each other."
+        "Mail is off, so sessions don't see each other."
     } else {
-        "Other sessions can't reach this one: no private folder could be made for it."
+        "Other sessions can't reach this one: no private folder for it."
     }
 }
 
-pub const NO_HTTPS: &str =
-    "Lokal only speaks plain HTTP to the server, so `server` can't be an https:// address.";
-pub const CONNECTION_DROPPED: &str = "The server hung up before finishing its answer.";
-pub const NO_MODEL_LOADED: &str = "No model is loaded in LM Studio. Load one there, or pin one with `model` in ~/.config/lokal/config.";
+pub const NO_HTTPS: &str = "`server` can't be https://: Lokal speaks plain HTTP to it.";
+pub const CONNECTION_DROPPED: &str = "The server hung up mid-answer.";
+pub const NO_MODEL_LOADED: &str =
+    "No model loaded in LM Studio. Load one, or set `model` in ~/.config/lokal/config.";
 pub const NO_MODELS: &str = "The server doesn't list any models.";
 
 /// 7s, 1m 05s, 2h 01m 05s
@@ -328,7 +308,7 @@ pub fn installed(path: &str) -> String {
 }
 
 pub fn already_installed(path: &str) -> String {
-    format!("This is already the installed copy, at {path}.")
+    format!("Already installed, at {path}.")
 }
 
 pub fn cant_install(error: &str) -> String {
@@ -340,7 +320,7 @@ pub fn uninstalled(path: &str) -> String {
 }
 
 pub fn not_installed(path: &str) -> String {
-    format!("There's no Lokal at {path} to remove.")
+    format!("No Lokal at {path}.")
 }
 
 pub fn cant_uninstall(error: &str) -> String {
@@ -352,7 +332,7 @@ pub const REMOVE_FILES_QUESTION: &str = "Remove them too?";
 pub const KEEP_THEM: &str = "Keep them";
 pub const REMOVE_THEM: &str = "Remove them";
 pub const REMOVED_FILES: &str = "Removed them.";
-pub const NOT_ASKED: &str = "There's no terminal to ask you on, so they stay.";
+pub const NOT_ASKED: &str = "No terminal to ask on, so they stay.";
 
 pub fn kept_files(folders: &[String]) -> String {
     format!("Kept them, in {}.", folders.join(" and "))
@@ -367,23 +347,23 @@ pub fn folder_stays(folder: &str) -> String {
 }
 
 pub const THINKING: &str = "thinking";
-pub const ASKING_AGAIN: &str =
-    "The model ran out of room while reasoning. Asking it again, to keep it short.";
-pub const WITHOUT_THE_IMAGE: &str = "Asking the model again, without the image.";
-pub const NO_ANSWER: &str =
-    "The model stopped without an answer. Ask again, or /new to start fresh.";
-pub const RAN_OUT: &str = "The model ran out of room before answering, most likely reasoning in circles. /new starts fresh.";
-pub const CUT_SHORT: &str = "The model ran out of room in the middle of a step, so it didn't run. Asking it again, to keep it short.";
-pub const CUT_SHORT_AGAIN: &str = "The model ran out of room in the middle of a step again, so it didn't run. /new starts fresh; more context in LM Studio gives it more room.";
+pub const ASKING_AGAIN: &str = "Out of room while reasoning. Asking again, briefer.";
+pub const WITHOUT_THE_IMAGE: &str = "Asking again without the image.";
+pub const NO_ANSWER: &str = "No answer from the model. Ask again, or /new.";
+pub const RAN_OUT: &str =
+    "Out of room before an answer, likely thinking in circles. /new starts fresh.";
+pub const CUT_SHORT: &str = "Out of room mid-step, so it didn't run. Asking again, briefer.";
+pub const CUT_SHORT_AGAIN: &str = "Out of room mid-step again, so it didn't run. /new starts fresh, \
+    or load the model with more context.";
 
 pub fn ran_out_of_room(context: u64) -> String {
     format!(
-        "The model used up its whole context ({} tokens) before answering, most likely reasoning in circles. /new starts fresh; more context in LM Studio gives it more room.",
+        "The model used its whole context ({} tokens) before answering, likely thinking in circles. /new starts fresh, or load it with more context.",
         number(context)
     )
 }
-pub const REASONING_SHOWN: &str = "The model's reasoning shows for the rest of this session, in a small window that clears itself.";
-pub const REASONING_HIDDEN: &str = "The model's reasoning is hidden for the rest of this session.";
+pub const REASONING_SHOWN: &str = "Reasoning on for this session.";
+pub const REASONING_HIDDEN: &str = "Reasoning off.";
 
 pub const FEEDBACK_KIND: &str = "What would you like to tell the developer?";
 pub const FEEDBACK_BUG: &str = "Something doesn't work";
@@ -392,27 +372,23 @@ pub const NEVER_MIND: &str = "Never mind";
 pub const FEEDBACK_TITLE: &str = "  Title: ";
 pub const FEEDBACK_WHAT_HAPPENED: &str = "  What happened? ";
 pub const FEEDBACK_THE_IDEA: &str = "  The idea: ";
-pub const FEEDBACK_CONTACT: &str =
-    "  Where can you be answered? (optional, only if you'd like a reply) ";
-pub const FEEDBACK_PREVIEW: &str = "This is everything that will be sent:";
+pub const FEEDBACK_CONTACT: &str = "  Where to reply? (optional) ";
+pub const FEEDBACK_PREVIEW: &str = "Everything that will be sent:";
 pub const FEEDBACK_SEND_QUESTION: &str = "Send it?";
 pub const FEEDBACK_SEND: &str = "Send";
 pub const FEEDBACK_SEND_LESS: &str = "Send without the system and the details";
 pub const FEEDBACK_DONT_SEND: &str = "Don't send";
 pub const FEEDBACK_KEPT: &str = "Not sent. /feedback keeps what you typed.";
-pub const FEEDBACK_REFUSED: &str =
-    "It couldn't be sent. That's Lokal's fault or the service's, not yours.";
+pub const FEEDBACK_REFUSED: &str = "Couldn't send it: Lokal's fault or the service's, not yours.";
 pub const FEEDBACK_UNREACHABLE: &str =
-    "Couldn't reach issues.guimadaleno.com, so nothing was sent. /feedback keeps what you typed.";
+    "Couldn't reach issues.guimadaleno.com; nothing sent. /feedback keeps what you typed.";
 
 pub fn feedback_sent(reference: &str) -> String {
-    format!("Sent, thank you! Its reference is {reference}.")
+    format!("Sent, thanks! Reference: {reference}.")
 }
 
 pub fn feedback_field(field: &str) -> String {
-    format!(
-        "The service won't take the {field} as it is. /feedback keeps what you typed, to fix it."
-    )
+    format!("The service won't take the {field} as is. /feedback keeps what you typed.")
 }
 
 pub fn feedback_later(seconds: u32) -> String {
@@ -422,7 +398,7 @@ pub fn feedback_later(seconds: u32) -> String {
         _ => format!("{} hours", (seconds + 1800) / 3600),
     };
     format!(
-        "Not sent: too many reports right now. Try again in about {when}; /feedback keeps what you typed."
+        "Not sent: too many reports. Try again in about {when}; /feedback keeps what you typed."
     )
 }
 
@@ -438,9 +414,8 @@ pub const INFO_MCP: &str = "mcp";
 pub const INFO_SESSION: &str = "session";
 pub const INFO_NOTES: &str = "notes";
 pub const NO_NOTES: &str = "none yet (/memory starts a LOKAL.md)";
-pub const NOTES_CHANGED: &str =
-    "The project's notes changed, so the model gets the new ones from here.";
-pub const NOTES_GONE: &str = "The project has no notes now.";
+pub const NOTES_CHANGED: &str = "Project notes changed; the model has the new ones.";
+pub const NOTES_GONE: &str = "No project notes now.";
 
 pub const RECON_HOST: &str = "host";
 pub const RECON_TOOLS: &str = "tools";
@@ -451,7 +426,7 @@ pub const RECON_NONE: &str = "none of the usual ones";
 pub const RECON_DOCKER_DOWN: &str = "installed, but its daemon doesn't answer";
 pub const RECON_NO_BRANCH: &str = "no branch checked out";
 pub const RECON_NOT_A_REPOSITORY: &str = "not a git repository";
-pub const RECON_DONE: &str = "The model knows this from your next message on.";
+pub const RECON_DONE: &str = "The model knows this from now on.";
 
 /// "daemon 29.5.3 · 2 containers running"
 pub fn recon_docker(version: &str, running: usize) -> String {
@@ -464,13 +439,9 @@ pub fn recon_docker(version: &str, running: usize) -> String {
 
 /// The line at the start that says which notes go along, and their cost.
 pub fn notes_taken(names: &[&str], tokens: u64, cut: bool) -> String {
-    let cut = if cut {
-        ", cut to fit; the model reads the rest when it needs it"
-    } else {
-        ""
-    };
+    let cut = if cut { ", cut to fit" } else { "" };
     format!(
-        "The project's notes go along with every message: {} · {}{cut}",
+        "Project notes, sent with every message: {} · {}{cut}",
         names.join(", "),
         about_tokens(tokens)
     )
@@ -487,8 +458,8 @@ pub fn note_size(name: &str, tokens: u64, cut: bool) -> String {
 
 pub fn scratch_folder(path: Option<&str>) -> String {
     match path {
-        Some(path) => format!("{path} · temporary files, deleted when Lokal quits"),
-        None => "none · no private temporary folder could be made".into(),
+        Some(path) => format!("{path} · temporary, gone when Lokal quits"),
+        None => "none · couldn't make a private one".into(),
     }
 }
 
@@ -508,7 +479,7 @@ pub fn session_names(
     };
     let mail = match mail {
         Mail::Ask => "mail waits for you".to_string(),
-        _ => format!("mail starts up to {turns} turns in a row on its own"),
+        _ => format!("mail starts up to {turns} turns on its own"),
     };
     match others {
         [] => format!("{name} · {mail} · {NO_SESSIONS}"),
@@ -543,10 +514,8 @@ pub fn cant_update(standing: &crate::update::Standing) -> String {
     use crate::update::Standing;
     match standing {
         Standing::SwitchedOff => "Updates are off in your settings (updates = off).".into(),
-        Standing::NotARelease => {
-            "This build doesn't update itself: only one installed from a release does.".into()
-        }
-        _ => "This copy runs from somewhere Lokal can't write, so it can't update itself.".into(),
+        Standing::NotARelease => "This build doesn't update itself; a release does.".into(),
+        _ => "Can't update: Lokal can't write where this copy runs.".into(),
     }
 }
 
@@ -555,7 +524,7 @@ pub fn ready_next_time(version: &str) -> String {
 }
 
 pub fn newest() -> String {
-    format!("You have the newest version, {VERSION}.")
+    format!("Up to date: {VERSION}.")
 }
 
 pub fn context_size(tokens: u64) -> String {
@@ -570,7 +539,7 @@ pub fn small_context(context: u64, most: u64, kind: Kind) -> String {
         Kind::LmStudio | Kind::Other => "raise Context Length in LM Studio",
     };
     format!(
-        "The model is loaded with {} tokens of context, so long files and outputs get cut. It takes up to {}: {raise}, if memory allows.",
+        "Loaded with {} tokens of context, so long files get cut. The model takes up to {}: {raise}, if memory allows.",
         number(context),
         number(most)
     )
@@ -697,13 +666,11 @@ pub fn unknown_command(command: &str) -> String {
 }
 
 pub fn saved_prefs(path: &str) -> String {
-    format!("Got it, saved to {path}. /prefs changes it anytime.")
+    format!("Saved to {path}. /prefs changes it.")
 }
 
 pub fn long_prefs(lines: usize) -> String {
-    format!(
-        "user.md is getting long ({lines} lines). It goes along with every conversation, so trimming it saves room. /prefs opens it."
-    )
+    format!("user.md is long ({lines} lines) and goes with every conversation. /prefs trims it.")
 }
 
 pub fn no_editor(editor: &str) -> String {
@@ -751,7 +718,7 @@ pub fn clipboard_failed(why: &str) -> String {
 
 pub fn pasted_no_room(image: usize, tokens: u64, room: u64) -> String {
     format!(
-        "Image #{image} is left out: it would take about {} tokens, and the context has room for about {}.",
+        "Image #{image} left out: it takes ~{} tokens, and there's room for ~{}.",
         number(tokens),
         number(room)
     )
@@ -770,11 +737,11 @@ pub const MCP_DECLINED: &str = "you said no to its tools";
 pub const OFFER_QUESTION: &str = "Offer them to the model?";
 
 pub fn mcp_couldnt_start(name: &str, reason: &str) -> String {
-    format!("The MCP server {name} couldn't start, so its tools aren't offered: {reason}")
+    format!("MCP server {name} didn't start: {reason}")
 }
 
 pub fn mcp_no_tools(name: &str) -> String {
-    format!("The MCP server {name} offers no tools Lokal can give the model.")
+    format!("MCP server {name} has no tools Lokal can offer.")
 }
 
 pub fn mcp_offers(name: &str, tools: usize, tokens: u64) -> String {
@@ -784,7 +751,7 @@ pub fn mcp_offers(name: &str, tools: usize, tokens: u64) -> String {
         format!("{tools} tools")
     };
     format!(
-        "The MCP server {name} offers {count}, about {} tokens a request. All it tells the model:",
+        "MCP server {name} offers {count}, ~{} tokens a request. All it tells the model:",
         number(tokens)
     )
 }
@@ -926,7 +893,7 @@ pub fn no_server(tried: &[String]) -> String {
         None => String::new(),
     };
     format!(
-        "Couldn't find a model server (tried {tried}). Is Ollama or LM Studio's server running? You can also set `server` in ~/.config/lokal/config."
+        "No model server found (tried {tried}). Is Ollama or LM Studio running? Or set `server` in ~/.config/lokal/config."
     )
 }
 
@@ -943,7 +910,7 @@ pub fn server_status(status: u16) -> String {
 }
 
 pub fn not_json(address: &str) -> String {
-    format!("The server at {address} sent something that isn't the JSON Lokal expects.")
+    format!("The server at {address} didn't send the JSON Lokal expects.")
 }
 
 pub fn no_such_model(model: &str) -> String {
