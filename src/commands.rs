@@ -7,7 +7,7 @@ use std::process::Command;
 use std::time::Instant;
 
 use crate::context;
-use crate::conversation::Conversation;
+use crate::conversation::{Compacted, Conversation};
 use crate::input::Input;
 use crate::{
     config, feedback, layout, memory, peers, recon, server, spinner, style, system, text, tty,
@@ -38,7 +38,14 @@ pub struct Session {
 
 /// `/prefs` is a command; `/etc/hosts is broken` is a request.
 pub fn is_command(line: &str) -> bool {
-    line.starts_with('/') && !line.contains(' ') && !line[1..].contains('/')
+    compact_focus(line).is_some()
+        || (line.starts_with('/') && !line.contains(' ') && !line[1..].contains('/'))
+}
+
+/// `/compact`, alone or with what the summary should focus on.
+fn compact_focus(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("/compact")?;
+    (rest.is_empty() || rest.starts_with(char::is_whitespace)).then(|| rest.trim())
 }
 
 /// Runs a slash command. False when it's time to quit.
@@ -48,6 +55,10 @@ pub fn run_command(
     input: &mut Input,
     session: &mut Session,
 ) -> bool {
+    if let Some(focus) = compact_focus(command) {
+        compact(conversation, focus);
+        return true;
+    }
     match command {
         "/new" => {
             conversation.clear();
@@ -287,6 +298,38 @@ fn print_rows(rows: &[(&str, String)]) {
             eprintln!("  {}{line}", style::gray(&format!("{label:<10}")));
         }
     }
+}
+
+/// `/compact`: the summary the model now keeps, then what it freed. Stopped
+/// or failed, nothing changed, and it says so.
+fn compact(conversation: &mut Conversation, focus: &str) {
+    eprintln!();
+    match conversation.compact(focus) {
+        Compacted::Nothing => eprintln!("{}", style::gray(text::NOTHING_TO_COMPACT)),
+        Compacted::Stopped => eprintln!(
+            "{}",
+            style::gray(&format!("{} {}", text::STOPPED, text::NOTHING_CHANGED))
+        ),
+        Compacted::Failed(Some(message)) => {
+            layout::print_fitted(&message, style::red);
+            eprintln!("{}", style::gray(text::NOTHING_CHANGED));
+        }
+        Compacted::Failed(None) => eprintln!("{}", style::gray(text::NO_SUMMARY)),
+        Compacted::Done {
+            before,
+            after,
+            summary,
+        } => {
+            // The model's words, as the model now remembers the conversation.
+            let width = tty::width().unwrap_or(80);
+            for line in layout::indented(&layout::printable(&summary), 2, width).lines() {
+                eprintln!("{}", style::gray(line));
+            }
+            eprintln!();
+            eprintln!("{}", style::gray(&text::compacted(before, after)));
+        }
+    }
+    eprintln!();
 }
 
 /// `/recon`'s probes, with the spinner meanwhile: Docker can take a moment.

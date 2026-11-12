@@ -29,6 +29,7 @@ mail = ask).";
 /// The slash commands, with what each does.
 pub const COMMANDS: &[(&str, &str)] = &[
     ("/new", "start fresh"),
+    ("/compact", "sum up the conversation to free context"),
     ("/prefs", "edit what Lokal knows about you"),
     ("/memory", "edit the project's notes"),
     ("/config", "edit Lokal's settings"),
@@ -356,6 +357,22 @@ pub fn folder_stays(folder: &str) -> String {
 }
 
 pub const THINKING: &str = "thinking";
+pub const NOTHING_TO_COMPACT: &str = "Nothing to compact yet.";
+pub const NOTHING_CHANGED: &str = "Nothing changed.";
+pub const NO_SUMMARY: &str = "The model wrote no summary. Nothing changed.";
+
+/// Beside the spinner while `/compact` waits: "compacting · 12s · 240 tokens".
+pub fn compacting(time: Duration, tokens: u64) -> String {
+    match tokens {
+        0 => format!("compacting · {}", duration(time)),
+        tokens => format!("compacting · {} · {tokens} tokens", duration(time)),
+    }
+}
+
+/// After `/compact`: "Compacted: ~41k → ~3k tokens."
+pub fn compacted(before: u64, after: u64) -> String {
+    format!("Compacted: ~{} → ~{} tokens.", short(before), short(after))
+}
 pub const ASKING_AGAIN: &str = "Out of room while reasoning. Asking again, briefer.";
 pub const WITHOUT_THE_IMAGE: &str = "Asking again without the image.";
 pub const NO_ANSWER: &str = "No answer from the model. Ask again, or /new.";

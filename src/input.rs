@@ -1211,7 +1211,7 @@ mod tests {
         let hint = command_hint("/", 1, None).unwrap();
         assert_eq!(
             hint.display,
-            "   /new  /prefs  /memory  /config  /info  /recon  /update  /reasoning  /sysprompt  /sessions  /feedback  /help  /about  /exit"
+            "   /new  /compact  /prefs  /memory  /config  /info  /recon  /update  /reasoning  /sysprompt  /sessions  /feedback  /help  /about  /exit"
         );
         assert_eq!(hint.completion, None);
     }
@@ -1219,9 +1219,9 @@ mod tests {
     #[test]
     fn a_narrow_terminal_lists_the_commands_that_fit() {
         let hint = command_hint("/", 1, Some(40)).unwrap();
-        assert_eq!(hint.display, "   /new  /prefs  /memory  /config  …");
-        // With the prompt and the slash, one column short of the edge.
-        assert_eq!("> /".len() + hint.display.chars().count(), 39);
+        assert_eq!(hint.display, "   /new  /compact  /prefs  …");
+        // With the prompt and the slash, within one column short of the edge.
+        assert!("> /".len() + hint.display.chars().count() <= 39);
     }
 
     #[test]

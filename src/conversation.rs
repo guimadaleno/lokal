@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::chat::{self, Event, Reply};
+use crate::compact;
 use crate::context::{self, CHARS_PER_TOKEN, is_object, kept_arguments};
 use crate::image;
 use crate::input::Input;
@@ -92,6 +93,22 @@ enum Failure {
     Stopped,
     /// The server turned the request down, or never answered.
     Server(http::Failure),
+}
+
+/// How `/compact` ended. Anything but `Done` leaves the conversation as it was.
+pub enum Compacted {
+    /// Nothing before the last turn to sum up.
+    Nothing,
+    /// The summary took the older messages' place: the request's size
+    /// before and after, in tokens, and the summary.
+    Done {
+        before: u64,
+        after: u64,
+        summary: String,
+    },
+    Stopped,
+    /// The server failed, or sent no summary: what it said, if anything.
+    Failed(Option<String>),
 }
 
 /// How a turn ended.
@@ -207,6 +224,50 @@ impl Conversation {
     /// Tokens in use after the last reply, once the server has said.
     pub fn tokens(&self) -> Option<u64> {
         self.tokens
+    }
+
+    /// `/compact`: the model sums up what came before the last turn, and
+    /// the summary takes its place (`compact`). All or nothing: stopped or
+    /// failed, the conversation stays as it was.
+    pub fn compact(&mut self, focus: &str) -> Compacted {
+        let kept_from = compact::kept_from(&self.messages);
+        if kept_from == 0 {
+            return Compacted::Nothing;
+        }
+        // A quarter of the context for the summary, the rest for what it
+        // sums up; unknown, the whole transcript goes, and a summary's room.
+        let most = self.server.context.map_or(4096, |context| context / 4);
+        let room = self.server.context.map(|context| {
+            (context - most) as usize * CHARS_PER_TOKEN - compact::PROMPT.len() - focus.len()
+        });
+        let body = compact::request(
+            &self.server.model,
+            &self.messages[..kept_from],
+            room,
+            focus,
+            most,
+        );
+        interrupt::clear();
+        let summary = match summarize(&self.server.address, body) {
+            Ok(summary) => summary,
+            Err(Failure::Stopped) => return Compacted::Stopped,
+            Err(Failure::Server(failure)) => return Compacted::Failed(Some(failure.message())),
+        };
+        if summary.trim().is_empty() {
+            return Compacted::Failed(None);
+        }
+        let before = self.estimated_tokens();
+        self.messages
+            .splice(..kept_from, compact::summary_messages(summary.trim()));
+        let after = self.estimated_tokens();
+        // The server counts again on the next reply; until then, the estimate.
+        self.tokens = Some(after);
+        self.save();
+        Compacted::Done {
+            before,
+            after,
+            summary: summary.trim().to_string(),
+        }
     }
 
     pub fn clear(&mut self) {
@@ -901,6 +962,34 @@ fn kept(message: &Value) -> Value {
 }
 
 /// What the Markdown styling still holds, with every style closed.
+/// The summary `/compact` asked for, with the spinner meanwhile; Esc or
+/// Ctrl+C stops it.
+fn summarize(address: &str, body: Value) -> Result<String, Failure> {
+    let _keys = keys::KeyWatch::start();
+    let request = chat::start(address, body);
+    let mut spinner = Spinner::new();
+    let started = Instant::now();
+    let mut pieces: u64 = 0;
+    loop {
+        if interrupt::happened() {
+            spinner.clear();
+            return Err(Failure::Stopped);
+        }
+        match request.next(Duration::from_millis(40)) {
+            Some(Event::Done(result)) => {
+                spinner.clear();
+                return result.map(|reply| reply.content).map_err(Failure::Server);
+            }
+            Some(Event::Text(_) | Event::Reasoning(_)) => pieces += 1,
+            _ => {}
+        }
+        if spinner.due() {
+            let label = text::compacting(started.elapsed(), pieces);
+            spinner.tick_with(&format!(" {}", style::pulse_faint(&label, started)));
+        }
+    }
+}
+
 fn print_rest(markdown: &mut Option<Markdown>) {
     if let Some(markdown) = markdown {
         print!("{}", markdown.finish());

@@ -513,6 +513,7 @@ of MCP servers the person sets up. One binary, few dependencies.
 | `commands.rs` | The slash commands, and what they print |
 | `conversation.rs` | Messages, one turn with its tools, the saved conversation |
 | `context.rs` | How much of the context the conversation takes, and what makes way when it's full |
+| `compact.rs` | `/compact`: what's summed up, the request that asks for it, the pair that takes its place |
 | `progress.rs` | What the spinner says while the model works: time, tokens, speed, the file being written |
 | `chat.rs` | One streamed chat request on its own thread |
 | `answer.rs` | What of the stream is shown: no reasoning, no blank edges |
@@ -678,6 +679,18 @@ of MCP servers the person sets up. One binary, few dependencies.
     model gets it; nothing of it is written to disk.
 - **One reply gets at most half the context** (`max_tokens`). A model
   reasoning in circles then stops there instead of filling all of it.
+- **`/compact` sums up what came before the last turn** (`compact.rs`, #4),
+  and the summary takes its place. The last turn stays exact.
+  - **The model gets those messages as a transcript,** as data, in a
+    request of its own with no tools and reasoning off, so it sums them up
+    rather than going on with the work. Outputs and arguments go in cut to
+    their start; a transcript past three quarters of the context keeps its
+    end.
+  - **The summary goes in as a user note and an assistant reply,** so the
+    roles still alternate. Never in the system prompt: it carries text from
+    files the model read, and there it would weigh like instructions.
+  - **All or nothing:** Esc, Ctrl+C or a failure leaves the conversation as
+    it was. Text after `/compact` says what the summary should focus on.
 - **An output always reaches the model before it can be dropped.** Each
   tool output is cut to the room left once the outputs the model already
   saw make way (`room_for_output`). A cut read says the line to read on
@@ -1019,8 +1032,8 @@ Tracked as issues:
   touching how commands run unasked;
 - **the live `>` while Lokal works** (#3), with the answer printed above
   it, only if the draft under the spinner turns out not to be enough;
-- **`/compact`, and the same on its own when dropping outputs isn't
-  enough** (#4);
+- **`/compact` on its own when dropping outputs isn't enough** (#4); the
+  command is in;
 - **an `ask` tool** (#7);
 - **a highlight for deletes outside the working folder**, to weigh (#10);
 - **an aarch64 build** (#11);
