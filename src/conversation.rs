@@ -22,7 +22,7 @@ use crate::spinner::Spinner;
 use crate::system::Facts;
 use crate::tools::{self, Outcome};
 use crate::{
-    config, http, interrupt, judge, keys, layout, mode, prompt, reasoning, style, text, tty,
+    config, http, interrupt, judge, keys, layout, mode, prompt, queue, reasoning, style, text, tty,
 };
 
 /// The project's notes go along with every request, so they get an eighth
@@ -590,11 +590,16 @@ impl Conversation {
         // takes the row after.
         let mut paused = false;
         let mut last_text = Instant::now();
+        // While a draft shows, the answer comes a line at a time with the
+        // draft's row under it (#3); on a terminal only, as the styling.
+        let on_screen = markdown.is_some() && style::enabled();
+        let mut under = queue::UnderAnswer::default();
         loop {
             if interrupt::happened() {
                 spinner.clear();
                 reasoning.clear();
                 if mid_line {
+                    under.flush();
                     print_rest(&mut markdown);
                     println!();
                 }
@@ -647,8 +652,12 @@ impl Conversation {
                             Some(markdown) => markdown.push(text),
                             None => text.to_string(),
                         };
-                        print!("{shown}");
-                        let _ = std::io::stdout().flush();
+                        if on_screen && under.active() {
+                            under.push(&shown);
+                        } else {
+                            print!("{shown}");
+                            let _ = std::io::stdout().flush();
+                        }
                         mid_line = true;
                         paused = false;
                         last_text = Instant::now();
@@ -661,6 +670,7 @@ impl Conversation {
                     }
                     if mid_line {
                         // End the text, then a blank line before the step.
+                        under.flush();
                         print_rest(&mut markdown);
                         println!("\n");
                         mid_line = false;
@@ -672,6 +682,7 @@ impl Conversation {
                     spinner.clear();
                     reasoning.clear();
                     if mid_line {
+                        under.flush();
                         print_rest(&mut markdown);
                         println!();
                     } else if paused {
@@ -691,11 +702,16 @@ impl Conversation {
                 && style::enabled()
                 && last_text.elapsed() >= TEXT_PAUSE
             {
+                under.flush();
                 print_rest(&mut markdown);
                 println!("\n");
                 let _ = std::io::stdout().flush();
                 mid_line = false;
                 paused = true;
+            }
+            // A key typed while the answer streams shows under it.
+            if mid_line {
+                under.redraw();
             }
             // After every piece too, not only in a pause between them: hidden
             // reasoning or a file being written can stream with no pause for

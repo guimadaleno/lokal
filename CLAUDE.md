@@ -533,7 +533,7 @@ of MCP servers the person sets up. One binary, few dependencies.
 | `protected.rs` | Where a change opens on No in every mode: what programs run or read as they start, keys, the person's settings |
 | `gitconfig.rs` | What a repository's own git settings and hooks would have git run |
 | `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it, other keys go to the draft |
-| `queue.rs` | What's typed while Lokal works: the draft under the spinner, the lines Enter queued, where they go when the turn ends |
+| `queue.rs` | What's typed while Lokal works: the draft under the spinner or the answer, the lines Enter queued, where they go when the turn ends |
 | `input.rs` | The `>` prompt (hints, completion, Ctrl+C twice, an image pasted as `[Image #N]`) and approvals |
 | `clipboard.rs` | The clipboard's image, read on the person's key by Lokal's own fixed programs |
 | `menu.rs` | The arrow-key choice the approvals use |
@@ -596,8 +596,11 @@ of MCP servers the person sets up. One binary, few dependencies.
   - **The draft shows on one row under the spinner,** drawn by the spinner
     itself (`Spinner::tick_with`), so it's there whenever the spinner is: in
     the model's turn, a command, the judge, an MCP call. While the answer's
-    text streams, the keys are still kept, and the row comes back with the
-    spinner. Bracketed paste is on while the reader runs, so a pasted line
+    text streams with a draft showing, it comes a whole line at a time, the
+    row on the row after (`queue::UnderAnswer`): the cursor is then always
+    at a line's start, so the row is redrawn without knowing where in a
+    line the answer stands. Without a draft it streams word by word, as
+    before. Bracketed paste is on while the reader runs, so a pasted line
     break is text, not Enter.
   - **Enter queues it; the turn's end decides where it goes.** A turn that
     ended on its own sends what was queued as the next request, as typed

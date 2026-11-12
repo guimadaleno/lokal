@@ -8,10 +8,11 @@
 //! The draft is Lokal's memory, never the terminal's buffer, so nothing
 //! typed here can answer an approval (`tty::discard_typed_ahead`).
 
+use std::io::Write;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use crate::{layout, style, text};
+use crate::{layout, style, text, tty};
 
 /// A paste of a whole file stops here: the draft is a message.
 const MOST: usize = 64 * 1024;
@@ -77,6 +78,11 @@ impl Queue {
             self.draft.truncate(start);
             self.changed();
         }
+    }
+
+    /// Whether the row has anything to show.
+    fn shows(&self) -> bool {
+        !self.draft.is_empty() || !self.queued.is_empty()
     }
 
     fn enter(&mut self) {
@@ -208,6 +214,74 @@ pub fn row(width: usize) -> Option<String> {
     queue().row(width)
 }
 
+/// The answer's text while the row shows: printed a whole line at a time,
+/// with the row drawn on the row after, where the next line goes. The
+/// cursor is then always at the start of a line, so the row is redrawn
+/// without knowing where in a line the answer stands. Without a draft,
+/// the answer streams word by word as before.
+#[derive(Default)]
+pub struct UnderAnswer {
+    /// The end of a line, printed once the line ends.
+    held: String,
+    /// The row is drawn where the cursor is, as of this `version`.
+    drawn: Option<u64>,
+}
+
+impl UnderAnswer {
+    /// Whether text goes through here now: the row shows something, or a
+    /// line is held.
+    pub fn active(&self) -> bool {
+        !self.held.is_empty() || self.drawn.is_some() || queue().shows()
+    }
+
+    /// More of the answer, styled: its whole lines printed, the rest held.
+    pub fn push(&mut self, text: &str) {
+        self.held.push_str(text);
+        if let Some(lines) = whole_lines(&mut self.held) {
+            self.erase();
+            print!("{lines}");
+            let _ = std::io::stdout().flush();
+            self.draw();
+        }
+    }
+
+    /// The row again, when the draft changed since it was drawn.
+    pub fn redraw(&mut self) {
+        if self.drawn.is_some_and(|drawn| drawn != version()) {
+            self.draw();
+        }
+    }
+
+    /// Before anything else is printed: the row goes, and what's held is
+    /// printed, the cursor after it.
+    pub fn flush(&mut self) {
+        self.erase();
+        print!("{}", std::mem::take(&mut self.held));
+        let _ = std::io::stdout().flush();
+    }
+
+    fn draw(&mut self) {
+        let row = row(tty::width().unwrap_or(80)).unwrap_or_default();
+        eprint!("\r{row}\x1b[K\r");
+        let _ = std::io::stderr().flush();
+        self.drawn = Some(version());
+    }
+
+    fn erase(&mut self) {
+        if self.drawn.take().is_some() {
+            eprint!("\r\x1b[K");
+            let _ = std::io::stderr().flush();
+        }
+    }
+}
+
+/// What of `held` ends with a line break, taken out of it; the rest stays.
+fn whole_lines(held: &mut String) -> Option<String> {
+    let end = held.rfind('\n')?;
+    let rest = held.split_off(end + 1);
+    Some(std::mem::replace(held, rest))
+}
+
 /// The draft on one row: a line break as ⏎, a tab as a space, control
 /// characters as marks.
 fn shown(text: &str) -> String {
@@ -292,6 +366,18 @@ mod tests {
         assert_eq!(queue.draft.len(), MOST);
         queue.type_text("x");
         assert_eq!(queue.draft.len(), MOST);
+    }
+
+    #[test]
+    fn under_an_answer_only_whole_lines_go_out() {
+        let mut held = "a partial".to_string();
+        assert_eq!(whole_lines(&mut held), None);
+        held.push_str(" line\nnext\nand the start");
+        assert_eq!(
+            whole_lines(&mut held).as_deref(),
+            Some("a partial line\nnext\n")
+        );
+        assert_eq!(held, "and the start");
     }
 
     #[test]
