@@ -598,7 +598,8 @@ impl ConditionalEventHandler for QuitOnSecondCtrlC {
     ) -> Option<Cmd> {
         if !context.line().is_empty() {
             self.armed.store(false, Ordering::SeqCst);
-            return Some(Cmd::Kill(Movement::WholeLine));
+            // All of it: a paste or what was queued can hold several lines.
+            return Some(Cmd::Kill(Movement::WholeBuffer));
         }
         if self.armed.swap(true, Ordering::SeqCst) {
             // Quit the way Ctrl+D does, which also clears the reminder from the line.
