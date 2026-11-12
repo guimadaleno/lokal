@@ -320,9 +320,12 @@ fn compact(conversation: &mut Conversation, focus: &str) {
             after,
             summary,
         } => {
-            // The model's words, as the model now remembers the conversation.
+            // The model's words, as the model now remembers the conversation,
+            // without the bold markers a gray block would show raw; the
+            // conversation keeps them as written.
             let width = tty::width().unwrap_or(80);
-            for line in layout::indented(&layout::printable(&summary), 2, width).lines() {
+            let shown = layout::printable(&summary).replace("**", "");
+            for line in layout::indented(&shown, 2, width).lines() {
                 eprintln!("{}", style::gray(line));
             }
             eprintln!();
