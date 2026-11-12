@@ -60,6 +60,26 @@ impl Drop for RawMode {
     }
 }
 
+/// Keys neither echo nor signal for as long as this lives. A turn holds
+/// it: between its steps, where no `keys::KeyWatch` reads the keyboard,
+/// what the person types waits for the next one instead of being echoed
+/// into the output. The terminal is put back as it was however it ends.
+pub struct Quiet {
+    // Dropped in this order: the terminal put back, then its file closed.
+    _raw: RawMode,
+    _terminal: File,
+}
+
+/// None without a terminal.
+pub fn quiet() -> Option<Quiet> {
+    let terminal = open()?;
+    let raw = RawMode::enter(&terminal)?;
+    Some(Quiet {
+        _raw: raw,
+        _terminal: terminal,
+    })
+}
+
 /// Whether a byte arrives on `fd` within `milliseconds`: a key, or the rest
 /// of one's sequence.
 pub fn readable(fd: RawFd, milliseconds: i32) -> bool {

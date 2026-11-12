@@ -7,6 +7,7 @@ use std::env;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::{config, menu, style, text};
 
@@ -64,7 +65,7 @@ pub fn uninstall() -> bool {
             key: 'r',
         },
     ];
-    match menu::choose(text::REMOVE_FILES_QUESTION, &items, 0, 0) {
+    match menu::choose(text::REMOVE_FILES_QUESTION, &items, 0, 0, Duration::ZERO) {
         Some(menu::Choice::Picked(1)) => remove(&files),
         Some(_) => eprintln!("{}", style::gray(&text::kept_files(&folders_of(&files)))),
         None => {

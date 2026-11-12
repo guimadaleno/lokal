@@ -1,12 +1,13 @@
 //! The one-character pulse shown while Lokal waits on the model or a command:
 //! a dot that breathes. All its frames share one width class in Unicode, so
 //! it never jitters, whatever the terminal's setting for ambiguous widths.
+//! What the person types meanwhile shows on the row under it (`queue`).
 
 use std::io::Write;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::style;
+use crate::{queue, style, tty};
 
 const FRAMES: [&str; 5] = ["·", "•", "●", "•", "·"];
 const FRAME_TIME: Duration = Duration::from_millis(160);
@@ -26,10 +27,13 @@ pub fn while_running<T: Send + 'static>(
     running.join()
 }
 
-/// Draws at the start of the current line, which must be empty.
+/// Draws at the start of the current line, which must be empty, and the
+/// draft on the row under it; the cursor stays on the spinner's row.
 pub struct Spinner {
     frame: usize,
     drawn_at: Option<Instant>,
+    /// The draft as last drawn (`queue::version`).
+    draft: u64,
 }
 
 impl Spinner {
@@ -37,6 +41,7 @@ impl Spinner {
         Spinner {
             frame: 0,
             drawn_at: None,
+            draft: 0,
         }
     }
 
@@ -45,8 +50,13 @@ impl Spinner {
         self.tick_with("");
     }
 
-    /// Whether the next frame is due, so a label needn't be worked out before.
+    /// Whether the next frame is due, or the draft changed, so a label
+    /// needn't be worked out before.
     pub fn due(&self) -> bool {
+        self.frame_due() || queue::version() != self.draft
+    }
+
+    fn frame_due(&self) -> bool {
         self.drawn_at.is_none_or(|at| at.elapsed() >= FRAME_TIME)
     }
 
@@ -60,13 +70,23 @@ impl Spinner {
         } else {
             ""
         };
+        // A key redraws at once, without moving the pulse on.
+        let next_frame = self.frame_due();
+        self.draft = queue::version();
+        // The draft's row, then back up; with none, a row left from one goes.
+        let below = match queue::row(tty::width().unwrap_or(80)) {
+            Some(row) => format!("\x1b[K\n\r{row}\x1b[K\x1b[1A\r"),
+            None => "\x1b[J".to_string(),
+        };
         eprint!(
-            "{hide_cursor}\r{}{label}\x1b[K",
+            "{hide_cursor}\r{}{label}{below}",
             style::accent(FRAMES[self.frame])
         );
         let _ = std::io::stderr().flush();
-        self.frame = (self.frame + 1) % FRAMES.len();
-        self.drawn_at = Some(Instant::now());
+        if next_frame {
+            self.frame = (self.frame + 1) % FRAMES.len();
+            self.drawn_at = Some(Instant::now());
+        }
     }
 
     /// Draws the current frame again at once, after something wrote over it.
@@ -78,10 +98,11 @@ impl Spinner {
         self.tick_with(label);
     }
 
-    /// Erases the spinner so other output can take its place.
+    /// Erases the spinner, and the draft's row under it, so other output
+    /// can take its place.
     pub fn clear(&mut self) {
         if self.drawn_at.take().is_some() {
-            eprint!("\r\x1b[K\x1b[?25h");
+            eprint!("\r\x1b[J\x1b[?25h");
             let _ = std::io::stderr().flush();
         }
     }

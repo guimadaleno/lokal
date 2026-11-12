@@ -5,7 +5,7 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::tty::{self, RawMode};
 use crate::{layout, style};
@@ -36,9 +36,16 @@ enum Key {
 }
 
 /// Shows the question and its options, starting on `start`; Esc picks
-/// `safe`. When it's done, the options fold into one line with the answer.
-/// None without a terminal.
-pub fn choose(question: &str, items: &[Item], start: usize, safe: usize) -> Option<Choice> {
+/// `safe`. For `deaf` after it shows, only Esc and Ctrl+C count: a key
+/// meant for a message being typed isn't its answer. When it's done, the
+/// options fold into one line with the answer. None without a terminal.
+pub fn choose(
+    question: &str,
+    items: &[Item],
+    start: usize,
+    safe: usize,
+    deaf: Duration,
+) -> Option<Choice> {
     let mut terminal = tty::open()?;
     let raw = RawMode::enter(&terminal)?;
     // Each on one line, cut with … in a narrow terminal: one that wrapped
@@ -58,7 +65,11 @@ pub fn choose(question: &str, items: &[Item], start: usize, safe: usize) -> Opti
             pulse_marker(&mut terminal, items.len(), selected, shown);
             continue;
         }
-        let picked = match read_key(&mut terminal) {
+        let key = read_key(&mut terminal);
+        if shown.elapsed() < deaf && !matches!(key, Key::Escape | Key::Interrupt) {
+            continue;
+        }
+        let picked = match key {
             Key::Up => {
                 selected = selected.saturating_sub(1);
                 None

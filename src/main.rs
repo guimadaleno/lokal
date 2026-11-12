@@ -27,6 +27,7 @@ mod peers;
 mod progress;
 mod prompt;
 mod protected;
+mod queue;
 mod reasoning;
 mod recon;
 // guimadaleno/base/release's client/release.rs, copied unchanged: no formatting or
@@ -251,13 +252,24 @@ fn talk(
     session: &mut Session,
     first: Option<String>,
 ) {
+    // What's typed while Lokal works is kept from here (#3).
+    queue::open();
     if let Some(line) = first
         && !take_line(&line, conversation, input, session)
     {
         return;
     }
     loop {
-        let line = match input.request(conversation.status()) {
+        // Queued while the last turn ran, and it ended on its own: it goes
+        // as typed. Otherwise what was typed waits at the `>`.
+        if let Some(line) = queue::take_ready() {
+            input.show_queued(&line);
+            if !take_line(&line, conversation, input, session) {
+                break;
+            }
+            continue;
+        }
+        let line = match input.request(conversation.status(), queue::take_typed()) {
             Line::Text(line) => line,
             Line::Mail => {
                 take_up_mail(conversation, input);
@@ -319,7 +331,13 @@ fn take_line(
 /// no in one, mail waits for their next request: two models answering each
 /// other would otherwise start the next turn at once.
 fn turn(conversation: &mut Conversation, input: &mut Input, request: &str, asked: Option<&str>) {
-    if conversation.send(request, input, asked) == conversation::Turn::SteppedIn
+    let end = conversation.send(request, input, asked);
+    // Stopped, said no to or failed: what the person queued meanwhile
+    // waits at the `>`, since they may want it changed.
+    if end != conversation::Turn::Answered {
+        queue::hold();
+    }
+    if end == conversation::Turn::SteppedIn
         && asked.is_none()
         && let Some(peers) = conversation.peers()
     {

@@ -293,6 +293,12 @@ of MCP servers the person sets up. One binary, few dependencies.
   never says yes; without a terminal, nothing beyond reading runs. Keys
   pressed before an approval question was on screen are discarded, because
   a "y" typed early would approve a command nobody has seen.
+  - **Nor a key meant for a message being typed** (#3): what's typed while
+    Lokal works goes to a draft in Lokal's memory (`queue.rs`), never the
+    terminal's buffer, so it can't answer a question. While there's a
+    draft, or a key went into one in the last second, a question takes only
+    Esc and Ctrl+C for its first 600 ms (`menu::choose`'s `deaf`): an Enter
+    meant to queue the draft would approve a step the person hasn't read.
 - **Let mail from another session act for the person, or run without
   bounds.** The person's Lokal sessions on one machine mail each other, so
   work can be split among them and they agree on who works where
@@ -479,6 +485,10 @@ of MCP servers the person sets up. One binary, few dependencies.
     and in italics, and the mail under it faint and italic
     (`style::mention`, `style::faint_italic`). It's the only italic
     anywhere.
+  - **What's typed while Lokal works sits under the spinner** (`queue::row`):
+    `>` in the accent as at the prompt, the text gray, the cursor a gray
+    block, and what Enter queued faint (`queued · …`). Nothing shows until
+    a key is pressed, and a long draft shows its end.
   - **Two things pulse, gently** (`style::pulse_*`, in truecolor, since the
     256-color steps are too coarse to ease): the label while the model
     works, slowly, and the marker on the option an approval is on, quicker.
@@ -522,7 +532,8 @@ of MCP servers the person sets up. One binary, few dependencies.
 | `allowlist/hard.rs` | The hard core: what a command's question opens on No for, and what auto's judge never decides |
 | `protected.rs` | Where a change opens on No in every mode: what programs run or read as they start, keys, the person's settings |
 | `gitconfig.rs` | What a repository's own git settings and hooks would have git run |
-| `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it |
+| `keys.rs` | The keyboard while Lokal works: Ctrl+C and Esc stop it, other keys go to the draft |
+| `queue.rs` | What's typed while Lokal works: the draft under the spinner, the lines Enter queued, where they go when the turn ends |
 | `input.rs` | The `>` prompt (hints, completion, Ctrl+C twice, an image pasted as `[Image #N]`) and approvals |
 | `clipboard.rs` | The clipboard's image, read on the person's key by Lokal's own fixed programs |
 | `menu.rs` | The arrow-key choice the approvals use |
@@ -579,8 +590,25 @@ of MCP servers the person sets up. One binary, few dependencies.
   and Ctrl+C reaches a command only through Lokal.
 - **While Lokal works, it reads the keyboard itself** (`keys.rs`): Ctrl+C or
   a lone Esc stops the turn, Shift+Tab (`ESC [ Z`) changes the mode, and
-  other keys are dropped rather than echoed over the output. The reader ends before anything asks the person
+  other keys go to the next message's draft (`queue.rs`, #3) rather than
+  echoed over the output. The reader ends before anything asks the person
   something, so no key reaches a question it wasn't typed for.
+  - **The draft shows on one row under the spinner,** drawn by the spinner
+    itself (`Spinner::tick_with`), so it's there whenever the spinner is: in
+    the model's turn, a command, the judge, an MCP call. While the answer's
+    text streams, the keys are still kept, and the row comes back with the
+    spinner. Bracketed paste is on while the reader runs, so a pasted line
+    break is text, not Enter.
+  - **Enter queues it; the turn's end decides where it goes.** A turn that
+    ended on its own sends what was queued as the next request, as typed
+    at the `>`, so a `!` line or a slash command works there; the draft
+    stays for the next turn. After Esc, Ctrl+C, a No or a failure,
+    everything waits at the `>` as typed text (`queue::hold`): the person
+    stopped to steer. Mail waits behind it, as it does behind a typed line.
+  - **A turn keeps the terminal unechoed from start to end** (`tty::quiet`),
+    not only while a reader runs: a key typed between two steps waits for
+    the next reader instead of showing in the output. Without ISIG, Ctrl+C
+    is a key then too, so every wait inside a turn has a reader.
 - **Mail prints only while the person is at the `>`,** through rustyline's
   `ExternalPrinter`. Outside readline that printer writes straight to the
   terminal, into a turn's output or an open editor; there, mail waits for
@@ -904,6 +932,11 @@ moves them past what's written there changes the words too.
     a lone Esc stop the model and a running command; an arrow key doesn't;
     typed keys don't echo.
   - **Still owed:** the same in the person's own console.
+  - **And the draft (#3):** typing, Backspace, Ctrl+U and Ctrl+W, Enter,
+    a bracketed paste with line breaks, Esc and Ctrl+C with a draft, and an
+    approval appearing mid-typing, all tried in a pseudo-terminal against a
+    fake server. Still owed: the same in Windows Terminal, whose paste and
+    keys may arrive differently.
 - **Linux outside WSL:** only WSL has been run. Still owed: a plain Linux run,
   with the server on localhost.
 - **The box (`sandbox.rs`) outside WSL:** its escape tests ran only on WSL
@@ -981,7 +1014,8 @@ Tracked as issues:
 - **auto inside a sandbox**, so the judge's mistakes stay in a box the
   kernel enforces (#2). Its design is in `docs/sandbox.md`: read it before
   touching how commands run unasked;
-- **queued messages while Lokal works** (#3);
+- **the live `>` while Lokal works** (#3), with the answer printed above
+  it, only if the draft under the spinner turns out not to be enough;
 - **`/compact`, and the same on its own when dropping outputs isn't
   enough** (#4);
 - **an `ask` tool** (#7);

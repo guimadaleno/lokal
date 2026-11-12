@@ -28,13 +28,18 @@ use rustyline::{
 use crate::approvals::ProjectApprovals;
 use crate::peers::{Directory, Inbox};
 use crate::tty::{self, RawMode, discard_typed_ahead};
-use crate::{clipboard, config, diff, layout, menu, mode, style, text};
+use crate::{clipboard, config, diff, layout, menu, mode, queue, style, text};
 
 pub const PROMPT: &str = "> ";
 /// How long after Esc another key makes it part of one, like an arrow
 /// key's. Without it, rustyline waits for the next key, and a lone Esc does
 /// nothing until then.
 const ESC_WAIT_MS: u16 = 50;
+/// A draft, or a key into one this recently, means the person is typing a
+/// message (`queue`) when an approval appears...
+const TYPING_JUST_NOW: Duration = Duration::from_secs(1);
+/// ...and the approval then takes only Esc and Ctrl+C for this long.
+const DEAF_WHILE_TYPING: Duration = Duration::from_millis(600);
 
 pub enum Line {
     Text(String),
@@ -207,12 +212,13 @@ impl Input {
         tty::width()
     }
 
-    /// Reads a request at the `>` prompt. `status` (the model's time and
-    /// the share of the context in use) shows at the far right of the line.
+    /// Reads a request at the `>` prompt, starting from `typed`: what the
+    /// person typed while Lokal worked. `status` (the model's time and the
+    /// share of the context in use) shows at the far right of the line.
     /// Mail that starts a turn returns `Line::Mail`, whether it waited for
     /// the `>` or ended it.
-    pub fn request(&mut self, status: Option<String>) -> Line {
-        let mut initial = (String::new(), String::new());
+    pub fn request(&mut self, status: Option<String>, typed: String) -> Line {
+        let mut initial = (typed, String::new());
         let mut first = true;
         loop {
             match self.read_line(status.clone(), &initial, first) {
@@ -393,6 +399,19 @@ impl Input {
         }
     }
 
+    /// A line queued while Lokal worked, shown as the `>` shows one typed
+    /// there, and kept in the history as one would be.
+    pub fn show_queued(&mut self, line: &str) {
+        let shown = layout::printable(line);
+        for (index, row) in shown.lines().enumerate() {
+            let prompt = if index == 0 { PROMPT } else { "" };
+            eprintln!("{}", style::accent(&format!("{prompt}{row}")));
+        }
+        if let Some(editor) = &mut self.editor {
+            let _ = editor.add_history_entry(line);
+        }
+    }
+
     /// Asks before a command runs, and offers not to ask again about this
     /// exact command. The choice starts on Yes only where Lokal's rule says
     /// a slip costs little (`allowlist::opens_on_yes`), and Esc is always No.
@@ -490,7 +509,15 @@ impl Input {
         if let Some(inbox) = &self.inbox {
             inbox.set_asking(true);
         }
-        let choice = menu::choose(question, items, start, safe);
+        // Typing a message when the question came, the person's next keys
+        // were meant for the message: an Enter to queue it would answer a
+        // question they haven't read.
+        let deaf = if queue::typing(TYPING_JUST_NOW) {
+            DEAF_WHILE_TYPING
+        } else {
+            Duration::ZERO
+        };
+        let choice = menu::choose(question, items, start, safe, deaf);
         if let Some(inbox) = &self.inbox {
             inbox.set_asking(false);
         }

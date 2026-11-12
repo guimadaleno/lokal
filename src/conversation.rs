@@ -21,7 +21,9 @@ use crate::server::{self, Server};
 use crate::spinner::Spinner;
 use crate::system::Facts;
 use crate::tools::{self, Outcome};
-use crate::{config, http, interrupt, judge, keys, layout, mode, prompt, reasoning, style, text};
+use crate::{
+    config, http, interrupt, judge, keys, layout, mode, prompt, reasoning, style, text, tty,
+};
 
 /// The project's notes go along with every request, so they get an eighth
 /// of the context; this much when its size isn't known, an eighth of 32K.
@@ -257,6 +259,8 @@ impl Conversation {
     /// for one of theirs.
     pub fn send(&mut self, request: &str, input: &mut Input, asked: Option<&str>) -> Turn {
         let on_mail = asked.is_none();
+        // Keys typed between steps wait for the next one, unechoed (#3).
+        let _quiet = tty::quiet();
         self.begin_turn(asked);
         let mut end = Turn::Answered;
         let turn_start = self.messages.len();
