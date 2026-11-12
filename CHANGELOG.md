@@ -5,6 +5,27 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.10.0 — 2026-11-12
+
+- What you type while Lokal works is kept: it shows under the spinner,
+  or under the answer as it's written, and Enter queues it. The model
+  reads it after its current step, as in Claude Code, and ↑ brings what's
+  queued back to edit. If you stop the turn or say no, it waits at the >
+  instead.
+- A question that appears while you're typing waits a moment before it
+  takes Enter, so a key meant for your message can't approve a step.
+- `/compact` sums up the conversation before your last request, to free
+  room in the context. Text after it says what the summary should focus
+  on.
+- `/context` shows what fills the context, part by part, and `/context raw`
+  prints the whole next request as it goes to the model.
+- On Ollama, the spinner counts and shows the speed while the model
+  reasons, instead of sitting still, and `/reasoning` shows the reasoning
+  there too.
+- Messages on screen are shorter, and `/help` lists the commands in
+  alphabetical order, with the keys, modes and the rest in aligned blocks.
+- Ctrl+C at the > clears every line typed, not only the last.
+
 ## 0.9.0 — 2026-11-11
 
 - Lokal finds Ollama on its own, as it does LM Studio: on this machine,
