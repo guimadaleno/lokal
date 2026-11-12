@@ -155,9 +155,11 @@ fn add_piece(
     sender: &Sender<Event>,
 ) -> bool {
     let delta = &piece["choices"][0]["delta"];
-    let has_text = |field: &str| delta[field].as_str().is_some_and(|text| !text.is_empty());
-    let generated = has_text("reasoning_content")
-        || has_text("content")
+    let reasoning = reasoning_in(delta);
+    let generated = reasoning.is_some()
+        || delta["content"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty())
         || delta["tool_calls"]
             .as_array()
             .is_some_and(|calls| !calls.is_empty());
@@ -174,10 +176,7 @@ fn add_piece(
     if let Some(finish) = piece["choices"][0]["finish_reason"].as_str() {
         reply.finish = Some(finish.to_string());
     }
-    if let Some(reasoning) = delta["reasoning_content"]
-        .as_str()
-        .filter(|text| !text.is_empty())
-    {
+    if let Some(reasoning) = reasoning {
         let _ = sender.send(Event::Reasoning(reasoning.to_string()));
     }
     if let Some(content) = delta["content"].as_str() {
@@ -217,6 +216,15 @@ fn add_piece(
         });
     }
     generated
+}
+
+/// The reasoning in a piece: LM Studio sends it as `reasoning_content`,
+/// Ollama as `reasoning`. One field only, so a server that sent both
+/// wouldn't count it twice.
+fn reasoning_in(delta: &Value) -> Option<&str> {
+    ["reasoning_content", "reasoning"]
+        .into_iter()
+        .find_map(|field| delta[field].as_str().filter(|text| !text.is_empty()))
 }
 
 const PATH_KEY: &str = "\"path\"";
@@ -349,6 +357,34 @@ mod tests {
             &sender
         ));
         assert_eq!(reply.generated, 5);
+    }
+
+    #[test]
+    fn reads_reasoning_as_lm_studio_and_ollama_send_it() {
+        let (sender, events) = mpsc::channel();
+        let mut reply = Reply::default();
+        let mut filter = AnswerFilter::new();
+        let mut paths = Vec::new();
+        let pieces = [
+            json!({"choices": [{"delta": {"reasoning_content": "LM "}}]}),
+            // Ollama 0.40: an empty content beside it.
+            json!({"choices": [{"delta": {"content": "", "reasoning": "Studio, Ollama"}}]}),
+            json!({"choices": [{"delta": {"reasoning_content": "", "reasoning": ""}}]}),
+        ];
+        let generated: Vec<bool> = pieces
+            .iter()
+            .map(|piece| add_piece(piece, &mut reply, &mut filter, &mut paths, &sender))
+            .collect();
+        assert_eq!(generated, [true, true, false]);
+        let reasoning: String = events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::Reasoning(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reasoning, "LM Studio, Ollama");
+        assert_eq!(reply.content, "");
     }
 
     #[test]
