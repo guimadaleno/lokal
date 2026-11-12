@@ -603,12 +603,17 @@ of MCP servers the person sets up. One binary, few dependencies.
     line the answer stands. Without a draft it streams word by word, as
     before. Bracketed paste is on while the reader runs, so a pasted line
     break is text, not Enter.
-  - **Enter queues it; the turn's end decides where it goes.** A turn that
-    ended on its own sends what was queued as the next request, as typed
-    at the `>`, so a `!` line or a slash command works there; the draft
-    stays for the next turn. After Esc, Ctrl+C, a No or a failure,
-    everything waits at the `>` as typed text (`queue::hold`): the person
-    stopped to steer. Mail waits behind it, as it does behind a typed line.
+  - **Enter queues it, and the model reads it after its current step,**
+    as Claude Code does (`Conversation::take_queued`): a user message
+    framed as sent while it worked, shown there as `> …`, and counted
+    among the person's requests for auto's judge. A slash, `!` or `@` line
+    waits for the turn's end, where it works as typed at the `>`.
+  - **The turn's end decides where the rest goes.** A turn that ended on
+    its own sends what's still queued as the next request, as typed at the
+    `>`; the draft stays for the next turn. After Esc, Ctrl+C, a No or a
+    failure, everything waits at the `>` as typed text (`queue::hold`):
+    the person stopped to steer. ↑ on an empty draft brings what's queued
+    back to edit. Mail waits behind it, as it does behind a typed line.
   - **A turn keeps the terminal unechoed from start to end** (`tty::quiet`),
     not only while a reader runs: a key typed between two steps waits for
     the next reader instead of showing in the output. Without ISIG, Ctrl+C

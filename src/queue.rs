@@ -93,6 +93,32 @@ impl Queue {
         }
     }
 
+    /// The queued lines the model can take mid-turn: those before the first
+    /// slash, `!` or `@` line, which waits to work as typed at the `>`.
+    fn take_for_model(&mut self) -> Option<String> {
+        if self.held {
+            return None;
+        }
+        let count = self
+            .queued
+            .iter()
+            .take_while(|line| !line.starts_with(['/', '!', '@']))
+            .count();
+        if count == 0 {
+            return None;
+        }
+        self.version += 1;
+        Some(self.queued.drain(..count).collect::<Vec<_>>().join("\n"))
+    }
+
+    /// ↑ on an empty draft: what's queued comes back to it, to edit.
+    fn edit_queued(&mut self) {
+        if self.draft.is_empty() && !self.queued.is_empty() {
+            self.draft = std::mem::take(&mut self.queued).join("\n");
+            self.changed();
+        }
+    }
+
     fn take_ready(&mut self) -> Option<String> {
         if self.held || self.queued.is_empty() {
             return None;
@@ -136,9 +162,10 @@ impl Queue {
         }
         let last = self.queued.last()?;
         let label = format!("{} · ", queued.unwrap_or_default());
-        let room = room.saturating_sub(label.chars().count());
+        let hint = format!(" · {}", text::EDIT_QUEUED);
+        let room = room.saturating_sub(label.chars().count() + hint.chars().count());
         Some(style::faint(&format!(
-            "{label}{}",
+            "{label}{}{hint}",
             tail(&shown(last), room)
         )))
     }
@@ -176,6 +203,17 @@ pub fn delete_word() {
 /// Enter: the draft joins the queue.
 pub fn enter() {
     queue().enter();
+}
+
+/// ↑: what's queued comes back to the draft, when it's empty.
+pub fn edit_queued() {
+    queue().edit_queued();
+}
+
+/// What the model takes after its step, mid-turn: the queued lines before
+/// any slash, `!` or `@` one.
+pub fn take_for_model() -> Option<String> {
+    queue().take_for_model()
 }
 
 /// The turn was stopped, said no to or failed: what's queued goes back to
@@ -343,6 +381,41 @@ mod tests {
     }
 
     #[test]
+    fn the_model_takes_plain_lines_mid_turn_and_commands_wait() {
+        let mut queue = open();
+        for line in ["and the docs", "also the readme", "/compact", "then this"] {
+            queue.type_text(line);
+            queue.enter();
+        }
+        assert_eq!(
+            queue.take_for_model().as_deref(),
+            Some("and the docs\nalso the readme")
+        );
+        // A slash command first: nothing for the model until it runs.
+        assert_eq!(queue.take_for_model(), None);
+        assert_eq!(queue.take_ready().as_deref(), Some("/compact\nthen this"));
+        queue.type_text("held");
+        queue.enter();
+        queue.held = true;
+        assert_eq!(queue.take_for_model(), None);
+    }
+
+    #[test]
+    fn up_brings_what_is_queued_back_to_an_empty_draft() {
+        let mut queue = open();
+        queue.type_text("one");
+        queue.enter();
+        queue.type_text("two");
+        queue.enter();
+        queue.type_text("x");
+        queue.edit_queued();
+        assert_eq!(queue.draft, "x");
+        queue.clear_draft();
+        queue.edit_queued();
+        assert_eq!((queue.draft.as_str(), queue.queued.len()), ("one\ntwo", 0));
+    }
+
+    #[test]
     fn after_a_stop_everything_goes_back_to_the_prompt() {
         let mut queue = open();
         queue.type_text("one");
@@ -388,8 +461,11 @@ mod tests {
         let row = queue.row(40).unwrap_or_default();
         assert!(row.contains("first line ⏎ second"), "{row}");
         queue.enter();
-        let row = queue.row(40).unwrap_or_default();
-        assert!(row.contains("queued · first line ⏎ second"), "{row}");
+        let row = queue.row(60).unwrap_or_default();
+        assert!(
+            row.contains("queued · first line ⏎ second · ↑ to edit"),
+            "{row}"
+        );
         queue.type_text(&"x".repeat(100));
         let row = queue.row(40).unwrap_or_default();
         assert!(row.contains("…xxx") && row.contains("· queued"), "{row}");

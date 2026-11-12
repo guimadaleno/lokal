@@ -48,7 +48,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
 pub const HELP_KEYS: &str = "\
 Tab completes a command. Esc or Ctrl+C stops what's running; at the >,
 Ctrl+C clears the line, and twice on an empty one quits.
-Typing while Lokal works starts your next message; Enter queues it.
+Typing while Lokal works starts a message: Enter queues it, and the model
+reads it after its current step. ↑ brings what's queued back to edit.
 !command runs your own command; its output goes with your next message.
 Shift+Tab cycles: asking for everything, accept edits (file changes in the
 working folder go through), auto (the model, asked apart, approves the rest).
@@ -231,6 +232,9 @@ pub fn mail_waiting(count: usize) -> String {
         count => format!("{count} mails"),
     }
 }
+
+/// After what's queued, under the spinner.
+pub const EDIT_QUEUED: &str = "↑ to edit";
 
 /// Under the spinner, beside what Enter queued while Lokal works.
 pub fn queued(count: usize) -> String {

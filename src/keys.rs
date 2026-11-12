@@ -22,6 +22,8 @@ const CTRL_W: u8 = 0x17;
 const ESCAPE: u8 = 0x1b;
 /// What terminals send for Shift+Tab.
 const SHIFT_TAB: &[u8] = b"\x1b[Z";
+/// The up arrow, in its usual form (`ESC O A` is the other).
+const UP: &[u8] = b"\x1b[A";
 /// Around a paste, with bracketed paste on: its line breaks are text.
 const PASTE_START: &[u8] = b"\x1b[200~";
 const PASTE_END: &[u8] = b"\x1b[201~";
@@ -118,6 +120,8 @@ enum Key {
     NextMode,
     Text(String),
     Enter,
+    /// ↑: what's queued comes back to the draft, to edit.
+    EditQueued,
     Backspace,
     ClearDraft,
     DeleteWord,
@@ -132,6 +136,7 @@ fn act(key: Key) {
         Key::NextMode => mode::next(),
         Key::Text(text) => queue::type_text(&text),
         Key::Enter => queue::enter(),
+        Key::EditQueued => queue::edit_queued(),
         Key::Backspace => queue::backspace(),
         Key::ClearDraft => queue::clear_draft(),
         Key::DeleteWord => queue::delete_word(),
@@ -253,11 +258,13 @@ impl Keys {
                         None
                     }
                     SHIFT_TAB if !self.pasting => Some(Key::NextMode),
+                    UP if !self.pasting => Some(Key::EditQueued),
                     _ => None,
                 };
                 Step::Took(sequence.len(), key)
             }
             b'O' if keys.len() < 3 => Step::Unfinished,
+            b'O' if keys[2] == b'A' && !self.pasting => Step::Took(3, Some(Key::EditQueued)),
             b'O' => Step::Took(3, None),
             _ => Step::Took(2, None),
         }
@@ -317,8 +324,12 @@ mod tests {
         assert_eq!(keys.take(b"[Z", || false), [Key::NextMode]);
         assert_eq!(keys.take(b"x\x1b[", || false), [text("x")]);
         assert_eq!(keys.take(b"Z", || false), [Key::NextMode]);
-        // An arrow key does nothing, and leaves nothing behind.
-        assert_eq!(keys.take(b"\x1b[A\x1bOB", || false), []);
+        // Up brings the queue back, in either form; another arrow does
+        // nothing, and leaves nothing behind.
+        assert_eq!(
+            keys.take(b"\x1b[A\x1bOB\x1bOA", || false),
+            [Key::EditQueued, Key::EditQueued]
+        );
         assert!(keys.tail.is_empty());
         // "é" in two reads.
         assert_eq!(keys.take(&[0xc3], || false), []);

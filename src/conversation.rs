@@ -31,6 +31,10 @@ use crate::{
 const NOTES_SHARE: u64 = 8;
 const NOTES_ROOM_UNKNOWN: usize = 4096 * CHARS_PER_TOKEN;
 const STOPPED_RESULT: &str = "Stopped by the user.";
+/// Ahead of what the person queued while the model worked, given to it
+/// after its step (#3), as Claude Code does.
+const SENT_WHILE_WORKING: &str =
+    "[The user sent this while you were working. Take it into account as you go on.]";
 const SKIPPED_AFTER_NO: &str = "Not run: the user declined an earlier step.";
 /// Where an image the server failed on was, ahead of the server's words and `]`.
 const IMAGE_LEFT_OUT: &str = "[Left out: the server failed with this image in the request.";
@@ -445,6 +449,7 @@ impl Conversation {
                 end = Turn::SteppedIn;
                 break;
             }
+            self.take_queued(input);
         }
         self.model_time = Some(model_time);
         self.speed = speed(generated, generating);
@@ -458,6 +463,29 @@ impl Conversation {
             peers.set_busy(false);
         }
         end
+    }
+
+    /// What the person queued while the model worked goes to it now, after
+    /// its step, as the person's words (#3), and shows where it went in.
+    /// Slash, `!` and `@` lines wait for the turn's end, where they work as
+    /// typed at the `>`.
+    fn take_queued(&mut self, input: &mut Input) {
+        let Some(line) = queue::take_for_model() else {
+            return;
+        };
+        input.show_queued(&line);
+        eprintln!();
+        if let Some(peers) = &self.peers {
+            peers.inbox().person_acted(Some(&line));
+        }
+        // Auto's judge weighs steps against what the person asked, this too.
+        self.asked.push(line.clone());
+        let extra = self.asked.len().saturating_sub(judge::REQUESTS_KEPT);
+        self.asked.drain(..extra);
+        self.messages.push(json!({
+            "role": "user",
+            "content": format!("{SENT_WHILE_WORKING}\n\n{line}")
+        }));
     }
 
     /// What a turn starts with: the person's request kept for auto's judge,
