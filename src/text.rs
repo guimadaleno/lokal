@@ -49,20 +49,48 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/exit", "quit"),
 ];
 
-pub const HELP_KEYS: &str = "\
-Tab completes a command. Esc or Ctrl+C stops what's running; at the >,
-Ctrl+C clears the line, and twice on an empty one quits.
-Typing while Lokal works starts a message: Enter queues it, and the model
-reads it after its current step. ↑ brings what's queued back to edit.
-!command runs your own command; its output goes with your next message.
-Shift+Tab cycles: asking for everything, accept edits (file changes in the
-working folder go through), auto (the model, asked apart, approves the rest).
-What can't be undone or leaves your machine always asks.
-Mail from your other sessions shows above the >: Enter passes it on, Esc
-drops it. @name mails a session.
-Ctrl+V or Alt+V pastes an image as [Image #1], for a model that sees.
-MCP servers (mcp.<name> in /config) offer their tools; each call asks.
-lokal -r picks up the last conversation.";
+/// /help, after the commands: blocks of a key, or what's typed, and what
+/// it does, in the commands' columns.
+pub const HELP_KEYS: &[(&str, &str)] = &[
+    ("Tab", "complete a command"),
+    ("Esc · Ctrl+C", "stop what's running"),
+    ("Ctrl+C", "clear the line; twice on an empty one, quit"),
+    (
+        "Enter",
+        "while Lokal works, queue what you typed for its next step",
+    ),
+    ("↑", "bring what's queued back to edit"),
+    ("Ctrl+V · Alt+V", "paste an image, for a model that sees"),
+    ("Shift+Tab", "cycle the modes below"),
+];
+pub const HELP_TYPED: &[(&str, &str)] = &[
+    (
+        "!command",
+        "run your own command; the model sees its output next",
+    ),
+    ("@name …", "mail another of your sessions"),
+];
+/// The modes, in their Shift+Tab order: manual, accept edits, auto.
+pub const HELP_MODES: &[(&str, &str)] = &[
+    ("manual", "every change asks"),
+    (
+        "accept edits",
+        "file changes in the working folder go through",
+    ),
+    ("auto", "the model, asked apart, approves the rest"),
+];
+pub const HELP_ALWAYS_ASKS: &str = "What can't be undone or leaves your machine always asks.";
+pub const HELP_MORE: &[(&str, &str)] = &[
+    (
+        "mail",
+        "shows above the >: Enter passes it on, Esc drops it",
+    ),
+    (
+        "mcp.<name>",
+        "a server set in /config offers its tools; each call asks",
+    ),
+    ("lokal -r", "pick up the last conversation"),
+];
 
 pub const SETTINGS_TEMPLATE: &str = "\
 # Lokal's settings. Each one is optional: remove the # to use it.

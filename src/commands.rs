@@ -10,8 +10,8 @@ use crate::context;
 use crate::conversation::{Compacted, Conversation};
 use crate::input::Input;
 use crate::{
-    config, feedback, image, layout, memory, peers, recon, server, spinner, style, system, text,
-    tty, update,
+    config, feedback, image, layout, memory, mode, peers, recon, server, spinner, style, system,
+    text, tty, update,
 };
 
 /// Past this many lines, user.md costs noticeable context on every turn.
@@ -153,22 +153,7 @@ pub fn run_command(
                 feedback::run(input, &conversation.server, session.updates_off, draft);
             eprintln!();
         }
-        "/help" => {
-            eprintln!();
-            // The longest name and two spaces, so every description lines up.
-            let width = text::COMMANDS
-                .iter()
-                .map(|(name, _)| name.len())
-                .max()
-                .unwrap_or(0)
-                + 2;
-            for (name, about) in text::COMMANDS {
-                eprintln!("  {name:<width$}{}", style::gray(about));
-            }
-            eprintln!();
-            eprintln!("{}", style::gray(text::HELP_KEYS));
-            eprintln!();
-        }
+        "/help" => print_help(),
         "/about" => {
             eprintln!();
             print_about();
@@ -310,6 +295,58 @@ fn print_rows(rows: &[(&str, String)]) {
             eprintln!("  {}{line}", style::gray(&format!("{label:<10}")));
         }
     }
+}
+
+/// `/help`: the commands in alphabetical order, then the keys, what's
+/// typed, the modes and the rest, all in one pair of columns: the name,
+/// then what it does in gray. The modes show in their own colors, as at
+/// the `>`.
+fn print_help() {
+    let mut commands = text::COMMANDS.to_vec();
+    commands.sort_by_key(|(name, _)| *name);
+    let blocks = [
+        text::HELP_KEYS,
+        text::HELP_TYPED,
+        text::HELP_MODES,
+        text::HELP_MORE,
+    ];
+    // The longest name and two spaces, so every description lines up.
+    let width = commands
+        .iter()
+        .chain(blocks.iter().flat_map(|block| block.iter()))
+        .map(|(name, _)| name.chars().count())
+        .max()
+        .unwrap_or(0)
+        + 2;
+    let row = |name: String, shown: usize, about: &str| {
+        let pad = " ".repeat(width.saturating_sub(shown));
+        eprintln!("  {name}{pad}{}", style::gray(about));
+    };
+    eprintln!();
+    for (name, about) in &commands {
+        row(name.to_string(), name.chars().count(), about);
+    }
+    for block in blocks {
+        eprintln!();
+        let modes = std::ptr::eq(block, text::HELP_MODES);
+        for (index, (name, about)) in block.iter().enumerate() {
+            let shown = if modes {
+                let mode = [
+                    mode::Mode::Manual,
+                    mode::Mode::AcceptEdits,
+                    mode::Mode::Auto,
+                ][index];
+                style::mode(name, mode)
+            } else {
+                name.to_string()
+            };
+            row(shown, name.chars().count(), about);
+        }
+        if modes {
+            eprintln!("  {}", style::gray(text::HELP_ALWAYS_ASKS));
+        }
+    }
+    eprintln!();
 }
 
 /// `/context`: what fills the context, part by part, in estimated tokens,
