@@ -142,6 +142,7 @@ pub fn run_command(
             for (name, about) in text::COMMANDS {
                 eprintln!("  {name:<width$}{}", style::gray(about));
             }
+            eprintln!();
             eprintln!("{}", style::gray(text::HELP_KEYS));
             eprintln!();
         }
