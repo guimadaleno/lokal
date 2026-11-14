@@ -22,7 +22,8 @@ pub fn print_header(server: &server::Server) {
         "{} {}  {}",
         style::bold(text::NAME),
         text::VERSION,
-        style::gray(&server.model)
+        // The server named it, with whatever characters it chose.
+        style::gray(&layout::printable(&server.model))
     );
 }
 
@@ -303,7 +304,10 @@ fn print_rows(rows: &[(&str, String)]) {
         let room = width.saturating_sub(13);
         let mut out = String::new();
         for (label, value) in &rows {
-            for (index, line) in layout::wrapped(value, room).iter().enumerate() {
+            // A model's name, a server's address, a note's folder: none of
+            // them Lokal's own words.
+            let value = layout::printable(value);
+            for (index, line) in layout::wrapped(&value, room).iter().enumerate() {
                 let label = if index == 0 { label.as_str() } else { "" };
                 out.push_str(&format!(
                     "  {}{line}\n",
@@ -396,7 +400,11 @@ fn print_context(conversation: &Conversation) {
     };
     showln!(
         "  {}\n",
-        text::context_total(&conversation.server.model, total, context)
+        text::context_total(
+            &layout::printable(&conversation.server.model),
+            total,
+            context
+        )
     );
     row(text::CONTEXT_PROMPT, prompt, false);
     for (name, tokens) in &used.prompt {
@@ -586,7 +594,12 @@ fn open_in_editor(paths: &[&Path]) {
 /// every request is never a surprise.
 pub fn print_notes(conversation: &Conversation) {
     let notes = conversation.notes();
-    let names: Vec<&str> = notes.iter().map(|note| note.name.as_str()).collect();
+    // Paths a repository named.
+    let names: Vec<String> = notes
+        .iter()
+        .map(|note| layout::printable(&note.name).into_owned())
+        .collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
     let tokens = notes
         .iter()
         .map(|note| context::tokens_in(&note.text))
