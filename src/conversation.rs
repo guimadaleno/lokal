@@ -640,7 +640,10 @@ impl Conversation {
                 };
                 let peers = self.peers.as_ref();
                 let servers = self.mcp.as_mut();
+                // What the step shows stays for a redraw while its question is open.
+                screen::pin();
                 let outcome = tools::run(call, input, mode, &case, room, scratch, peers, servers);
+                screen::unpin();
                 // A blank line after each step, so its output doesn't run into what follows.
                 showln!();
                 match outcome {
@@ -747,6 +750,12 @@ impl Conversation {
                     screen::answer("\n");
                 }
                 return Err(Failure::Stopped);
+            }
+            // The width changed as the answer streams (#49): the screen comes
+            // back at it, the answer's line as far as it got, the draft's row
+            // under it. The spinner redraws it otherwise.
+            if mid_line && screen::due() && screen::redraw() {
+                under.after_redraw();
             }
             // Auto chosen while the model works: its warning shows now,
             // above the spinner, unless the answer is mid-line.
@@ -859,6 +868,12 @@ impl Conversation {
             // seconds, and the spinner would freeze.
             if !mid_line && spinner.due() {
                 spinner.tick_with(&label(generated, first_piece, last_piece, writing.as_ref()));
+            }
+            // A redraw of the screen took the reasoning window: it comes back
+            // above the spinner.
+            if reasoning.redrawn() {
+                reasoning.draw_now();
+                spinner.redraw(&label(generated, first_piece, last_piece, writing.as_ref()));
             }
         }
     }

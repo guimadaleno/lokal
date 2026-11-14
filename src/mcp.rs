@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use crate::config::McpServer;
 use crate::input::{Approval, Input};
 use crate::spinner::Spinner;
-use crate::{config, context, interrupt, keys, layout, style, text, tty};
+use crate::{config, context, interrupt, keys, layout, screen, style, text, tty};
 use client::Client;
 pub use client::Failure;
 
@@ -198,6 +198,7 @@ impl Mcp {
         let tokens = context::tokens_in(&offered);
         let hash = seen::hash(&setup.command, &offered);
         if !seen::is_seen(&setup.name, &hash) {
+            screen::pin();
             let mut lines = review(&setup.name, &tools, tokens);
             let rest = lines.split_off(lines.len().min(REVIEW_SHOWN));
             print_lines(&lines);
@@ -207,6 +208,7 @@ impl Mcp {
             showln!();
             let approval =
                 input.approve_shown(text::OFFER_QUESTION, rest, print_lines, false, false);
+            screen::unpin();
             showln!();
             if let Approval::Stop = approval {
                 interrupt::raise();

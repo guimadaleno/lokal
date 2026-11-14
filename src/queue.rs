@@ -295,6 +295,13 @@ impl UnderAnswer {
         }
     }
 
+    /// After a redraw of the screen (#49), which took the row with it.
+    pub fn after_redraw(&mut self) {
+        if self.drawn.take().is_some() {
+            self.draw();
+        }
+    }
+
     /// The row again, when the draft changed since it was drawn.
     pub fn redraw(&mut self) {
         if self.drawn.is_some_and(|drawn| drawn != version()) {

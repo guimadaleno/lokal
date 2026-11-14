@@ -7,7 +7,7 @@ use std::io::Write;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::{queue, style, tty};
+use crate::{queue, screen, style, tty};
 
 const FRAMES: [&str; 5] = ["·", "•", "●", "•", "·"];
 const FRAME_TIME: Duration = Duration::from_millis(160);
@@ -62,7 +62,15 @@ impl Spinner {
 
     /// The same, with a few words after the pulse.
     pub fn tick_with(&mut self, label: &str) {
-        if !style::enabled() || !self.due() {
+        if !style::enabled() {
+            return;
+        }
+        // The width changed: the screen comes back laid out at it (#49),
+        // taking the spinner's row, which is drawn anew under it.
+        if screen::due() && screen::redraw() {
+            self.drawn_at = None;
+        }
+        if !self.due() {
             return;
         }
         let hide_cursor = if self.drawn_at.is_none() {

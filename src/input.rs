@@ -269,8 +269,12 @@ impl Input {
                 Read::Resized(line, pos) => {
                     first = false;
                     // The screen again at the new width; the next reading
-                    // draws the line under it, the cursor where it was.
-                    redraw_unechoed();
+                    // draws the line under it, the cursor where it was. Had
+                    // the width gone back meanwhile, the line rustyline left
+                    // goes, as for auto's warning, and is drawn again.
+                    if !screen::redraw() && style::enabled() {
+                        eprint!("\x1b[{}A\r\x1b[J", rows(&line));
+                    }
                     let (left, right) = line.split_at(pos.min(line.len()));
                     initial = (left.to_string(), right.to_string());
                 }
@@ -305,7 +309,7 @@ impl Input {
         // The width changed while Lokal worked: the screen is laid out again
         // before the `>` shows.
         if screen::resized() {
-            redraw_unechoed();
+            screen::redraw();
         }
         // What an earlier reading's watch left is no longer this line's.
         for slot in [&self.watch.started, &self.watch.empty] {
@@ -797,14 +801,6 @@ const TAB_STOP: usize = 8;
 fn time_beside(drawn: &str, at: SystemTime, width: usize) -> Option<(usize, String)> {
     let time = clock::shown(at, |time| time_padding(drawn, time, width).is_some())?;
     Some((time_padding(drawn, time.width(), width)?, time))
-}
-
-/// The screen again at the new width (#49), with keys typed meanwhile
-/// left for the next reading rather than echoed into it.
-fn redraw_unechoed() {
-    let terminal = tty::open();
-    let _raw = terminal.as_ref().and_then(RawMode::enter);
-    screen::redraw();
 }
 
 /// A line as it shows after the prompt at `width`: `> ` and its rows in the

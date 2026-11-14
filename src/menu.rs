@@ -48,19 +48,22 @@ pub fn choose(
 ) -> Option<Choice> {
     let mut terminal = tty::open()?;
     let raw = RawMode::enter(&terminal)?;
-    // Each on one line, cut with … in a narrow terminal: one that wrapped
-    // would throw off the redraws, which go up a line per option.
-    let width = tty::width().unwrap_or(80);
-    let question = layout::cut(question, width.saturating_sub(3));
-    let labels: Vec<String> = items
-        .iter()
-        .map(|item| layout::cut(item.label, width.saturating_sub(5)))
-        .collect();
+    let full_question = question;
+    let (mut width, mut question, mut labels) = fitted(full_question, items);
     let mut selected = start;
     let shown = Instant::now();
     let _ = write!(terminal, "\x1b[?25l  {question}");
     draw(&mut terminal, &labels, selected, false, shown);
     let choice = loop {
+        // The width changed while it's open (#49): the screen comes back
+        // laid out at it, and the question under it, cut to the new width,
+        // on the option it was on. A resize is no key.
+        if screen::due() && screen::redraw() {
+            (width, question, labels) = fitted(full_question, items);
+            let _ = write!(terminal, "\x1b[?25l  {question}");
+            draw(&mut terminal, &labels, selected, false, shown);
+            continue;
+        }
         if !key_within(&terminal, PULSE_FRAME) {
             pulse_marker(&mut terminal, items.len(), selected, shown);
             continue;
@@ -117,6 +120,19 @@ fn option_by_key(items: &[Item], key: char) -> Option<usize> {
         return (index < items.len()).then_some(index);
     }
     items.iter().position(|item| item.key == key)
+}
+
+/// The question and the options' labels at the terminal's width now, each
+/// on one line, cut with … in a narrow terminal: one that wrapped would
+/// throw off the redraws, which go up a line per option.
+fn fitted(question: &str, items: &[Item]) -> (usize, String, Vec<String>) {
+    let width = tty::width().unwrap_or(80);
+    let question = layout::cut(question, width.saturating_sub(3));
+    let labels = items
+        .iter()
+        .map(|item| layout::cut(item.label, width.saturating_sub(5)))
+        .collect();
+    (width, question, labels)
 }
 
 /// One line per option, the selected one marked. `again` redraws in place.

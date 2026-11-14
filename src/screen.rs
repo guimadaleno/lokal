@@ -10,12 +10,13 @@
 
 use std::io::{IsTerminal, Write};
 use std::os::fd::AsRawFd;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::{style, text, tty};
+use crate::tty::{self, RawMode};
+use crate::{style, text};
 
 /// Text on stderr, as `eprint!` prints it, kept for a redraw.
 macro_rules! show {
@@ -56,6 +57,9 @@ const FITTED_SIZE: usize = 256;
 enum Piece {
     Text(String),
     Fitted(Layout),
+    /// Where a step began whose question may be open: what follows is
+    /// never let go for `MOST_KEPT`, so a redraw shows what's asked about.
+    Pin,
 }
 
 struct Screen {
@@ -90,18 +94,56 @@ impl Screen {
             (Some(Piece::Text(last)), Piece::Text(text)) => last.push_str(&text),
             (_, piece) => self.pieces.push(piece),
         }
-        while self.size > MOST_KEPT && self.pieces.len() > 1 {
-            let oldest = self.pieces.remove(0);
-            self.size -= size_of(&oldest);
+        self.trim();
+    }
+
+    /// Past `MOST_KEPT`, the oldest go: whole pieces, or the start of a
+    /// text up to a line's end, so a long answer keeps its latest lines (a
+    /// line longer than all that's kept keeps its end). Never past a pin: a
+    /// step's own output stays whole until its question is answered.
+    fn trim(&mut self) {
+        while self.size > MOST_KEPT {
+            let excess = self.size - MOST_KEPT;
+            let cut = match self.pieces.first() {
+                None | Some(Piece::Pin) => return,
+                Some(Piece::Text(text)) => Some(text_cut(text, excess)),
+                Some(Piece::Fitted(_)) => None,
+            };
+            match (cut, self.pieces.first_mut()) {
+                (Some(cut), Some(Piece::Text(text))) if cut < text.len() => {
+                    text.drain(..cut);
+                    // What a huge output held goes back, not only its count.
+                    if text.capacity() > 2 * text.len() + 64 * 1024 {
+                        text.shrink_to_fit();
+                    }
+                    self.size -= cut;
+                }
+                _ => {
+                    let oldest = self.pieces.remove(0);
+                    self.size -= size_of(&oldest);
+                }
+            }
             self.dropped = true;
         }
     }
+}
+
+/// Where `excess` bytes or a little more go from the start of `text`: at
+/// the end of the line `excess` falls in, or right there when a line ends
+/// before it or none ends after it.
+fn text_cut(text: &str, excess: usize) -> usize {
+    let from = text.ceil_char_boundary(excess);
+    if from == 0 || text.as_bytes()[from - 1] == b'\n' {
+        return from;
+    }
+    text[from..].find('\n').map_or(from, |at| from + at + 1)
 }
 
 fn size_of(piece: &Piece) -> usize {
     match piece {
         Piece::Text(text) => text.len(),
         Piece::Fitted(_) => FITTED_SIZE,
+        Piece::Pin => 0,
     }
 }
 
@@ -112,6 +154,13 @@ static AT_PROMPT: Mutex<bool> = Mutex::new(false);
 
 /// A signal went to end the `>` for a redraw, and hasn't been seen yet.
 static SIGNALLED: AtomicBool = AtomicBool::new(false);
+
+/// The width settled on one the screen wasn't laid out at: a redraw is due
+/// at the next place that can draw (`due`).
+static DUE: AtomicBool = AtomicBool::new(false);
+
+/// How many redraws there were, so what drew live parts knows they're gone.
+static REDRAWS: AtomicU64 = AtomicU64::new(0);
 
 fn screen() -> MutexGuard<'static, Screen> {
     SCREEN.lock().unwrap_or_else(PoisonError::into_inner)
@@ -167,6 +216,24 @@ pub fn kept_text(text: &str) {
     screen().keep(Piece::Text(text.to_string()));
 }
 
+/// A step begins whose question may open: until `unpin`, nothing from here
+/// on goes for `MOST_KEPT`, so a redraw while the question is open still
+/// shows what it asks about.
+pub fn pin() {
+    let mut screen = screen();
+    if screen.keeping {
+        screen.pieces.retain(|piece| !matches!(piece, Piece::Pin));
+        screen.pieces.push(Piece::Pin);
+    }
+}
+
+/// The step is done: what it showed may go like the rest.
+pub fn unpin() {
+    let mut screen = screen();
+    screen.pieces.retain(|piece| !matches!(piece, Piece::Pin));
+    screen.trim();
+}
+
 /// The screen was cleared (`/new`, Ctrl+L): a redraw clears it there too,
 /// pushing what came before into the scrollback and going on from the top,
 /// as the clear left it.
@@ -176,39 +243,61 @@ pub fn cleared() {
     }));
 }
 
+/// Whether a redraw is due: during a turn, the spinner's tick and the
+/// answer as it streams ask, and redraw then.
+pub fn due() -> bool {
+    DUE.load(Ordering::SeqCst)
+}
+
+/// How many redraws there were: a live part drawn before the last one is
+/// gone from the screen, and draws anew rather than over what was there.
+pub fn redraws() -> u64 {
+    REDRAWS.load(Ordering::SeqCst)
+}
+
 /// Whether the terminal's width changed since the screen was laid out.
 pub fn resized() -> bool {
     let screen = screen();
     screen.keeping && tty::width().is_some_and(|width| screen.width != Some(width))
 }
 
-/// The screen again at the terminal's width now: cleared with its
-/// scrollback, every kept piece laid out anew, written at once, in one
-/// synchronized frame where the terminal has them. What's live is drawn by
-/// its owner after.
-pub fn redraw() {
+/// The screen again at the terminal's width now, when it isn't the one the
+/// screen was laid out at: cleared with its scrollback, every kept piece
+/// laid out anew, written at once, in one synchronized frame where the
+/// terminal has them, with keys typed meanwhile left unechoed for whatever
+/// reads next. True when it redrew: what's live is drawn by its owner then.
+pub fn redraw() -> bool {
+    DUE.store(false, Ordering::SeqCst);
     let mut screen = screen();
-    if !screen.keeping {
-        return;
+    let Some(width) = tty::width() else {
+        return false;
+    };
+    if !screen.keeping || screen.width == Some(width) {
+        return false;
     }
-    let width = tty::width().unwrap_or(80);
+    let terminal = tty::open();
+    let _unechoed = terminal.as_ref().and_then(RawMode::enter);
     let earlier = screen
         .dropped
         .then(|| format!("{}\n", style::faint(text::EARLIER_NOT_KEPT)));
     let out = laid_out(earlier.as_deref(), &screen.pieces, width);
     let _ = std::io::stderr().write_all(out.as_bytes());
     screen.width = Some(width);
+    REDRAWS.fetch_add(1, Ordering::SeqCst);
+    true
 }
 
 /// Every piece at `width`, after what clears the screen and its scrollback
 /// and the line saying `earlier` lines aren't there, when they aren't.
 fn laid_out(earlier: Option<&str>, pieces: &[Piece], width: usize) -> String {
-    let mut out = String::from("\x1b[?2026h\x1b[H\x1b[2J\x1b[3J");
+    // From no style: a redraw mid-answer may come with one open.
+    let mut out = String::from("\x1b[?2026h\x1b[0m\x1b[H\x1b[2J\x1b[3J");
     out.push_str(earlier.unwrap_or_default());
     for piece in pieces {
         match piece {
             Piece::Text(text) => out.push_str(text),
             Piece::Fitted(layout) => out.push_str(&layout(width)),
+            Piece::Pin => {}
         }
     }
     out.push_str("\x1b[?2026l");
@@ -229,9 +318,10 @@ pub fn leave_prompt() -> bool {
 }
 
 /// Asks the terminal its width every `POLL`, on a thread of its own. Once
-/// it settles on one the screen wasn't laid out at, a `>` being read is
-/// ended with a SIGINT, as mail ends it, for the redraw: rustyline has the
-/// keyboard there. Elsewhere the redraw waits for the next `>`.
+/// it settles on one the screen wasn't laid out at, a redraw is due: a `>`
+/// being read is ended with a SIGINT for it, as mail ends it, since
+/// rustyline has the keyboard there; during a turn, the spinner and the
+/// answer's loop redraw at their next step (`due`).
 fn watch() {
     thread::spawn(|| {
         let Some(terminal) = tty::open() else {
@@ -247,9 +337,12 @@ fn watch() {
                 continue;
             }
             if now.is_none() || now == screen().width {
+                // Back where it was laid out: nothing is due any more.
+                DUE.store(false, Ordering::SeqCst);
                 asked = None;
                 continue;
             }
+            DUE.store(true, Ordering::SeqCst);
             // Held while the signal goes, so the `>` can't be marked left
             // meanwhile: a signal that comes as the line ends finds
             // `SIGNALLED` set when it's left, and only cleared Lokal's flag.
@@ -292,7 +385,7 @@ mod tests {
         let at = |width| laid_out(None, &screen.pieces, width);
         assert_eq!(
             at(6),
-            "\x1b[?2026h\x1b[H\x1b[2J\x1b[3J> hi\nHello.\n─────\n\x1b[?2026l"
+            "\x1b[?2026h\x1b[0m\x1b[H\x1b[2J\x1b[3J> hi\nHello.\n─────\n\x1b[?2026l"
         );
         assert!(at(4).ends_with("Hello.\n───\n\x1b[?2026l"));
     }
@@ -319,7 +412,46 @@ mod tests {
             Piece::Text(_) | Piece::Fitted(_)
         ));
         let out = laid_out(Some("Earlier.\n"), &screen.pieces, 10);
-        assert!(out.starts_with("\x1b[?2026h\x1b[H\x1b[2J\x1b[3JEarlier.\n"));
+        assert!(out.starts_with("\x1b[?2026h\x1b[0m\x1b[H\x1b[2J\x1b[3JEarlier.\n"));
         assert!(out.len() < MOST_KEPT + 4096);
+    }
+
+    #[test]
+    fn a_text_is_cut_at_a_line_end_or_where_none_comes() {
+        let text = "aaaa\nbbbb\ncccc";
+        // A line ends right before: nothing more goes.
+        assert_eq!(text_cut(text, 5), 5);
+        // Inside a line: to its end.
+        assert_eq!(text_cut(text, 6), 10);
+        // In the last line, which has no end: right there.
+        assert_eq!(text_cut(text, 12), 12);
+        // Never inside a character.
+        assert_eq!(text_cut("ééé", 1), 2);
+    }
+
+    #[test]
+    fn a_long_text_keeps_its_latest_lines_and_a_pin_holds() {
+        let mut screen = Screen::new();
+        screen.keeping = true;
+        // One answer bigger than all that's kept, in pieces as it streams.
+        for n in 0..20_000 {
+            screen.keep(Piece::Text(format!("line {n:05} of a long answer\n")));
+        }
+        screen.keep(Piece::Fitted(Box::new(|_| "─\n".into())));
+        let Piece::Text(text) = &screen.pieces[0] else {
+            panic!("the answer went whole");
+        };
+        assert!(text.starts_with("line ") && text.ends_with("line 19999 of a long answer\n"));
+        assert!(screen.size <= MOST_KEPT && screen.dropped);
+        // A pin: what follows stays, however much comes after it.
+        screen.keep(Piece::Pin);
+        screen.keep(Piece::Text("$ rm -rf build\n".into()));
+        for _ in 0..1000 {
+            screen.keep(Piece::Text(format!("{}\n", "x".repeat(1000))));
+        }
+        assert!(matches!(screen.pieces[0], Piece::Pin));
+        assert!(
+            matches!(&screen.pieces[1], Piece::Text(text) if text.starts_with("$ rm -rf build"))
+        );
     }
 }

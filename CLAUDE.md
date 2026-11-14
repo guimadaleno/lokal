@@ -635,9 +635,10 @@ of MCP servers the person sets up. One binary, few dependencies.
     frame (`?2026`) where the terminal has it, with the keyboard unechoed
     meanwhile: what's typed waits for the `>`.
   - **It prints again at most 512 KB,** about a terminal's scrollback of
-    text: past that the oldest pieces go, and a faint line says earlier
-    lines aren't printed again. So a long session redraws as quickly as a
-    short one, and the memory stays small.
+    text: past that the oldest go, a long answer losing its first lines
+    only, and a faint line says earlier lines aren't printed again. So a
+    long session redraws about as quickly as a short one, and the memory
+    stays small.
   - **A clear is kept too** (`screen::cleared`): after `/new` or Ctrl+L, a
     redraw pushes what came before into the scrollback and goes on from
     the top, as the clear left it.
@@ -649,7 +650,24 @@ of MCP servers the person sets up. One binary, few dependencies.
     undo and its place in the history start over. Such an ending is never
     a quit, and a signal that came as the line ended, which only raised
     Lokal's own flag, is cleared then: at the `>`, Ctrl+C is a key.
-    Elsewhere the redraw waits for the next `>`.
+  - **During a turn, the redraw is due** (`screen::due`) and happens at the
+    next step of what's drawing, which then draws its live parts anew
+    rather than over what's there: the spinner's tick (the model, a
+    command, the judge, an MCP call, `/recon`) draws itself and the draft
+    under it; the answer's loop, while it streams, the draft under the
+    answer; an open question's pulse, the question, cut to the new width,
+    on the option it was on. The reasoning window, which the spinner's
+    redraw takes, knows from `screen::redraws` and draws again above it. A
+    resize is never a key. At a reply typed at a question (`/feedback`,
+    the first launch) or in an editor, it waits for the next question or
+    `>`. A redraw only happens when the width really differs from the one
+    laid out at, so a width changed and changed back draws nothing.
+  - **A step is pinned while it runs** (`screen::pin`): what it shows,
+    the `$` line, the diff, the call, never goes for the 512 KB, so a
+    redraw while its question is open still shows what it asks about. A
+    step that shows more (the rest of a huge diff) is kept whole until
+    it's answered, at a cost of the order of what the terminal already
+    took. An MCP result keeps only what can show of it.
   - **Only in a conversation whose answers and messages both reach the
     terminal:** a piped answer is never printed twice.
 - **While Lokal works, it reads the keyboard itself** (`keys.rs`): Ctrl+C or
@@ -990,6 +1008,7 @@ cargo clippy --all-targets
 | Start to the prompt, server found | ~40 ms (0.8.1) |
 | Memory at the prompt | 2.4 MB (0.8.1) |
 | Auto's judge, a 27B model with reasoning off (Ollama 0.40.2) | 0.3–2 s a step; 6–22 s with reasoning; the conversation's prompt cache stays |
+| A redraw at a new width, release build, into a pseudo-terminal (#49) | 0.4 ms for 500 lines, 3 ms for 2,500, about 50 ms for the 512 KB most kept (some 7,500 lines), which the pseudo-terminal's throughput bounds; 150–220 ms from the resize, the watch's 100 ms asks included |
 
 Measured on a current laptop, under WSL; the judge on a consumer GPU. The
 page's "Light" column and the README quote the first three: a change that
@@ -1041,11 +1060,14 @@ moves them past what's written there changes the words too.
 - **The redraw at a new width (#49):** run in a pseudo-terminal replayed
   in xterm.js, against a fake server. A session taken from 100 columns to
   60 and back to 100 matched the screen it started from line for line, the
-  `>` line and its cursor included. Still owed: Windows Terminal, where the
-  owner works, and the redraw during a turn (it waits for the `>` now).
-- **The reasoning window with wide characters or a resize while it shows:**
-  rows are cut by character count, so double-width characters may wrap and
-  leave a row behind. Tested only with a fake server's plain text.
+  `>` line and its cursor included; during a turn, with the reasoning
+  window open, an answer streaming (a draft under it too), a command
+  running and an approval question open, each redrawn within 0.25 s.
+  Still owed: Windows Terminal, where the owner works.
+- **The reasoning window with wide characters:** rows are cut by character
+  count, so double-width characters may wrap and leave a row behind. Tested
+  only with a fake server's plain text. (A resize while it shows redraws it
+  whole, #49.)
 - **Images on LM Studio with a model family other than Qwen:** the image
   goes in the read's `tool` message. On Ollama 0.40.15, Qwen 3.8 and
   LFM3-VL both see it there; on LM Studio, only Qwen was tried, and LM

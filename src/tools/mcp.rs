@@ -181,20 +181,36 @@ fn outcome(result: &Value, room: Option<usize>, vision: Option<bool>) -> Outcome
 /// server's result is often prose, so a long line goes on under the indent,
 /// broken at spaces, rather than at the terminal's edge.
 fn show_result(output: &str, images: &[String]) {
-    if output.lines().all(|line| line.trim().is_empty()) && images.is_empty() {
-        return;
-    }
-    let output = output.to_string();
-    let images = images.to_vec();
-    // Laid out again at a new width (#49).
-    crate::screen::fitted(Box::new(move |width| result_at(&output, &images, width)));
-}
-
-/// The result's rows at `width`, after a blank line.
-fn result_at(output: &str, images: &[String], width: usize) -> String {
-    let rows: Vec<String> = output
+    let lines: Vec<&str> = output
         .lines()
         .filter(|line| !line.trim().is_empty())
+        .collect();
+    if lines.is_empty() && images.is_empty() {
+        return;
+    }
+    // Only what can show is kept, for a redraw at a new width (#49): the
+    // first lines, each no longer than the rows shown hold in the widest
+    // terminal, and how many lines are left.
+    let shown: Vec<String> = lines
+        .iter()
+        .take(RESULT_SHOWN)
+        .map(|line| line.chars().take(RESULT_SHOWN * WIDEST).collect())
+        .collect();
+    let left = lines.len() - shown.len();
+    let images = images.to_vec();
+    crate::screen::fitted(Box::new(move |width| {
+        result_at(&shown, left, &images, width)
+    }));
+}
+
+/// The widest terminal a result's lines are kept for.
+const WIDEST: usize = 1000;
+
+/// The result's rows at `width`, after a blank line, and how many more
+/// there are, the `left` lines not kept among them.
+fn result_at(lines: &[String], left: usize, images: &[String], width: usize) -> String {
+    let rows: Vec<String> = lines
+        .iter()
         .flat_map(|line| {
             // No more of a line than the rows shown can hold.
             let line: String = layout::printable(line.trim_end())
@@ -211,8 +227,9 @@ fn result_at(output: &str, images: &[String], width: usize) -> String {
     for row in rows.iter().take(RESULT_SHOWN) {
         out.push_str(&format!("{}\n", style::gray(row)));
     }
-    if rows.len() > RESULT_SHOWN {
-        let more = text::more_lines(rows.len() - RESULT_SHOWN);
+    let more = rows.len().saturating_sub(RESULT_SHOWN) + left;
+    if more > 0 {
+        let more = text::more_lines(more);
         out.push_str(&format!("  {}\n", style::gray(&more)));
     }
     for size in images {
@@ -237,6 +254,20 @@ fn print_indented(message: &str, paint: fn(&str) -> String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_result_keeps_what_can_show_and_counts_the_rest() {
+        let lines: Vec<String> = (1..=12).map(|n| format!("row {n}")).collect();
+        // Plain, as stderr isn't a terminal in a test.
+        let shown = result_at(&lines, 3, &[], 80);
+        assert!(shown.starts_with("\n  row 1\n") && shown.contains("  row 12\n"));
+        assert!(shown.ends_with("  … +3 lines\n"), "{shown}");
+        // A narrow terminal breaks a line into more rows; they count too.
+        let long = vec!["word ".repeat(100)];
+        let narrow = result_at(&long, 0, &[], 30);
+        assert!(narrow.contains("… +"), "{narrow:?}");
+        assert!(!result_at(&lines[..2], 0, &[], 80).contains("… +"));
+    }
     use serde_json::json;
 
     fn text_of(outcome: Outcome) -> String {
