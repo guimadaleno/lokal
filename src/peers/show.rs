@@ -3,12 +3,12 @@
 //! for what a session is doing.
 
 use std::path::Path;
-use std::time::SystemTime;
 
 use super::{Message, Session};
 use unicode_width::UnicodeWidthStr;
 
 use crate::layout::{broken, indented, right_padding};
+use crate::screen::Layout;
 use crate::{clock, config, style, text, tty};
 
 /// What the model gets when a turn starts on mail, or when Enter passes it
@@ -90,16 +90,14 @@ pub fn session_state(session: &Session) -> &'static str {
 /// The other sessions as the person sees them listed: the names in a
 /// column, then each one's folder, branch and what it's doing, going on
 /// under itself in a narrow terminal. With `asked`, also what its person
-/// last asked and the files it changed. Lines ready to print.
-pub fn session_rows(sessions: &[Session], asked: bool) -> Vec<String> {
+/// last asked and the files it changed. Lines ready to print at `width`.
+pub fn session_rows(sessions: &[Session], asked: bool, width: usize) -> Vec<String> {
     let names = sessions
         .iter()
         .map(|session| session.name.chars().count())
         .max()
         .unwrap_or(0);
-    let room = tty::width()
-        .map_or(usize::MAX, |width| width.saturating_sub(names + 5))
-        .max(20);
+    let room = width.saturating_sub(names + 5).max(20);
     let mut rows = Vec::new();
     for session in sessions {
         let mut about = config::shown(Path::new(&session.folder));
@@ -125,56 +123,74 @@ pub fn session_rows(sessions: &[Session], asked: bool) -> Vec<String> {
 }
 
 /// A line about mail and the other sessions: a faint `·`, then `text` in
-/// gray, broken to fit the terminal under its own start. When a mail
-/// `arrived` shows faint at the right of its first row (#46): a mail is a
-/// message too.
-pub fn notice_line(text: &str, width: usize, arrived: Option<SystemTime>) -> String {
+/// gray, broken to fit the terminal under its own start, and `time` faint
+/// at the right of its first row where it has room (#46).
+pub fn notice_line(text: &str, width: usize, time: Option<&str>) -> String {
     let mut out = String::new();
-    for (index, part) in broken(text, width.saturating_sub(5).max(20))
-        .iter()
-        .enumerate()
-    {
+    for (index, part) in first_parts(text, width).iter().enumerate() {
         let lead = if index == 0 {
             format!("  {} ", style::faint("·"))
         } else {
             " ".repeat(4)
         };
         out.push_str(&format!("{lead}{}", style::gray(part)));
-        // The lead is four columns wide; a name may hold wide characters.
-        let end = 4 + part.width();
-        let padding = |time: usize| right_padding(end, time, width);
         if index == 0
-            && let Some(arrived) = arrived
-            && let Some(time) = clock::shown(arrived, |time| padding(time).is_some())
+            && let Some(time) = time
+            && let Some(spaces) = right_padding(lead_and(part), time.width(), width)
         {
-            let spaces = padding(time.width()).unwrap_or(2);
-            out.push_str(&format!("{}{}", " ".repeat(spaces), style::faint(&time)));
+            out.push_str(&format!("{}{}", " ".repeat(spaces), style::faint(time)));
         }
         out.push('\n');
     }
     out
 }
 
-/// A mail as it shows: who sent it and from where, the mail as it came,
-/// and `footer`, what becomes of it.
-pub(super) fn notice(message: &Message, footer: Option<&str>) -> String {
+/// `text` broken to fit under the lead at `width`.
+fn first_parts(text: &str, width: usize) -> Vec<String> {
+    broken(text, width.saturating_sub(5).max(20))
+}
+
+/// Where a notice's first row ends: its lead is four columns wide, and a
+/// name may hold wide characters.
+fn lead_and(part: &str) -> usize {
+    4 + part.width()
+}
+
+/// A mail as it shows at any width, so it's laid out again when the width
+/// changes (#49): who sent it and from where, the mail as it came,
+/// `footer`, what becomes of it, and a blank line after it and before it,
+/// unless one printed just before already left one. When it came is
+/// decided now, at the width now: a time shows only when its minute
+/// changed (#46).
+pub(super) fn notice(message: &Message, footer: Option<&str>, after_another: bool) -> Layout {
     let width = tty::width().unwrap_or(80);
     let from = if message.by_user {
         text::MAIL_FROM_YOU.to_string()
     } else {
         text::mail_from(&message.from)
     };
-    let mut notice = notice_line(&from, width, Some(message.arrived));
-    notice.push_str(&indented(&message.text, 4, width));
-    for line in indented(footer.unwrap_or_default(), 4, width).lines() {
-        notice.push_str(&format!("{}\n", style::faint(line)));
-    }
-    notice
+    let first = first_parts(&from, width)
+        .first()
+        .cloned()
+        .unwrap_or_default();
+    let time = clock::shown(message.arrived, |time| {
+        right_padding(lead_and(&first), time, width).is_some()
+    });
+    let text = message.text.clone();
+    let footer = footer.unwrap_or_default().to_string();
+    Box::new(move |width| {
+        let mut notice = notice_line(&from, width, time.as_deref());
+        notice.push_str(&indented(&text, 4, width));
+        for line in indented(&footer, 4, width).lines() {
+            notice.push_str(&format!("{}\n", style::faint(line)));
+        }
+        spaced(&notice, after_another)
+    })
 }
 
 /// A notice with a blank line after it, and before it too unless one
 /// printed just before already left one.
-pub(super) fn spaced(notice: &str, after_another: bool) -> String {
+fn spaced(notice: &str, after_another: bool) -> String {
     if after_another {
         format!("{notice}\n")
     } else {
@@ -195,7 +211,7 @@ mod tests {
             by_user,
             now,
             shown: None,
-            arrived: SystemTime::now(),
+            arrived: std::time::SystemTime::now(),
         };
         let messages = [
             message("api-1", false, true),
@@ -227,21 +243,33 @@ mod tests {
 
     #[test]
     fn a_mail_says_when_it_came_at_the_right_of_its_first_row() {
-        // Minutes no other test shows, so the shared last one isn't them.
-        let minute = |n: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(60 * n);
-        let arrived = minute(1_000_011);
-        let line = notice_line("api-1:", 40, Some(arrived));
-        let (first, rest) = line.split_once('\n').unwrap_or_default();
-        assert_eq!((first.chars().count(), rest), (39, ""), "{line}");
-        assert!(first.starts_with("  · api-1:  ") && first.chars().nth(36) == Some(':'));
-        // Without room, the row stays as it was: a minute of its own, so
-        // it's the room that says no.
-        assert_eq!(
-            notice_line("api-1:", 12, Some(minute(1_000_017))),
-            "  · api-1:\n"
-        );
+        let line = notice_line("api-1:", 40, Some("10:40"));
+        assert_eq!(line, format!("  · api-1:{}10:40\n", " ".repeat(24)));
+        assert_eq!(line.trim_end_matches('\n').width(), 39);
+        // Without room, the row stays as it was.
+        assert_eq!(notice_line("api-1:", 12, Some("10:40")), "  · api-1:\n");
         // A name of wide characters takes their columns, not their count.
-        let wide = notice_line("日本語-1:", 40, Some(minute(1_000_013)));
+        let wide = notice_line("日本語-1:", 40, Some("10:40"));
         assert_eq!(wide.trim_end_matches('\n').width(), 39, "{wide}");
+    }
+
+    #[test]
+    fn a_mail_is_laid_out_again_at_another_width() {
+        let message = Message {
+            from: "api-1".into(),
+            folder: "/".into(),
+            text: "The tests pass now, all of them, on both machines.".into(),
+            by_user: false,
+            now: true,
+            shown: None,
+            arrived: std::time::SystemTime::now(),
+        };
+        let layout = notice(&message, Some("Goes with the next turn."), false);
+        let wide = layout(80);
+        assert!(wide.starts_with("\n  · api-1:"), "{wide}");
+        assert!(wide.contains("    The tests pass now, all of them, on both machines.\n"));
+        let narrow = layout(30);
+        assert!(narrow.contains("    The tests pass now, all\n"), "{narrow}");
+        assert!(narrow.ends_with("Goes with the next turn.\n\n"));
     }
 }

@@ -4,7 +4,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-use crate::{layout, style, text, tty};
+use crate::{layout, style, text};
 
 /// Kept in `MODE` as its number, which `current` reads back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,11 +62,8 @@ pub fn warn_of_auto() -> bool {
 /// Auto's warning, when it's due, with a blank line after it.
 pub fn show_warning() {
     if warn_of_auto() {
-        let width = tty::width().unwrap_or(80);
-        for line in layout::indented(text::AUTO_WARNING, 0, width).lines() {
-            eprintln!("{}", style::gray(line));
-        }
-        eprintln!();
+        crate::screen::fitted(layout::indented_rows(text::AUTO_WARNING, 0, style::gray));
+        showln!();
     }
 }
 

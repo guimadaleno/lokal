@@ -4,7 +4,7 @@
 //! questions before anything changes.
 
 use std::borrow::Cow;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -28,7 +28,9 @@ use rustyline::{
 use crate::approvals::ProjectApprovals;
 use crate::peers::{Directory, Inbox};
 use crate::tty::{self, RawMode, discard_typed_ahead};
-use crate::{clipboard, clock, config, diff, layout, menu, mode, queue, style, text};
+use crate::{
+    clipboard, clock, config, diff, interrupt, layout, menu, mode, queue, screen, style, text,
+};
 
 pub const PROMPT: &str = "> ";
 /// How long after Esc another key makes it part of one, like an arrow
@@ -122,6 +124,8 @@ enum Read {
     Line(Line),
     EmptyPaste(String, usize),
     AutoChosen(String, usize),
+    /// The width changed: the screen is laid out again, and the line read on.
+    Resized(String, usize),
 }
 
 /// What shows after the line until it changes: the line, and the word.
@@ -167,6 +171,7 @@ impl Input {
                 command_hint: Cell::new(false),
                 notice: notice.clone(),
                 paste_started: watch.started.clone(),
+                drawn: RefCell::new((String::new(), 0)),
             }));
             printer = editor
                 .create_external_printer()
@@ -261,6 +266,14 @@ impl Input {
                         eprint!("\x1b[?25h");
                     }
                 }
+                Read::Resized(line, pos) => {
+                    first = false;
+                    // The screen again at the new width; the next reading
+                    // draws the line under it, the cursor where it was.
+                    redraw_unechoed();
+                    let (left, right) = line.split_at(pos.min(line.len()));
+                    initial = (left.to_string(), right.to_string());
+                }
                 Read::AutoChosen(line, pos) => {
                     first = false;
                     // Lokal ended the line for auto's warning: the line goes
@@ -289,6 +302,11 @@ impl Input {
         let Some(editor) = &mut self.editor else {
             return Read::Line(Line::Quit);
         };
+        // The width changed while Lokal worked: the screen is laid out again
+        // before the `>` shows.
+        if screen::resized() {
+            redraw_unechoed();
+        }
         // What an earlier reading's watch left is no longer this line's.
         for slot in [&self.watch.started, &self.watch.empty] {
             if let Ok(mut slot) = slot.lock() {
@@ -353,7 +371,9 @@ impl Input {
             };
             editor.bind_sequence(esc, EventHandler::Conditional(Box::new(drop)));
         }
+        screen::enter_prompt();
         let line = editor.readline_with_initial(PROMPT, (&initial.0, &initial.1));
+        let resized = screen::leave_prompt();
         let woken = self.inbox.as_ref().is_some_and(Inbox::leave_prompt);
         // A paste the line left with is no longer watched.
         if let Ok(mut started) = self.watch.started.lock() {
@@ -375,6 +395,12 @@ impl Input {
         editor.unbind_sequence(KeyEvent::alt('v'));
         // A reminder left over must not show at the next question.
         self.quit_armed.store(false, Ordering::SeqCst);
+        // A signal for a redraw that came as the line ended raised Lokal's
+        // own flag instead, which no Ctrl+C of the person's raised: at the
+        // `>`, Ctrl+C is a key.
+        if resized {
+            interrupt::clear();
+        }
         let auto_chosen = auto_chosen.lock().ok().and_then(|mut at| at.take());
         match line {
             Err(ReadlineError::Interrupted) if !woken && empty.is_some() => {
@@ -393,7 +419,19 @@ impl Input {
                 }
                 Read::Line(Line::Mail)
             }
-            Ok(_) if dropping.load(Ordering::SeqCst) => Read::Line(Line::DropMessages),
+            // Ended for a redraw: never a quit. The line and the cursor are
+            // where the last refresh drew them.
+            Err(ReadlineError::Interrupted) if resized => {
+                let (line, pos) = editor
+                    .helper()
+                    .map(|helper| helper.drawn.borrow().clone())
+                    .unwrap_or_default();
+                Read::Resized(line, pos)
+            }
+            Ok(_) if dropping.load(Ordering::SeqCst) => {
+                screen::kept(Box::new(|width| sent_line("", None, width)));
+                Read::Line(Line::DropMessages)
+            }
             Ok(line) => {
                 if !line.trim().is_empty() {
                     let _ = editor.add_history_entry(line.as_str());
@@ -408,42 +446,42 @@ impl Input {
     /// there, with the time Enter `queued` it at the right of its last row
     /// (#46), and kept in the history as one would be.
     pub fn show_queued(&mut self, line: &str, queued: SystemTime) {
-        let shown = layout::printable(line);
+        let shown = layout::printable(line).into_owned();
         let time = tty::width()
             .filter(|_| style::enabled())
-            .and_then(|width| time_beside(&shown, queued, width));
-        let rows: Vec<&str> = shown.lines().collect();
-        for (index, row) in rows.iter().enumerate() {
-            let prompt = if index == 0 { PROMPT } else { "" };
-            let after = match &time {
-                Some((padding, time)) if index + 1 == rows.len() => {
-                    format!("{}{}", " ".repeat(*padding), style::faint(time))
-                }
-                _ => String::new(),
-            };
-            eprintln!("{}{after}", style::accent(&format!("{prompt}{row}")));
-        }
+            .and_then(|width| time_beside(&shown, queued, width))
+            .map(|(_, time)| time);
+        screen::fitted(Box::new(move |width| {
+            line_shown(&shown, time.as_deref(), width)
+        }));
         if let Some(editor) = &mut self.editor {
             let _ = editor.add_history_entry(line);
         }
     }
 
-    /// When the person sent `line` at the `>`, faint at the right of its
-    /// last row, where the status sat while they typed it (#46). Enter
+    /// A line the person sent at the `>`, kept as it shows for a redraw
+    /// (#49), with when they sent it, `at` when given, faint at the right of
+    /// its last row, where the status sat while they typed it (#46). Enter
     /// leaves the line right above the cursor.
-    pub fn date_sent(&self, line: &str, at: SystemTime) {
-        let Some(width) = tty::width().filter(|_| style::enabled()) else {
-            return;
-        };
+    pub fn sent(&self, line: &str, at: Option<SystemTime>) {
+        let width = tty::width().filter(|_| style::enabled());
         // rustyline draws the line as typed, so it's laid out as typed.
-        if let Some((_, time)) = time_beside(line, at, width) {
+        let time = width
+            .zip(at)
+            .and_then(|(width, at)| time_beside(line, at, width))
+            .map(|(_, time)| time);
+        if let (Some(width), Some(time)) = (width, &time) {
             // Up to that row, out to where the time starts, and back down.
             eprint!(
                 "\x1b[1A\x1b[{}G{}\r\n",
                 width - time.width(),
-                style::faint(&time)
+                style::faint(time)
             );
         }
+        let line = line.to_string();
+        screen::kept(Box::new(move |width| {
+            sent_line(&line, time.as_deref(), width)
+        }));
     }
 
     /// Asks before a command runs, and offers not to ask again about this
@@ -611,7 +649,7 @@ impl Input {
             Approval::YesForProject => {
                 if let Err(error) = self.project.add(command) {
                     let path = config::shown(&config::approvals_path());
-                    eprintln!(
+                    showln!(
                         "  {}",
                         style::red(&text::cant_save(&path, &error.to_string()))
                     );
@@ -638,6 +676,8 @@ impl Input {
             helper.accented = false;
         }
         let answer = editor.readline_with_initial(prompt, (typed, "")).ok()?;
+        // As it stays on screen, for a redraw.
+        screen::kept_text(&format!("{prompt}{answer}\n"));
         let answer = answer.trim();
         (!answer.is_empty()).then(|| answer.to_string())
     }
@@ -757,6 +797,45 @@ const TAB_STOP: usize = 8;
 fn time_beside(drawn: &str, at: SystemTime, width: usize) -> Option<(usize, String)> {
     let time = clock::shown(at, |time| time_padding(drawn, time, width).is_some())?;
     Some((time_padding(drawn, time.width(), width)?, time))
+}
+
+/// The screen again at the new width (#49), with keys typed meanwhile
+/// left for the next reading rather than echoed into it.
+fn redraw_unechoed() {
+    let terminal = tty::open();
+    let _raw = terminal.as_ref().and_then(RawMode::enter);
+    screen::redraw();
+}
+
+/// A line as it shows after the prompt at `width`: `> ` and its rows in the
+/// accent, `time` faint at the right of the last one where it has room.
+fn line_shown(drawn: &str, time: Option<&str>, width: usize) -> String {
+    let mut out = String::new();
+    let rows: Vec<&str> = drawn.split('\n').collect();
+    for (index, row) in rows.iter().enumerate() {
+        let prompt = if index == 0 { PROMPT } else { "" };
+        out.push_str(&style::accent(&format!("{prompt}{row}")));
+        if index + 1 == rows.len()
+            && let Some(time) = time
+            && let Some(padding) = time_padding(drawn, time.width(), width)
+        {
+            out.push_str(&" ".repeat(padding));
+            out.push_str(&style::faint(time));
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// A line sent at the `>` as rustyline leaves it at `width`: as `line_shown`
+/// lays it out, and an empty row after a last row it filled, where
+/// rustyline had moved the cursor before Enter's line break.
+fn sent_line(line: &str, time: Option<&str>, width: usize) -> String {
+    let mut out = line_shown(line, time, width);
+    if !line.is_empty() && !line.ends_with('\n') && laid_out(line, width).1 == 0 {
+        out.push('\n');
+    }
+    out
 }
 
 /// The spaces before something `right` columns wide at the right of the
@@ -916,6 +995,7 @@ impl ConditionalEventHandler for ClearScreen {
         _context: &EventContext,
     ) -> Option<Cmd> {
         clock::forget();
+        screen::cleared();
         None
     }
 }
@@ -959,6 +1039,8 @@ struct Helper {
     notice: Notice,
     /// A paste in progress, cleared by the redraw of one that landed.
     paste_started: Arc<Mutex<Option<(String, usize)>>>,
+    /// The line and the cursor as rustyline last drew them.
+    drawn: RefCell<(String, usize)>,
 }
 
 impl Helper {
@@ -1146,7 +1228,13 @@ impl Highlighter for Helper {
         }
     }
 
-    fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
+    fn highlight<'l>(&self, line: &'l str, pos: usize) -> Cow<'l, str> {
+        // Kept for a redraw, which ends the reading without giving the line.
+        if let Ok(mut drawn) = self.drawn.try_borrow_mut() {
+            drawn.0.clear();
+            drawn.0.push_str(line);
+            drawn.1 = pos;
+        }
         if self.accented {
             Cow::Owned(style::accent(line))
         } else {

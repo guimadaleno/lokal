@@ -129,6 +129,10 @@ pub const NEW_CONVERSATION: &str = "Fresh start.";
 pub const RESUMED: &str = "Picking up where we left off.";
 pub const NOTHING_TO_RESUME: &str = "Nothing to pick up yet.";
 pub const STOPPED: &str = "Stopped.";
+
+/// At the top of a screen laid out again at a new width (#49), when the
+/// session outgrew what a redraw prints again.
+pub const EARLIER_NOT_KEPT: &str = "Earlier lines aren't printed again.";
 pub const QUIT_AGAIN: &str = "Ctrl+C again to quit";
 
 pub const RUN_QUESTION: &str = "Run it?";

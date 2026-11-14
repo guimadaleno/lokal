@@ -18,6 +18,7 @@ use super::{
     Session, Shared, TIMEOUT, Then, number_in,
 };
 use crate::layout::{clean, clean_message};
+use crate::{screen, tty};
 
 /// Answers one connection, then prints a mail that came while the person
 /// is at the `>`, or ends the `>` for a turn to start on it.
@@ -36,8 +37,12 @@ pub(super) fn serve(stream: UnixStream, shared: &Shared) {
     };
     // Only at the `>`: rustyline's printer writes straight to the terminal
     // outside it, into whatever is on screen.
-    if let Some(print) = arrival.print {
-        let _ = printer.print(print);
+    if let Some(layout) = arrival.print {
+        let shown = layout(tty::width().unwrap_or(80));
+        // rustyline prints it above the `>`; kept as it would print, for a
+        // redraw (#49).
+        screen::kept(layout);
+        let _ = printer.print(shown);
     }
     if arrival.then == Then::Now {
         shared.inbox.wake();

@@ -8,7 +8,7 @@ use std::os::fd::AsRawFd;
 use std::time::{Duration, Instant};
 
 use crate::tty::{self, RawMode};
-use crate::{layout, style};
+use crate::{layout, screen, style};
 
 /// How often the selected option's marker is repainted while it pulses, in ms.
 const PULSE_FRAME: i32 = 60;
@@ -102,11 +102,10 @@ pub fn choose(
         }
         Choice::Interrupted => String::new(),
     };
-    let _ = write!(
-        terminal,
-        "\r\x1b[{}A\x1b[J  {question} {answer}\n\x1b[?25h",
-        items.len()
-    );
+    let folded = format!("  {question} {answer}\n");
+    let _ = write!(terminal, "\r\x1b[{}A\x1b[J{folded}\x1b[?25h", items.len());
+    // What stays of the question, for a redraw (#49).
+    screen::kept_text(&folded);
     drop(raw);
     Some(choice)
 }

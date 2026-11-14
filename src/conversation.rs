@@ -2,7 +2,7 @@
 //! on disk that `lokal -r` resumes.
 
 use std::fs;
-use std::io::{IsTerminal, Write};
+use std::io::IsTerminal;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -23,7 +23,8 @@ use crate::spinner::Spinner;
 use crate::system::Facts;
 use crate::tools::{self, Outcome};
 use crate::{
-    config, http, interrupt, judge, keys, layout, mode, prompt, queue, reasoning, style, text, tty,
+    config, http, interrupt, judge, keys, layout, mode, prompt, queue, reasoning, screen, style,
+    text, tty,
 };
 
 /// The project's notes go along with every request, so they get an eighth
@@ -415,7 +416,7 @@ impl Conversation {
                 Ok(reply) => reply,
                 Err(Failure::Stopped) => {
                     end = Turn::SteppedIn;
-                    eprintln!("{}", style::gray(text::STOPPED));
+                    showln!("{}", style::gray(text::STOPPED));
                     // Otherwise the model takes the stopped request up again next turn.
                     self.messages
                         .push(json!({"role": "assistant", "content": STOPPED_RESULT}));
@@ -527,7 +528,7 @@ impl Conversation {
             return;
         };
         input.show_queued(&line, queued);
-        eprintln!();
+        showln!();
         if let Some(peers) = &self.peers {
             peers.inbox().person_acted(Some(&line));
         }
@@ -558,7 +559,7 @@ impl Conversation {
         }
         // Notes edited since the last turn count from this one on.
         if self.refresh_notes() {
-            eprintln!("{}\n", style::gray(text::NOTES_CHANGED));
+            showln!("{}\n", style::gray(text::NOTES_CHANGED));
         }
     }
 
@@ -641,7 +642,7 @@ impl Conversation {
                 let servers = self.mcp.as_mut();
                 let outcome = tools::run(call, input, mode, &case, room, scratch, peers, servers);
                 // A blank line after each step, so its output doesn't run into what follows.
-                eprintln!();
+                showln!();
                 match outcome {
                     Outcome::Done(result) => result.into(),
                     Outcome::Images { text, urls } => {
@@ -670,7 +671,7 @@ impl Conversation {
                 .push(json!({"role": "tool", "tool_call_id": call.id, "content": result}));
         }
         if stopped {
-            eprintln!("{}", style::gray(text::STOPPED));
+            showln!("{}", style::gray(text::STOPPED));
         }
         // A note `remember` added counts from the next request on.
         if reply.tool_calls.iter().any(|call| call.name == "remember") {
@@ -743,7 +744,7 @@ impl Conversation {
                 if mid_line {
                     under.flush();
                     print_rest(&mut markdown);
-                    println!();
+                    screen::answer("\n");
                 }
                 return Err(Failure::Stopped);
             }
@@ -797,8 +798,7 @@ impl Conversation {
                         if on_screen && under.active() {
                             under.push(&shown);
                         } else {
-                            print!("{shown}");
-                            let _ = std::io::stdout().flush();
+                            screen::answer(&shown);
                         }
                         mid_line = true;
                         paused = false;
@@ -814,7 +814,7 @@ impl Conversation {
                         // End the text, then a blank line before the step.
                         under.flush();
                         print_rest(&mut markdown);
-                        println!("\n");
+                        screen::answer("\n\n");
                         mid_line = false;
                     }
                     paused = false;
@@ -826,11 +826,11 @@ impl Conversation {
                     if mid_line {
                         under.flush();
                         print_rest(&mut markdown);
-                        println!();
+                        screen::answer("\n");
                     } else if paused {
                         // The answer ended in the pause: the blank line under
                         // it goes, so what follows sits where it always does.
-                        eprint!("\x1b[1A");
+                        show!("\x1b[1A");
                     }
                     return result.map_err(Failure::Server);
                 }
@@ -846,8 +846,7 @@ impl Conversation {
             {
                 under.flush();
                 print_rest(&mut markdown);
-                println!("\n");
-                let _ = std::io::stdout().flush();
+                screen::answer("\n\n");
                 mid_line = false;
                 paused = true;
             }
@@ -939,7 +938,7 @@ impl Conversation {
         }
         // Room to breathe before the answer.
         if !left_out.is_empty() {
-            eprintln!();
+            showln!();
         }
         (kept, left_out)
     }
@@ -1000,7 +999,7 @@ impl Conversation {
         let messages: Vec<Value> = self.messages.iter().map(kept).collect();
         let saved = json!({"messages": messages, "tokens": self.tokens});
         if let Err(error) = config::write(&path, &saved.to_string()) {
-            eprintln!(
+            showln!(
                 "{}",
                 style::red(&text::cant_save(&config::shown(&path), &error.to_string()))
             );
@@ -1073,7 +1072,7 @@ fn summarize(address: &str, body: Value) -> Result<String, Failure> {
 
 fn print_rest(markdown: &mut Option<Markdown>) {
     if let Some(markdown) = markdown {
-        print!("{}", markdown.finish());
+        screen::answer(&markdown.finish());
     }
 }
 

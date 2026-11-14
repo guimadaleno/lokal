@@ -12,7 +12,7 @@ use std::io::Write;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
-use crate::{layout, style, text, tty};
+use crate::{layout, screen, style, text, tty};
 
 /// A paste of a whole file stops here: the draft is a message.
 const MOST: usize = 64 * 1024;
@@ -290,8 +290,7 @@ impl UnderAnswer {
         self.held.push_str(text);
         if let Some(lines) = whole_lines(&mut self.held) {
             self.erase();
-            print!("{lines}");
-            let _ = std::io::stdout().flush();
+            screen::answer(&lines);
             self.draw();
         }
     }
@@ -307,8 +306,7 @@ impl UnderAnswer {
     /// printed, the cursor after it.
     pub fn flush(&mut self) {
         self.erase();
-        print!("{}", std::mem::take(&mut self.held));
-        let _ = std::io::stdout().flush();
+        screen::answer(&std::mem::take(&mut self.held));
     }
 
     fn draw(&mut self) {

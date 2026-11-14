@@ -109,9 +109,9 @@ impl Mcp {
                     let why = lines.next().unwrap_or_default();
                     layout::print_fitted(&text::mcp_couldnt_start(&setup.name, why), style::red);
                     for line in lines {
-                        eprintln!("  {}", style::gray(&layout::printable(line)));
+                        showln!("  {}", style::gray(&layout::printable(line)));
                     }
-                    eprintln!();
+                    showln!();
                     left_out(&setup.name, text::MCP_COULDNT_START)
                 }
             };
@@ -189,7 +189,7 @@ impl Mcp {
         }
         if tools.is_empty() {
             layout::print_fitted(&text::mcp_no_tools(&setup.name), style::gray);
-            eprintln!();
+            showln!();
             self.retire(client);
             return left_out(&setup.name, text::MCP_NO_TOOLS);
         }
@@ -202,12 +202,12 @@ impl Mcp {
             let rest = lines.split_off(lines.len().min(REVIEW_SHOWN));
             print_lines(&lines);
             if !rest.is_empty() {
-                eprintln!("  {}", style::gray(&text::more_lines(rest.len())));
+                showln!("  {}", style::gray(&text::more_lines(rest.len())));
             }
-            eprintln!();
+            showln!();
             let approval =
                 input.approve_shown(text::OFFER_QUESTION, rest, print_lines, false, false);
-            eprintln!();
+            showln!();
             if let Approval::Stop = approval {
                 interrupt::raise();
             }
@@ -416,7 +416,7 @@ fn wrapped(text: &str, indent: usize, width: usize, paint: fn(&str) -> String) -
 
 fn print_lines(lines: &[String]) {
     for line in lines {
-        eprintln!("{line}");
+        showln!("{line}");
     }
 }
 

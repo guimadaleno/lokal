@@ -62,15 +62,15 @@ fn decide(
     if allowlist::is_read_only(command) && git_warning.is_none() {
         return Ok(true);
     }
-    eprintln!();
+    showln!();
     // A setting's name can hold any character but a line break.
     if let Some(warning) = &git_warning {
-        eprintln!("  {}", layout::printable(warning));
+        showln!("  {}", layout::printable(warning));
     }
     if git_warning.is_none()
         && let Some(note) = input.approved_before(command)
     {
-        eprintln!("  {}", style::faint(note));
+        showln!("  {}", style::faint(note));
         return Ok(false);
     }
     let mut on_yes = allowlist::opens_on_yes(command, folders) && git_warning.is_none();
@@ -81,12 +81,12 @@ fn decide(
         && allowlist::uses_git(command)
         && let Some(warning) = write_warning(command)
     {
-        eprintln!("  {}", layout::printable(&warning));
+        showln!("  {}", layout::printable(&warning));
         on_yes = false;
     }
     // What the model says the command does, where the person decides on it.
     if !explanation.is_empty() {
-        eprintln!("  {}", style::gray(&layout::printable(explanation)));
+        showln!("  {}", style::gray(&layout::printable(explanation)));
     }
     // The judge only ever sees what would open on Yes.
     let verdict = match judge.filter(|_| on_yes) {
@@ -144,7 +144,7 @@ fn write_warning(command: &str) -> Option<String> {
 /// The `$` line a command's step starts with, its later lines indented.
 fn print_command(command: &str) {
     let command = layout::printable(command).replace('\n', "\n  ");
-    eprintln!("{} {command}", style::accent("$"));
+    showln!("{} {command}", style::accent("$"));
 }
 
 /// A command the person typed at the `>` after a `!`. It runs without a
@@ -169,12 +169,12 @@ pub fn run_own(command: &str, room: Option<usize>) -> Option<String> {
         Err(error) => Err(Some(text::cant_start_bash(&error.to_string()))),
     };
     if let Err(Some(message)) = &result {
-        eprintln!("  {}", style::red(message));
+        showln!("  {}", style::red(message));
     }
     // A blank line after the step, as after the model's.
-    eprintln!();
+    showln!();
     if let Err(None) = result {
-        eprintln!("{}", style::gray(text::STOPPED));
+        showln!("{}", style::gray(text::STOPPED));
     }
     result.ok()
 }

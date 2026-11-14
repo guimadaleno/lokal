@@ -34,7 +34,7 @@ pub(super) fn call(
     }
     let tool = mcp.tool(index);
     let exact = format!("{} {args}", tool.exposed);
-    eprintln!(
+    showln!(
         "{} {}",
         style::accent(mcp.server_name(tool)),
         layout::printable(&tool.name)
@@ -43,11 +43,11 @@ pub(super) fn call(
     let rest = lines.split_off(lines.len().min(ARGUMENTS_SHOWN));
     print_lines(&lines);
     if !rest.is_empty() {
-        eprintln!("  {}", style::gray(&text::more_lines(rest.len())));
+        showln!("  {}", style::gray(&text::more_lines(rest.len())));
     }
-    eprintln!();
+    showln!();
     if input.call_approved_before(&exact) {
-        eprintln!("  {}", style::faint(text::APPROVED_FOR_SESSION));
+        showln!("  {}", style::faint(text::APPROVED_FOR_SESSION));
     } else {
         let approval = input.approve_shown(text::CALL_QUESTION, rest, print_lines, true, false);
         input.keep_call_approval(&approval, &exact);
@@ -60,7 +60,7 @@ pub(super) fn call(
         Err(Failure::Stopped) => Ok(Outcome::Stopped),
         Err(failure) => {
             let message = failure.message();
-            eprintln!();
+            showln!();
             print_indented(&message, style::red);
             Ok(Outcome::Done(format!("Error: {message}")))
         }
@@ -181,7 +181,17 @@ fn outcome(result: &Value, room: Option<usize>, vision: Option<bool>) -> Outcome
 /// server's result is often prose, so a long line goes on under the indent,
 /// broken at spaces, rather than at the terminal's edge.
 fn show_result(output: &str, images: &[String]) {
-    let width = tty::width().unwrap_or(80);
+    if output.lines().all(|line| line.trim().is_empty()) && images.is_empty() {
+        return;
+    }
+    let output = output.to_string();
+    let images = images.to_vec();
+    // Laid out again at a new width (#49).
+    crate::screen::fitted(Box::new(move |width| result_at(&output, &images, width)));
+}
+
+/// The result's rows at `width`, after a blank line.
+fn result_at(output: &str, images: &[String], width: usize) -> String {
     let rows: Vec<String> = output
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -197,35 +207,31 @@ fn show_result(output: &str, images: &[String]) {
                 .collect::<Vec<_>>()
         })
         .collect();
-    if rows.is_empty() && images.is_empty() {
-        return;
-    }
-    eprintln!();
+    let mut out = String::from("\n");
     for row in rows.iter().take(RESULT_SHOWN) {
-        eprintln!("{}", style::gray(row));
+        out.push_str(&format!("{}\n", style::gray(row)));
     }
     if rows.len() > RESULT_SHOWN {
-        eprintln!(
-            "  {}",
-            style::gray(&text::more_lines(rows.len() - RESULT_SHOWN))
-        );
+        let more = text::more_lines(rows.len() - RESULT_SHOWN);
+        out.push_str(&format!("  {}\n", style::gray(&more)));
     }
     for size in images {
-        eprintln!("  {}", style::gray(&text::mcp_image_shown(size)));
+        out.push_str(&format!(
+            "  {}\n",
+            style::gray(&text::mcp_image_shown(size))
+        ));
     }
+    out
 }
 
 fn print_lines(lines: &[String]) {
     for line in lines {
-        eprintln!("{line}");
+        showln!("{line}");
     }
 }
 
 fn print_indented(message: &str, paint: fn(&str) -> String) {
-    let width = tty::width().unwrap_or(80);
-    for line in layout::indented(&layout::printable(message), 2, width).lines() {
-        eprintln!("{}", paint(line));
-    }
+    crate::screen::fitted(layout::indented_rows(&layout::printable(message), 2, paint));
 }
 
 #[cfg(test)]

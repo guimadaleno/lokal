@@ -572,6 +572,7 @@ of MCP servers the person sets up. One binary, few dependencies.
 | `approvals.rs` | Commands approved for a project |
 | `reasoning.rs` | The small window the reasoning shows in while the model thinks |
 | `scratch.rs` | The session's folder for temporary files |
+| `screen.rs` | What the conversation printed, kept to print again at a new width; the watch on the width; `show!` and `showln!` |
 | `sandbox.rs` | The box (`docs/sandbox.md`): `lokal --box` sets it up and becomes the command; `tests/sandbox.rs` tries to get out of it. Nothing runs in it yet |
 | `peers.rs` | Mail between the person's sessions: this one's name and socket, listing the others, sending, news of the ones working alongside |
 | `peers/inbox.rs` | The mail waiting, and when it starts a turn |
@@ -610,6 +611,47 @@ of MCP servers the person sets up. One binary, few dependencies.
 - **Commands run in a session of their own** (`setsid` in `shell.rs`). Then
   nothing can wait on the terminal (sudo fails at once instead of hanging),
   and Ctrl+C reaches a command only through Lokal.
+- **A change of the terminal's width lays the screen out again** (#49,
+  `src/screen.rs`), as Claude Code does, but from Rust and at once.
+  - **What lasts is kept as it went out:** every line of the conversation
+    is printed through `show!`, `showln!`, `screen::answer` (the answer, on
+    stdout) or `screen::fitted`, never `eprintln!`, and a line already on
+    screen another way (the `>` line rustyline drew, a mail it printed, a
+    question folded into its answer, a reply at a question) is kept with
+    `screen::kept`. Text the terminal wraps by itself is kept as its
+    bytes; what's fitted to the width as a layout, laid out again at the
+    new width: a rule, a time at the right edge, a mail, and text broken
+    to fit (`layout::print_fitted`, `layout::indented_rows`, `/info`, the
+    sessions listed). A time's minute is decided once, and only its room
+    again. The one exception is an MCP tool list or call shown before its
+    question, whose "Show the rest" splits the lines by their count at the
+    width then: it stays as it printed.
+  - **What's live isn't kept:** the spinner, the draft row, the reasoning
+    window, an open question and the `>` while it's typed are drawn again
+    by what owns them.
+  - **The redraw clears the screen and the scrollback** (`\x1b[3J`), so
+    what the tab held before Lokal started goes at the first change of
+    width, and prints every kept piece in one write, in a synchronized
+    frame (`?2026`) where the terminal has it, with the keyboard unechoed
+    meanwhile: what's typed waits for the `>`.
+  - **It prints again at most 512 KB,** about a terminal's scrollback of
+    text: past that the oldest pieces go, and a faint line says earlier
+    lines aren't printed again. So a long session redraws as quickly as a
+    short one, and the memory stays small.
+  - **A clear is kept too** (`screen::cleared`): after `/new` or Ctrl+L, a
+    redraw pushes what came before into the scrollback and goes on from
+    the top, as the clear left it.
+  - **A thread asks the terminal its width every 100 ms** and waits for
+    two asks to agree, so a drag ends in one redraw. At the `>` it ends the
+    reading with a SIGINT, as mail does, holding a lock the `>` must take
+    to be marked left; the reading comes back with the line and the
+    cursor where rustyline last drew them (`Helper::drawn`), though its
+    undo and its place in the history start over. Such an ending is never
+    a quit, and a signal that came as the line ended, which only raised
+    Lokal's own flag, is cleared then: at the `>`, Ctrl+C is a key.
+    Elsewhere the redraw waits for the next `>`.
+  - **Only in a conversation whose answers and messages both reach the
+    terminal:** a piped answer is never printed twice.
 - **While Lokal works, it reads the keyboard itself** (`keys.rs`): Ctrl+C or
   a lone Esc stops the turn, Shift+Tab (`ESC [ Z`) changes the mode, and
   other keys go to the next message's draft (`queue.rs`, #3) rather than
@@ -996,6 +1038,11 @@ moves them past what's written there changes the words too.
   (writing `/proc/self/setgroups` is refused), so a green CI says nothing
   about the box. Still owed: the tests on a plain
   Ubuntu 24.04 and on a kernel just past 6.12.
+- **The redraw at a new width (#49):** run in a pseudo-terminal replayed
+  in xterm.js, against a fake server. A session taken from 100 columns to
+  60 and back to 100 matched the screen it started from line for line, the
+  `>` line and its cursor included. Still owed: Windows Terminal, where the
+  owner works, and the redraw during a turn (it waits for the `>` now).
 - **The reasoning window with wide characters or a resize while it shows:**
   rows are cut by character count, so double-width characters may wrap and
   leave a row behind. Tested only with a fake server's plain text.

@@ -64,6 +64,7 @@ const FILES_SHOWN: usize = 5;
 const MOST_SESSIONS: usize = 999;
 
 /// Another session, as it says it is.
+#[derive(Clone)]
 pub struct Session {
     pub name: String,
     pub folder: String,

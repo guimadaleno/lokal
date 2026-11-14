@@ -16,11 +16,21 @@ pub fn open() -> Option<File> {
 
 /// Columns in the terminal, asked of it each time: the window may have changed.
 pub fn width() -> Option<usize> {
+    size().map(|(columns, _)| columns)
+}
+
+/// Rows in the terminal, asked of it each time.
+pub fn height() -> Option<usize> {
+    size().map(|(_, rows)| rows)
+}
+
+fn size() -> Option<(usize, usize)> {
     let terminal = open()?;
     // SAFETY: winsize is plain data, filled in by the ioctl.
     let mut size: libc::winsize = unsafe { std::mem::zeroed() };
     let found = unsafe { libc::ioctl(terminal.as_raw_fd(), libc::TIOCGWINSZ, &mut size) } == 0;
-    (found && size.ws_col > 0).then_some(size.ws_col as usize)
+    (found && size.ws_col > 0 && size.ws_row > 0)
+        .then_some((size.ws_col as usize, size.ws_row as usize))
 }
 
 /// Keys arrive one by one, unechoed, and Ctrl+C arrives as a key rather

@@ -22,14 +22,14 @@ pub fn show(old: &str, new: &str) -> Vec<String> {
     };
     print(&lines);
     if !rest.is_empty() {
-        eprintln!("  {}", style::gray(&text::more_lines(rest.len())));
+        showln!("  {}", style::gray(&text::more_lines(rest.len())));
     }
     rest
 }
 
 pub fn print(lines: &[String]) {
     for line in lines {
-        eprintln!("  {line}");
+        showln!("  {line}");
     }
 }
 

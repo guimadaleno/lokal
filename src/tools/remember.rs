@@ -33,12 +33,12 @@ pub(super) fn remember(args: &Value, input: &mut Input) -> Result<Outcome, Strin
     let path = config::user_md_path();
     let old = current_notes(&path)?;
     let Some(new) = remembered(&old, &note, replaces)? else {
-        eprintln!(
+        showln!(
             "{} {}",
             style::accent(text::STEP_REMEMBER),
             config::shown(&path)
         );
-        eprintln!("  {}", style::gray(text::ALREADY_REMEMBERED));
+        showln!("  {}", style::gray(text::ALREADY_REMEMBERED));
         return Ok(Outcome::Done(
             "It's already in user.md, so nothing changed.".into(),
         ));

@@ -138,11 +138,37 @@ pub fn indented(text: &str, indent: usize, width: usize) -> String {
 /// mid-word. Where the width isn't known, each line stays whole. Control
 /// characters show as marks, as everywhere else.
 pub fn print_fitted(text: &str, paint: fn(&str) -> String) {
-    let room = tty::width().map_or(usize::MAX, |width| width.saturating_sub(1));
     // A server's words can be in it.
-    for line in text.lines().flat_map(|line| broken(&printable(line), room)) {
-        eprintln!("{}", paint(&line));
+    let text = printable(text).into_owned();
+    if tty::width().is_none() {
+        for line in text.lines() {
+            showln!("{}", paint(line));
+        }
+        return;
     }
+    // Broken again at a new width (#49).
+    crate::screen::fitted(Box::new(move |width| {
+        text.lines()
+            .flat_map(|line| broken(line, width.saturating_sub(1)))
+            .map(|line| format!("{}\n", paint(&line)))
+            .collect()
+    }));
+}
+
+/// `text` broken to fit under `indent` at `width`, each row in `paint` and
+/// ended, as a step's lines show; laid out again at a new width (#49).
+pub fn indented_rows(
+    text: &str,
+    indent: usize,
+    paint: fn(&str) -> String,
+) -> crate::screen::Layout {
+    let text = text.to_string();
+    Box::new(move |width| {
+        indented(&text, indent, width)
+            .lines()
+            .map(|line| format!("{}\n", paint(line)))
+            .collect()
+    })
 }
 
 /// The spaces before something `right` columns wide, at the right edge of

@@ -228,14 +228,14 @@ impl Screen {
         self.lines += 1;
         self.spinner.clear();
         if std::mem::take(&mut self.gap) {
-            eprintln!();
+            showln!();
         }
         let line = String::from_utf8_lossy(&self.line);
         let line: String = layout::printable(line.trim_end())
             .chars()
             .take(SHOWN_WIDTH)
             .collect();
-        eprintln!("  {}", style::gray(&line));
+        showln!("  {}", style::gray(&line));
         self.line.clear();
     }
 
@@ -269,7 +269,7 @@ impl Screen {
         }
         self.spinner.clear();
         if self.lines > SHOWN_LINES {
-            eprintln!(
+            showln!(
                 "  {}",
                 style::gray(&text::more_lines(self.lines - SHOWN_LINES))
             );

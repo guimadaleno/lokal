@@ -78,7 +78,7 @@ pub(super) fn read_file(
 }
 
 fn print_read(path: &Path, detail: &str) {
-    eprintln!(
+    showln!(
         "{} {}{}",
         style::accent(text::STEP_READ),
         shown(path),

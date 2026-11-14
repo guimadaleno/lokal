@@ -10,15 +10,15 @@ use crate::context;
 use crate::conversation::{Compacted, Conversation};
 use crate::input::Input;
 use crate::{
-    clock, config, feedback, image, layout, memory, mode, peers, recon, server, spinner, style,
-    system, text, tty, update,
+    clock, config, feedback, image, layout, memory, mode, peers, recon, screen, server, spinner,
+    style, system, text, update,
 };
 
 /// Past this many lines, user.md costs noticeable context on every turn.
 const LONG_USER_MD: usize = 30;
 
 pub fn print_header(server: &server::Server) {
-    eprintln!(
+    showln!(
         "{} {}  {}",
         style::bold(text::NAME),
         text::VERSION,
@@ -62,13 +62,13 @@ pub fn run_command(
         return true;
     }
     if let Some(what) = argument(command, "/context") {
-        eprintln!();
+        showln!();
         if what == "raw" {
             print_raw_request(conversation);
         } else {
             print_context(conversation);
         }
-        eprintln!();
+        showln!();
         return true;
     }
     match command {
@@ -79,9 +79,10 @@ pub fn run_command(
             if style::enabled() {
                 eprint!("\x1b[2J\x1b[H");
                 clock::forget();
+                screen::cleared();
             }
             print_header(&conversation.server);
-            eprintln!("{}", style::gray(text::NEW_CONVERSATION));
+            showln!("{}", style::gray(text::NEW_CONVERSATION));
         }
         "/prefs" => {
             let path = config::user_md_path();
@@ -106,7 +107,7 @@ pub fn run_command(
             open_in_editor(&paths);
             if conversation.refresh_notes() {
                 if conversation.notes().is_empty() {
-                    eprintln!("{}", style::gray(text::NOTES_GONE));
+                    showln!("{}", style::gray(text::NOTES_GONE));
                 } else {
                     print_notes(conversation);
                 }
@@ -116,25 +117,25 @@ pub fn run_command(
         "/sysprompt" => {
             // Plain and whole, just as the model gets it.
             let (prompt, tools, tokens) = conversation.system_prompt();
-            eprintln!("\n{}\n", prompt.trim_end());
-            eprintln!("{}\n", style::gray(&text::sysprompt_cost(tokens, &tools)));
+            showln!("\n{}\n", prompt.trim_end());
+            showln!("{}\n", style::gray(&text::sysprompt_cost(tokens, &tools)));
         }
         "/sessions" => {
-            eprintln!();
+            showln!();
             print_sessions(conversation, session);
-            eprintln!();
+            showln!();
         }
         "/info" => {
-            eprintln!();
+            showln!();
             print_info(conversation, input, session);
-            eprintln!();
+            showln!();
         }
         "/recon" => {
             let rows = gather_recon();
-            eprintln!();
+            showln!();
             print_rows(&rows);
-            eprintln!();
-            eprintln!("{}", style::gray(text::RECON_DONE));
+            showln!();
+            showln!("{}", style::gray(text::RECON_DONE));
             conversation.set_recon(rows);
         }
         "/update" => check_for_update(session),
@@ -145,36 +146,36 @@ pub fn run_command(
             } else {
                 text::REASONING_HIDDEN
             };
-            eprintln!("{}", style::gray(message));
+            showln!("{}", style::gray(message));
         }
         "/feedback" => {
-            eprintln!();
+            showln!();
             let draft = session.feedback_draft.take();
             session.feedback_draft =
                 feedback::run(input, &conversation.server, session.updates_off, draft);
-            eprintln!();
+            showln!();
         }
         "/help" => print_help(),
         "/about" => {
-            eprintln!();
+            showln!();
             print_about();
-            eprintln!();
+            showln!();
         }
         "/exit" | "/quit" => return false,
-        other => eprintln!("{}", text::unknown_command(other)),
+        other => showln!("{}", text::unknown_command(other)),
     }
     true
 }
 
 fn print_about() {
-    eprintln!(
+    showln!(
         "  {} {}  {}",
         style::bold(text::NAME),
         text::VERSION,
         style::gray(text::DESCRIPTION)
     );
-    eprintln!("  {} {}", style::gray(text::MADE_BY), text::AUTHOR);
-    eprintln!("  {}", text::WEBSITE);
+    showln!("  {} {}", style::gray(text::MADE_BY), text::AUTHOR);
+    showln!("  {}", text::WEBSITE);
 }
 
 /// Everything about this session, for when something seems off.
@@ -271,31 +272,46 @@ fn print_info(conversation: &Conversation, input: &Input, session: &Session) {
 fn print_sessions(conversation: &Conversation, session: &Session) {
     let Some(peers) = conversation.peers() else {
         let off = session.mail == config::Mail::Off;
-        eprintln!("  {}", style::gray(text::sessions_unreachable(off)));
+        showln!("  {}", style::gray(text::sessions_unreachable(off)));
         return;
     };
     let sessions = peers.others();
     if sessions.is_empty() {
-        eprintln!("  {}", style::gray(&text::no_other_sessions(peers.name())));
+        showln!("  {}", style::gray(&text::no_other_sessions(peers.name())));
         return;
     }
-    for row in peers::session_rows(&sessions, true) {
-        eprintln!("{row}");
-    }
+    screen::fitted(Box::new(move |width| {
+        peers::session_rows(&sessions, true, width)
+            .iter()
+            .map(|row| format!("{row}\n"))
+            .collect()
+    }));
 }
 
 /// Labels in one column, values in the next. A value too long for the
 /// terminal goes on under itself, broken after a separator, so it never
 /// runs under the labels.
 fn print_rows(rows: &[(&str, String)]) {
-    // The indent and the label's column.
-    let room = tty::width().map_or(0, |width| width.saturating_sub(13));
-    for (label, value) in rows {
-        for (index, line) in layout::wrapped(value, room).iter().enumerate() {
-            let label = if index == 0 { *label } else { "" };
-            eprintln!("  {}{line}", style::gray(&format!("{label:<10}")));
+    let rows: Vec<(String, String)> = rows
+        .iter()
+        .map(|(label, value)| (label.to_string(), value.clone()))
+        .collect();
+    // Laid out again at a new width (#49).
+    screen::fitted(Box::new(move |width| {
+        // The indent and the label's column.
+        let room = width.saturating_sub(13);
+        let mut out = String::new();
+        for (label, value) in &rows {
+            for (index, line) in layout::wrapped(value, room).iter().enumerate() {
+                let label = if index == 0 { label.as_str() } else { "" };
+                out.push_str(&format!(
+                    "  {}{line}\n",
+                    style::gray(&format!("{label:<10}"))
+                ));
+            }
         }
-    }
+        out
+    }));
 }
 
 /// `/help`: the commands in alphabetical order, then the keys, what's
@@ -321,14 +337,14 @@ fn print_help() {
         + 2;
     let row = |name: String, shown: usize, about: &str| {
         let pad = " ".repeat(width.saturating_sub(shown));
-        eprintln!("  {name}{pad}{}", style::gray(about));
+        showln!("  {name}{pad}{}", style::gray(about));
     };
-    eprintln!();
+    showln!();
     for (name, about) in &commands {
         row(name.to_string(), name.chars().count(), about);
     }
     for block in blocks {
-        eprintln!();
+        showln!();
         let modes = std::ptr::eq(block, text::HELP_MODES);
         for (index, (name, about)) in block.iter().enumerate() {
             let shown = if modes {
@@ -344,10 +360,10 @@ fn print_help() {
             row(shown, name.chars().count(), about);
         }
         if modes {
-            eprintln!("  {}", style::gray(text::HELP_ALWAYS_ASKS));
+            showln!("  {}", style::gray(text::HELP_ALWAYS_ASKS));
         }
     }
-    eprintln!();
+    showln!();
 }
 
 /// `/context`: what fills the context, part by part, in estimated tokens,
@@ -375,9 +391,9 @@ fn print_context(conversation: &Conversation) {
                 format!("{:>7}{}", text::about(tokens), style::gray(&share(tokens))),
             )
         };
-        eprintln!("  {}{tokens}", style::gray(&format!("{label:<18}")));
+        showln!("  {}{tokens}", style::gray(&format!("{label:<18}")));
     };
-    eprintln!(
+    showln!(
         "  {}\n",
         text::context_total(&conversation.server.model, total, context)
     );
@@ -403,12 +419,12 @@ fn print_context(conversation: &Conversation) {
         );
         row(text::CONTEXT_REPLY, kept, false);
     }
-    eprintln!();
-    eprintln!(
+    showln!();
+    showln!(
         "{}",
         style::gray(&text::context_estimated(conversation.tokens()))
     );
-    eprintln!("{}", style::gray(text::CONTEXT_RAW_HINT));
+    showln!("{}", style::gray(text::CONTEXT_RAW_HINT));
 }
 
 /// `/context raw`: the next request as the server would get it, each
@@ -421,19 +437,19 @@ fn print_raw_request(conversation: &Conversation) {
     if let Some(fields) = request.as_object_mut() {
         fields.retain(|_, value| !value.is_null());
     }
-    eprintln!("{}", style::faint(&request.to_string()));
+    showln!("{}", style::faint(&request.to_string()));
     for message in messages.as_array().into_iter().flatten() {
         let role = message["role"].as_str().unwrap_or("?");
-        eprintln!("\n{}", style::faint(&format!("── {role} ──")));
+        showln!("\n{}", style::faint(&format!("── {role} ──")));
         match &message["content"] {
             serde_json::Value::String(content) if !content.is_empty() => {
-                eprintln!("{}", layout::printable(content));
+                showln!("{}", layout::printable(content));
             }
             serde_json::Value::Array(parts) => {
                 for part in parts {
                     match part["text"].as_str() {
-                        Some(text) => eprintln!("{}", layout::printable(text)),
-                        None => eprintln!(
+                        Some(text) => showln!("{}", layout::printable(text)),
+                        None => showln!(
                             "{}",
                             style::faint(&format!(
                                 "[image, {}]",
@@ -453,14 +469,14 @@ fn print_raw_request(conversation: &Conversation) {
         for call in message["tool_calls"].as_array().into_iter().flatten() {
             let name = call["function"]["name"].as_str().unwrap_or("?");
             let arguments = call["function"]["arguments"].as_str().unwrap_or_default();
-            eprintln!("{}", style::faint(&format!("→ {name}")));
-            eprintln!("{}", layout::printable(arguments));
+            showln!("{}", style::faint(&format!("→ {name}")));
+            showln!("{}", layout::printable(arguments));
         }
         // The system prompt's place: the tools follow it in the request.
         if role == "system" {
-            eprintln!("\n{}", style::faint("── tools ──"));
+            showln!("\n{}", style::faint("── tools ──"));
             let tools = serde_json::to_string_pretty(&tools).unwrap_or_default();
-            eprintln!("{}", layout::printable(&tools));
+            showln!("{}", layout::printable(&tools));
         }
     }
 }
@@ -468,18 +484,18 @@ fn print_raw_request(conversation: &Conversation) {
 /// `/compact`: the summary the model now keeps, then what it freed. Stopped
 /// or failed, nothing changed, and it says so.
 fn compact(conversation: &mut Conversation, focus: &str) {
-    eprintln!();
+    showln!();
     match conversation.compact(focus) {
-        Compacted::Nothing => eprintln!("{}", style::gray(text::NOTHING_TO_COMPACT)),
-        Compacted::Stopped => eprintln!(
+        Compacted::Nothing => showln!("{}", style::gray(text::NOTHING_TO_COMPACT)),
+        Compacted::Stopped => showln!(
             "{}",
             style::gray(&format!("{} {}", text::STOPPED, text::NOTHING_CHANGED))
         ),
         Compacted::Failed(Some(message)) => {
             layout::print_fitted(&message, style::red);
-            eprintln!("{}", style::gray(text::NOTHING_CHANGED));
+            showln!("{}", style::gray(text::NOTHING_CHANGED));
         }
-        Compacted::Failed(None) => eprintln!("{}", style::gray(text::NO_SUMMARY)),
+        Compacted::Failed(None) => showln!("{}", style::gray(text::NO_SUMMARY)),
         Compacted::Done {
             before,
             after,
@@ -488,16 +504,13 @@ fn compact(conversation: &mut Conversation, focus: &str) {
             // The model's words, as the model now remembers the conversation,
             // without the bold markers a gray block would show raw; the
             // conversation keeps them as written.
-            let width = tty::width().unwrap_or(80);
             let shown = layout::printable(&summary).replace("**", "");
-            for line in layout::indented(&shown, 2, width).lines() {
-                eprintln!("{}", style::gray(line));
-            }
-            eprintln!();
-            eprintln!("{}", style::gray(&text::compacted(before, after)));
+            screen::fitted(layout::indented_rows(&shown, 2, style::gray));
+            showln!();
+            showln!("{}", style::gray(&text::compacted(before, after)));
         }
     }
-    eprintln!();
+    showln!();
 }
 
 /// `/recon`'s probes, with the spinner meanwhile: Docker can take a moment.
@@ -515,7 +528,7 @@ fn check_for_update(session: &Session) {
         Ok(update::Asked::Unavailable(standing)) => text::cant_update(&standing),
         Ok(update::Asked::Failed) | Err(_) => text::UPDATE_FAILED.to_string(),
     };
-    eprintln!("{}", style::gray(&message));
+    showln!("{}", style::gray(&message));
 }
 
 /// Opens the settings in the person's editor, written out with every setting
@@ -525,7 +538,7 @@ fn edit_settings() {
     if !path.exists()
         && let Err(error) = config::write(&path, text::SETTINGS_TEMPLATE)
     {
-        eprintln!(
+        showln!(
             "{}",
             style::red(&text::cant_save(&config::shown(&path), &error.to_string()))
         );
@@ -539,8 +552,8 @@ fn edit_settings() {
         open_in_editor(&[&path]);
     }
     match config::load() {
-        Ok(_) => eprintln!("{}", style::gray(text::SETTINGS_NEXT_START)),
-        Err(message) => eprintln!("{}", style::red(&message)),
+        Ok(_) => showln!("{}", style::gray(text::SETTINGS_NEXT_START)),
+        Err(message) => showln!("{}", style::red(&message)),
     }
 }
 
@@ -552,7 +565,7 @@ fn open_in_editor(paths: &[&Path]) {
     // come from the PATH's absolute folders: the working folder may be a
     // project's, and a `./nano` of its own isn't the person's editor.
     let Some(sh) = system::program("sh") else {
-        eprintln!("{}", style::red(&text::no_editor(&editor)));
+        showln!("{}", style::red(&text::no_editor(&editor)));
         return;
     };
     let path = env::var("PATH").unwrap_or_default();
@@ -564,7 +577,7 @@ fn open_in_editor(paths: &[&Path]) {
         .args(paths)
         .status();
     if !status.is_ok_and(|status| status.success()) {
-        eprintln!("{}", style::red(&text::no_editor(&editor)));
+        showln!("{}", style::red(&text::no_editor(&editor)));
     }
 }
 
@@ -578,12 +591,12 @@ pub fn print_notes(conversation: &Conversation) {
         .map(|note| context::tokens_in(&note.text))
         .sum();
     let cut = notes.iter().any(|note| note.cut);
-    eprintln!("{}", style::gray(&text::notes_taken(&names, tokens, cut)));
+    showln!("{}", style::gray(&text::notes_taken(&names, tokens, cut)));
 }
 
 pub fn warn_if_user_md_is_long() {
     let lines = config::read_user_md().map_or(0, |contents| contents.lines().count());
     if lines > LONG_USER_MD {
-        eprintln!("{}", style::gray(&text::long_prefs(lines)));
+        showln!("{}", style::gray(&text::long_prefs(lines)));
     }
 }

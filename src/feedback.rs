@@ -91,7 +91,7 @@ pub fn run(
         log: None,
     };
     if let Err(field) = report.check() {
-        eprintln!("  {}", style::red(&text::feedback_field(field_name(field))));
+        showln!("  {}", style::red(&text::feedback_field(field_name(field))));
         return Some(typed);
     }
 
@@ -117,7 +117,7 @@ pub fn run(
             report.details = &[];
         }
         _ => {
-            eprintln!("  {}", style::gray(text::FEEDBACK_KEPT));
+            showln!("  {}", style::gray(text::FEEDBACK_KEPT));
             return Some(typed);
         }
     }
@@ -127,28 +127,28 @@ pub fn run(
 /// Sends the report and says how it went. False keeps the draft.
 fn is_sent(report: &Report) -> bool {
     let Ok(body) = report.body() else {
-        eprintln!("  {}", style::red(text::FEEDBACK_REFUSED));
+        showln!("  {}", style::red(text::FEEDBACK_REFUSED));
         return false;
     };
     let Some((status, answer)) = send(&body) else {
-        eprintln!("  {}", style::red(text::FEEDBACK_UNREACHABLE));
+        showln!("  {}", style::red(text::FEEDBACK_UNREACHABLE));
         return false;
     };
     match report::answer(status, &answer) {
         Answer::Sent(reference) => {
-            eprintln!("  {}", style::gray(&text::feedback_sent(&reference)));
+            showln!("  {}", style::gray(&text::feedback_sent(&reference)));
             true
         }
         Answer::Invalid(field) => {
-            eprintln!("  {}", style::red(&text::feedback_field(field_name(field))));
+            showln!("  {}", style::red(&text::feedback_field(field_name(field))));
             false
         }
         Answer::Later(seconds) => {
-            eprintln!("  {}", style::gray(&text::feedback_later(seconds)));
+            showln!("  {}", style::gray(&text::feedback_later(seconds)));
             false
         }
         Answer::Refused => {
-            eprintln!("  {}", style::red(text::FEEDBACK_REFUSED));
+            showln!("  {}", style::red(text::FEEDBACK_REFUSED));
             false
         }
     }
@@ -184,12 +184,12 @@ fn show(report: &Report) {
     if !details.is_empty() {
         rows.push(("details", details.join(" · ")));
     }
-    eprintln!();
-    eprintln!("  {}", style::gray(text::FEEDBACK_PREVIEW));
+    showln!();
+    showln!("  {}", style::gray(text::FEEDBACK_PREVIEW));
     for (label, value) in rows {
-        eprintln!("  {}{value}", style::gray(&format!("{label:<13}")));
+        showln!("  {}{value}", style::gray(&format!("{label:<13}")));
     }
-    eprintln!();
+    showln!();
 }
 
 /// The system and its version, and the processor: nothing that names the machine.

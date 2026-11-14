@@ -5,19 +5,24 @@ use serde_json::Value;
 
 use super::{Outcome, text_arg};
 use crate::peers::{self, Peers, Then, Undelivered};
-use crate::{layout, style, text, tty};
+use crate::{layout, style, text};
 
 /// The other sessions open, on screen and for the model.
 pub(super) fn list_sessions(peers: &Peers) -> Outcome {
-    eprintln!("{}", style::accent(text::STEP_SESSIONS));
+    showln!("{}", style::accent(text::STEP_SESSIONS));
     let sessions = peers.others();
     if sessions.is_empty() {
-        eprintln!("  {}", style::gray(text::NO_SESSIONS));
+        showln!("  {}", style::gray(text::NO_SESSIONS));
         return Outcome::Done("No other Lokal session is open.".into());
     }
-    for row in peers::session_rows(&sessions, false) {
-        eprintln!("{row}");
-    }
+    let listed = sessions.clone();
+    // Laid out again at a new width (#49).
+    crate::screen::fitted(Box::new(move |width| {
+        peers::session_rows(&listed, false, width)
+            .iter()
+            .map(|row| format!("{row}\n"))
+            .collect()
+    }));
     let mut result = String::new();
     for session in &sessions {
         let mut line = format!("- {}, in {}", session.name, session.folder);
@@ -62,11 +67,12 @@ pub(super) fn mail(args: &Value, peers: &Peers) -> Result<Outcome, String> {
     if to == peers.name() {
         return Err("that's this session's own name; list_sessions lists the others.".into());
     }
-    eprintln!("{}", style::mention(&layout::printable(&format!("@{to}"))));
-    let width = tty::width().unwrap_or(80);
-    for line in layout::indented(&layout::printable(message), 2, width).lines() {
-        eprintln!("{}", style::faint_italic(line));
-    }
+    showln!("{}", style::mention(&layout::printable(&format!("@{to}"))));
+    crate::screen::fitted(layout::indented_rows(
+        &layout::printable(message),
+        2,
+        style::faint_italic,
+    ));
     const NO_WAITING: &str = "Any answer comes as mail: end your turn rather than wait for it.";
     match peers.send(to, message, now, false) {
         Ok(Then::Now) => Ok(Outcome::Done(format!(

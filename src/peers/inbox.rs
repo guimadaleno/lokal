@@ -4,10 +4,11 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Instant, SystemTime};
 
-use super::show::{notice, spaced};
+use super::show::notice;
 use super::{REQUEST_LIMIT, SEEN_AFTER, WAITING_LIMIT};
 use crate::config::Mail;
 use crate::layout::clean;
+use crate::screen::{self, Layout};
 use crate::text;
 
 pub struct Message {
@@ -137,8 +138,7 @@ impl State {
             if self.waiting[index].shown.is_none() {
                 let fate = then(self, &self.waiting[index]);
                 let footer = self.footer(fate);
-                let notice = notice(&self.waiting[index], footer.as_deref());
-                eprint!("{}", spaced(&notice, printed));
+                screen::fitted(notice(&self.waiting[index], footer.as_deref(), printed));
                 self.waiting[index].shown = Some(Instant::now());
                 printed = true;
             }
@@ -171,7 +171,7 @@ pub struct Inbox(Arc<Mutex<State>>);
 /// A mail taken: what becomes of it, and what to print above the `>`.
 pub(super) struct Arrival {
     pub(super) then: Then,
-    pub(super) print: Option<String>,
+    pub(super) print: Option<Layout>,
 }
 
 impl Inbox {
@@ -324,7 +324,7 @@ impl Inbox {
         } else if state.at_prompt {
             message.shown = Some(Instant::now());
             let footer = state.footer(then);
-            print = Some(spaced(&notice(&message, footer.as_deref()), state.printed));
+            print = Some(notice(&message, footer.as_deref(), state.printed));
             state.printed = true;
         }
         state.waiting.push(message);

@@ -1,3 +1,5 @@
+#[macro_use]
+mod screen;
 mod allowlist;
 mod answer;
 mod approvals;
@@ -187,6 +189,8 @@ fn run(started: Instant, resume: bool, request: &str) -> ExitCode {
     let mut first_line = None;
     if talking {
         update = update::start(config.updates_off);
+        // From here on the screen is kept, to lay out again at a new width.
+        screen::keep();
         commands::print_header(&server);
         warn_if_context_is_small(&server, false);
         first_line = ask_first_question(&mut input);
@@ -223,9 +227,9 @@ fn run(started: Instant, resume: bool, request: &str) -> ExitCode {
     }
     if resume {
         if !conversation.resume() {
-            eprintln!("{}", style::gray(text::NOTHING_TO_RESUME));
+            showln!("{}", style::gray(text::NOTHING_TO_RESUME));
         } else if talking {
-            eprintln!("{}", style::gray(text::RESUMED));
+            showln!("{}", style::gray(text::RESUMED));
         }
     }
     if talking {
@@ -239,7 +243,7 @@ fn run(started: Instant, resume: bool, request: &str) -> ExitCode {
         talk(&mut conversation, &mut input, &mut session, first_line);
         let updated_to = update.and_then(|check| check.installed());
         let goodbye = text::lasted(started.elapsed(), updated_to.as_deref());
-        eprintln!("{}", style::gray(&goodbye));
+        showln!("{}", style::gray(&goodbye));
     } else if conversation.send(request, &mut input, Some(request)) != conversation::Turn::Answered
     {
         // A script running a one-shot request can tell no answer came: the
@@ -294,9 +298,10 @@ fn talk(
 }
 
 /// What the person typed at the `>`: a slash command, a command of their
-/// own, mail for another session or a request. All but a slash command
-/// get the time they were `sent` beside them, when given: a queued line
-/// shows its own. False when it's time to quit.
+/// own, mail for another session or a request. A line typed at the `>` is
+/// `sent` then, and is kept as it shows, with that time beside it but for
+/// a slash command or an empty line; one queued or answered at a question
+/// is None, as what showed it kept it. False when it's time to quit.
 fn take_line(
     typed: &str,
     sent: Option<SystemTime>,
@@ -305,6 +310,10 @@ fn take_line(
     session: &mut Session,
 ) -> bool {
     let line = typed.trim();
+    if let Some(sent) = sent {
+        let dated = !line.is_empty() && !is_command(line);
+        input.sent(typed, dated.then_some(sent));
+    }
     if line.is_empty() {
         pass_on_messages(conversation, input);
         return true;
@@ -312,12 +321,9 @@ fn take_line(
     if is_command(line) {
         return run_command(line, conversation, input, session);
     }
-    if let Some(sent) = sent {
-        input.date_sent(typed, sent);
-    }
     if let Some(command) = own_command(line) {
         // A blank line between the line and what follows, as after a request.
-        eprintln!();
+        showln!();
         if let Some(peers) = conversation.peers() {
             peers.inbox().person_acted(None);
         }
@@ -329,7 +335,7 @@ fn take_line(
         return true;
     }
     // A blank line between the request and what follows, to breathe.
-    eprintln!();
+    showln!();
     if let Some(peers) = conversation.peers() {
         peers.inbox().person_acted(Some(line));
     }
@@ -421,7 +427,7 @@ fn mail_from_person(line: &str, conversation: &Conversation) -> bool {
     };
     peers.inbox().person_acted(None);
     if let Some(failed) = failed {
-        eprintln!("{}", style::gray(&failed));
+        showln!("{}", style::gray(&failed));
     }
     true
 }
@@ -438,7 +444,7 @@ fn pass_on_messages(conversation: &mut Conversation, input: &mut Input) {
     }
     peers.inbox().person_acted(None);
     // A blank line between the `>` and what follows, as after a request.
-    eprintln!();
+    showln!();
     let request = with_news(conversation, &peers::framed(&messages));
     turn(conversation, input, &request, None);
 }
@@ -450,32 +456,38 @@ fn drop_messages(conversation: &Conversation) {
         return;
     };
     if !peers.inbox().take().is_empty() {
-        eprintln!("{}", style::gray(text::DROPPED));
+        showln!("{}", style::gray(text::DROPPED));
     }
 }
 
-/// A faint line between turns, as wide as the terminal is right now. Lines
-/// already printed stay as they are when the window is resized: the
-/// terminal owns those.
+/// A faint line between turns, as wide as the terminal, ending in when the
+/// turn ended (#46). Laid out again when the width changes (#49).
 fn print_separator(input: &mut Input) {
     match input.width() {
         Some(width) if width > 1 => {
-            eprintln!("{}", style::faint(&separator(width, SystemTime::now())));
+            let time = clock::shown(SystemTime::now(), |time| has_room(width, time));
+            screen::fitted(Box::new(move |width| {
+                format!("{}\n", style::faint(&separator(width, time.as_deref())))
+            }));
         }
         // On stderr, like the line: stdout carries only answers.
-        _ => eprintln!(),
+        _ => showln!(),
     }
 }
 
 /// The least of the rule that shows beside a time.
 const RULE_BESIDE_TIME: usize = 4;
 
-/// The line between turns, one column short of the edge so the terminal
-/// doesn't wrap it, ending in when the turn ended (#46) where it has room.
-fn separator(width: usize, ended: SystemTime) -> String {
-    let rule = width - 1;
-    let fits = |time: usize| rule >= RULE_BESIDE_TIME + 1 + time;
-    match clock::shown(ended, fits) {
+/// Whether the rule at `width` has room for a time `time` columns wide.
+fn has_room(width: usize, time: usize) -> bool {
+    width.saturating_sub(1) >= RULE_BESIDE_TIME + 1 + time
+}
+
+/// The line between turns at `width`, one column short of the edge so the
+/// terminal doesn't wrap it, ending in `time` where it has room.
+fn separator(width: usize, time: Option<&str>) -> String {
+    let rule = width.saturating_sub(1).max(1);
+    match time.filter(|time| has_room(width, time.chars().count())) {
         Some(time) => format!("{} {time}", "─".repeat(rule - 1 - time.chars().count())),
         None => "─".repeat(rule),
     }
@@ -499,7 +511,7 @@ fn ask_first_question(input: &mut Input) -> Option<String> {
     if config::user_md_path().exists() {
         return None;
     }
-    eprintln!("{}", text::FIRST_QUESTION);
+    showln!("{}", text::FIRST_QUESTION);
     let contents = match input.answer(input::PROMPT) {
         Some(answer)
             if is_command(&answer) || own_command(&answer).is_some() || answer.starts_with('@') =>
@@ -511,9 +523,9 @@ fn ask_first_question(input: &mut Input) -> Option<String> {
     };
     let path = config::shown(&config::user_md_path());
     match config::write_user_md(&contents) {
-        Ok(()) if !contents.is_empty() => eprintln!("{}", style::gray(&text::saved_prefs(&path))),
+        Ok(()) if !contents.is_empty() => showln!("{}", style::gray(&text::saved_prefs(&path))),
         Ok(()) => {}
-        Err(error) => eprintln!(
+        Err(error) => showln!(
             "{}",
             style::red(&text::cant_save(&path, &error.to_string()))
         ),
@@ -529,7 +541,7 @@ fn warn_if_context_is_small(server: &server::Server, apart: bool) {
         && most > context
     {
         if apart {
-            eprintln!();
+            showln!();
         }
         layout::print_fitted(
             &text::small_context(context, most, server.kind),
@@ -548,20 +560,15 @@ mod tests {
 
     #[test]
     fn the_rule_ends_in_its_time_where_there_is_room() {
-        // A minute no other test shows, so the shared last one isn't it.
-        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(60 * 1_000_007);
-        let rule = separator(40, now);
+        let rule = separator(40, Some("10:40"));
         assert_eq!(rule.chars().count(), 39);
-        let time = rule.rsplit(' ').next().unwrap_or_default();
-        assert!(
-            time.len() >= 5 && time.as_bytes()[time.len() - 3] == b':',
-            "{rule}"
-        );
-        assert!(rule.starts_with("────") && rule.ends_with(&format!(" {time}")));
-        // Without room for the time and a bit of rule, only the rule: a
-        // minute of its own, so it's the room that says no.
-        let other = now + std::time::Duration::from_secs(60);
-        assert_eq!(separator(9, other), "─".repeat(8));
+        assert!(rule.starts_with("────") && rule.ends_with("─ 10:40"));
+        // The same rule at another width: it's laid out again there.
+        assert_eq!(separator(20, Some("10:40")).chars().count(), 19);
+        // Without room for the time and a bit of rule, only the rule.
+        assert_eq!(separator(10, Some("10:40")), "─".repeat(9));
+        assert_eq!(separator(9, None), "─".repeat(8));
+        assert_eq!(separator(1, None), "─");
     }
 
     #[test]

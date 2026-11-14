@@ -12,7 +12,7 @@ use crate::input::{Approval, Input};
 use crate::judge::{self, Verdict};
 use crate::mode::Mode;
 use crate::peers::{self, Peers};
-use crate::{config, diff, layout, mode, style, text, tty};
+use crate::{config, diff, layout, mode, style, text};
 use files::FILE_LIMIT;
 
 mod command;
@@ -266,10 +266,7 @@ fn judged(ask: impl FnOnce() -> Option<Verdict>) -> Option<Verdict> {
 /// A line in a step, going on under its own start where it doesn't fit,
 /// each row painted on its own.
 fn print_indented(text: &str, paint: fn(&str) -> String) {
-    let width = tty::width().unwrap_or(80);
-    for line in layout::indented(text, 2, width).lines() {
-        eprintln!("{}", paint(line));
-    }
+    crate::screen::fitted(layout::indented_rows(text, 2, paint));
 }
 
 /// Shows the change as a diff and writes it if the person agrees, or
@@ -284,7 +281,7 @@ fn propose(
     asking: Asking,
     peers: Option<&Peers>,
 ) -> Result<Outcome, String> {
-    eprintln!("{} {}", style::accent(step), shown(path));
+    showln!("{} {}", style::accent(step), shown(path));
     let rest = diff::show(old, new);
     let (asking, ran) = match asking {
         Asking::Judge(case, change) => {
@@ -306,7 +303,7 @@ fn propose(
     match ran {
         Some(reason) => print_indented(&text::judge_wrote(&reason), style::faint),
         None if matches!(asking, Asking::Not) => {
-            eprintln!("  {}", style::faint(text::WRITTEN_UNASKED));
+            showln!("  {}", style::faint(text::WRITTEN_UNASKED));
         }
         None => {}
     }
@@ -328,7 +325,7 @@ fn refused(approval: Approval) -> Option<Outcome> {
             "The user declined, and will say what to do instead.".into(),
         )),
         Approval::Unavailable => {
-            eprintln!("  {}", style::gray(text::NO_TERMINAL));
+            showln!("  {}", style::gray(text::NO_TERMINAL));
             Some(Outcome::Done(
                 "Not done. Lokal is running without a terminal, so it can't ask the user, and \
                  nothing beyond reading will be allowed in this run. Don't try other ways; tell \
