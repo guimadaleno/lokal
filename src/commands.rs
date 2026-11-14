@@ -115,9 +115,10 @@ pub fn run_command(
         }
         "/config" => edit_settings(),
         "/sysprompt" => {
-            // Plain and whole, just as the model gets it.
+            // Whole, just as the model gets it, with control characters as
+            // marks: the project's notes are in it, and a repository wrote them.
             let (prompt, tools, tokens) = conversation.system_prompt();
-            showln!("\n{}\n", prompt.trim_end());
+            showln!("\n{}\n", layout::printable(prompt.trim_end()));
             showln!("{}\n", style::gray(&text::sysprompt_cost(tokens, &tools)));
         }
         "/sessions" => {
