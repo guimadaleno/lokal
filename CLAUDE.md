@@ -506,6 +506,7 @@ of MCP servers the person sets up. One binary, few dependencies.
       without, and a slash command gets none.
     - **On screen only:** the model, the saved conversation and the other
       sessions get nothing of it, and a one-shot request shows none.
+    - **`times = off` turns them off,** for whoever finds them noise.
 - **Every block gets room to breathe,** so the screen never feels
   cluttered. A blank line follows the request and the `$` line of a command.
   Output starts after one, only when there is output, so a silent command

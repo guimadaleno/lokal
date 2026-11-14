@@ -160,6 +160,9 @@ fn run(started: Instant, resume: bool, request: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if config.times_off {
+        clock::switch_off();
+    }
     let server = match server::find(&config) {
         Ok(server) => server,
         Err(message) => {

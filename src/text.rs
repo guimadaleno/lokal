@@ -105,6 +105,9 @@ pub const SETTINGS_TEMPLATE: &str = "\
 # The daily update check:
 # updates = off
 
+# The time beside what you send and at the end of each answer:
+# times = off
+
 # Mail between your Lokal sessions on this computer. auto: it starts a turn
 # on its own. ask: it waits for Enter. off: no mail.
 # mail = auto
@@ -813,9 +816,13 @@ pub fn bad_updates_setting(path: &str, line: usize) -> String {
     format!("{path}, line {line}: `updates` is either on or off.")
 }
 
+pub fn bad_times_setting(path: &str, line: usize) -> String {
+    format!("{path}, line {line}: `times` is either on or off.")
+}
+
 pub fn unknown_setting(path: &str, line: usize, name: &str) -> String {
     format!(
-        "{path}, line {line}: there's no setting called `{name}`. The ones that exist are `server`, `model`, `updates`, `mail`, `mail_turns` and `mcp.<name>`."
+        "{path}, line {line}: there's no setting called `{name}`. The ones that exist are `server`, `model`, `updates`, `times`, `mail`, `mail_turns` and `mcp.<name>`."
     )
 }
 

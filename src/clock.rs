@@ -3,6 +3,7 @@
 //! it only on the first time of a day other than the last one shown, so a
 //! session left open overnight says so and a busy one stays quiet.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -12,6 +13,14 @@ use crate::text;
 
 /// The day of the last time shown: the year, and the day in it.
 static LAST_DAY: Mutex<Option<(i32, i32)>> = Mutex::new(None);
+
+/// `times = off` in the settings: no time shows.
+static OFF: AtomicBool = AtomicBool::new(false);
+
+/// No time shows from now on, as the settings ask.
+pub fn switch_off() {
+    OFF.store(true, Ordering::Relaxed);
+}
 
 /// The local time at `at`, broken down, or None where the clock can't say.
 pub fn local(at: SystemTime) -> Option<libc::tm> {
@@ -27,6 +36,9 @@ pub fn local(at: SystemTime) -> Option<libc::tm> {
 /// says its width has room. Only a time that shows counts as the last one
 /// shown, so a new day's date isn't lost to a line without room.
 pub fn shown(at: SystemTime, fits: impl Fn(usize) -> bool) -> Option<String> {
+    if OFF.load(Ordering::Relaxed) {
+        return None;
+    }
     let local = local(at)?;
     let mut last = LAST_DAY.lock().unwrap_or_else(PoisonError::into_inner);
     let (time, day) = written(&local, *last);

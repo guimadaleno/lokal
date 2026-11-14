@@ -15,6 +15,8 @@ pub struct Config {
     /// `updates = off`: the daily update check is the one thing Lokal sends
     /// on its own, so it can be switched off.
     pub updates_off: bool,
+    /// `times = off`: no time beside what's sent and each turn's end (#46).
+    pub times_off: bool,
     /// Mail between the person's sessions on this machine (`peers.rs`).
     pub mail: Mail,
     /// How many turns in a row mail may start on its own.
@@ -74,6 +76,11 @@ fn parse(contents: &str, path: &str) -> Result<Config, String> {
                 Some("on") => config.updates_off = false,
                 Some("off") => config.updates_off = true,
                 _ => return Err(text::bad_updates_setting(path, index + 1)),
+            },
+            "times" => match value.as_deref() {
+                Some("on") => config.times_off = false,
+                Some("off") => config.times_off = true,
+                _ => return Err(text::bad_times_setting(path, index + 1)),
             },
             "mail" => {
                 config.mail = match value.as_deref() {
@@ -358,14 +365,20 @@ mod tests {
     #[test]
     fn reads_settings_and_skips_comments() {
         let config = parse(
-            "# pinned\nserver = 192.0.2.10:1234\n\nmodel=some-model\nupdates = off\n",
+            "# pinned\nserver = 192.0.2.10:1234\n\nmodel=some-model\nupdates = off\ntimes = off\n",
             "config",
         )
         .unwrap();
         assert_eq!(config.server.as_deref(), Some("192.0.2.10:1234"));
         assert_eq!(config.model.as_deref(), Some("some-model"));
-        assert!(config.updates_off);
+        assert!(config.updates_off && config.times_off);
         assert!(!parse("", "config").unwrap().updates_off);
+        assert!(!parse("", "config").unwrap().times_off);
+        assert!(
+            parse("times = no", "config")
+                .unwrap_err()
+                .contains("line 1: `times` is either on or off.")
+        );
         assert!(parse("updates = maybe", "config").is_err());
     }
 
