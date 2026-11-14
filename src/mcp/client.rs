@@ -39,6 +39,10 @@ const PAGES_MOST: usize = 20;
 const STDERR_LINES: usize = 8;
 const STDERR_WIDTH: usize = 300;
 const STDERR_READ: u64 = 64 * 1024;
+/// How long a server's failure waits for the reader to take in its last
+/// stderr lines: a server that dies writes why just before, and the reader
+/// may not have it yet.
+const STDERR_SETTLE: Duration = Duration::from_millis(300);
 /// The most servers whose processes a signal handler can end.
 const GROUPS_MOST: usize = 64;
 /// JSON-RPC's code for a method the other end doesn't have.
@@ -74,6 +78,8 @@ pub struct Client {
     era: Era,
     next_id: u64,
     stderr: Arc<Mutex<VecDeque<String>>>,
+    /// The thread keeping `stderr`, done once the server closed it.
+    stderr_reader: Option<thread::JoinHandle<()>>,
     ended: bool,
 }
 
@@ -154,10 +160,10 @@ impl Client {
             thread::spawn(move || read_messages(stdout, &sender, &answers, &awaited));
         }
         let stderr = Arc::new(Mutex::new(VecDeque::new()));
-        if let Some(output) = child.stderr.take() {
+        let stderr_reader = child.stderr.take().map(|output| {
             let kept = Arc::clone(&stderr);
-            thread::spawn(move || keep_stderr(output, &kept));
-        }
+            thread::spawn(move || keep_stderr(output, &kept))
+        });
         let mut client = Client {
             child,
             lines,
@@ -166,6 +172,7 @@ impl Client {
             era: Era::Legacy,
             next_id: 1,
             stderr,
+            stderr_reader,
             ended: false,
         };
         match client.agree() {
@@ -323,8 +330,18 @@ impl Client {
     }
 
     /// `message`, with the last lines the server wrote to stderr, which
-    /// usually say why it failed.
+    /// usually say why it failed: read once the server closed its stderr,
+    /// or after `STDERR_SETTLE` if it's still open.
     pub fn with_stderr(&self, message: &str) -> String {
+        let started = Instant::now();
+        while self
+            .stderr_reader
+            .as_ref()
+            .is_some_and(|reader| !reader.is_finished())
+            && started.elapsed() < STDERR_SETTLE
+        {
+            thread::sleep(Duration::from_millis(5));
+        }
         let tail = self
             .stderr
             .lock()
