@@ -123,13 +123,11 @@ main { position: relative; }
 .t-rule { color: var(--term-faint); overflow: hidden; white-space: nowrap; }
 .t-cursor { background: var(--term-ink); }
 .t-status { float: right; color: var(--term-dim); }
-/* When each message was sent, faint at the right edge as in Lokal: a
-   request's takes the status's place once Enter is pressed, and the
-   answer's ends the rule under it. */
+/* When a message was sent, faint at the right edge as in Lokal, where its
+   minute changed: a request's takes the status's place once Enter is
+   pressed. The first turn's answer came in the same minute, so its rule
+   has none. */
 .t-time { float: right; color: var(--term-dim); }
-.screen .l.t-rule { display: flex; }
-.t-rule .t-line { flex: 1; overflow: hidden; }
-.t-rule .t-time { flex: none; float: none; padding-left: 1ch; }
 /* Lokal's two pulses: the working label slowly, the approval's marker quicker. */
 .t-label { color: var(--term-dim); animation: label-pulse 2.4s ease-in-out infinite; }
 .t-marker { color: var(--term-orange); animation: marker-pulse 1s ease-in-out infinite; }
@@ -196,8 +194,8 @@ footer { margin-top: 64px; padding: 24px 0 48px; border-top: 1px solid var(--rul
         <span class="l" data-run>  <span class="t-gray">web Exited (0) 2 hours ago</span></span>
         <span class="l"></span>
         <span class="l" data-think="Exited (0) two hours ago: it stopped cleanly. Say so." data-stream>It's <span class="t-bold">stopped</span>: it exited 2 hours ago.</span>
-        <span class="l t-rule"><span class="t-line">────────────────────────────────────────────────────────────────────────────────────────────────</span><span class="t-time">14:02</span></span>
-        <span class="l t-orange" data-type data-status="4s · 3% · 52 tok/s">&gt; start it<span class="t-time">14:03</span></span>
+        <span class="l t-rule">────────────────────────────────────────────────────────────────────────────────────────────────</span>
+        <span class="l t-orange" data-type data-status="4s · 3% · 52 tok/s">&gt; start it<span class="t-time">14:05</span></span>
         <span class="l"></span>
         <span class="l" data-think="They want it running again. It exists and exited cleanly, so docker start web brings it back as it was." data-used="~2k of 33k tokens" data-speed="53 tok/s" data-call><span class="t-orange">$</span> docker start web</span>
         <span class="l"></span>

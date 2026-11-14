@@ -548,7 +548,8 @@ mod tests {
 
     #[test]
     fn the_rule_ends_in_its_time_where_there_is_room() {
-        let now = SystemTime::now();
+        // A minute no other test shows, so the shared last one isn't it.
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(60 * 1_000_007);
         let rule = separator(40, now);
         assert_eq!(rule.chars().count(), 39);
         let time = rule.rsplit(' ').next().unwrap_or_default();
@@ -557,8 +558,10 @@ mod tests {
             "{rule}"
         );
         assert!(rule.starts_with("────") && rule.ends_with(&format!(" {time}")));
-        // Without room for the time and a bit of rule, only the rule.
-        assert_eq!(separator(9, now), "─".repeat(8));
+        // Without room for the time and a bit of rule, only the rule: a
+        // minute of its own, so it's the room that says no.
+        let other = now + std::time::Duration::from_secs(60);
+        assert_eq!(separator(9, other), "─".repeat(8));
     }
 
     #[test]

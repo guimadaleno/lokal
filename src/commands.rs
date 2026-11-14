@@ -10,8 +10,8 @@ use crate::context;
 use crate::conversation::{Compacted, Conversation};
 use crate::input::Input;
 use crate::{
-    config, feedback, image, layout, memory, mode, peers, recon, server, spinner, style, system,
-    text, tty, update,
+    clock, config, feedback, image, layout, memory, mode, peers, recon, server, spinner, style,
+    system, text, tty, update,
 };
 
 /// Past this many lines, user.md costs noticeable context on every turn.
@@ -78,6 +78,7 @@ pub fn run_command(
             // What was on screen stays in the scrollback.
             if style::enabled() {
                 eprint!("\x1b[2J\x1b[H");
+                clock::forget();
             }
             print_header(&conversation.server);
             eprintln!("{}", style::gray(text::NEW_CONVERSATION));

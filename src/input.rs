@@ -172,6 +172,11 @@ impl Input {
                 .create_external_printer()
                 .ok()
                 .map(|printer| Box::new(printer) as Box<dyn ExternalPrinter + Send>);
+            // At every prompt, the `>` and the questions alike.
+            editor.bind_sequence(
+                KeyEvent::ctrl('L'),
+                EventHandler::Conditional(Box::new(ClearScreen)),
+            );
             editor
         });
         Input {
@@ -895,6 +900,23 @@ impl ConditionalEventHandler for NextMode {
             return Some(Cmd::Interrupt);
         }
         Some(Cmd::Repaint)
+    }
+}
+
+/// Ctrl+L at any prompt: rustyline clears the screen as always, and the
+/// last time shown goes with it, so the next one shows (#46).
+struct ClearScreen;
+
+impl ConditionalEventHandler for ClearScreen {
+    fn handle(
+        &self,
+        _event: &Event,
+        _count: RepeatCount,
+        _positive: bool,
+        _context: &EventContext,
+    ) -> Option<Cmd> {
+        clock::forget();
+        None
     }
 }
 

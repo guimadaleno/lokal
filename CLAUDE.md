@@ -502,6 +502,13 @@ of MCP servers the person sets up. One binary, few dependencies.
     rule under an answer ends in when the turn ended; a mail, by its `·`
     line. Hours and minutes from the computer's clock, and the date on the
     first time of a day other than the last one shown.
+    - **Only when the minute changed:** a time that would repeat the last
+      one shown doesn't show, so a quick exchange carries one time and a
+      turn that ran into the next minute shows it on its rule. A line
+      without one is in the minute above, or had no room for it. `/new`
+      and Ctrl+L at any prompt clear the screen, and the next time shows
+      whatever its minute (`clock::forget`); a clear of the terminal's own
+      isn't seen.
     - **The words win the room:** a row without two spaces to spare goes
       without, and a slash command gets none.
     - **On screen only:** the model, the saved conversation and the other
@@ -1038,9 +1045,10 @@ moves them past what's written there changes the words too.
 - **The times beside the messages (#46):** seen only in a pseudo-terminal
   replayed in xterm.js, 100 columns wide, against a fake server: a request,
   a queued line, a `!` line, a line that fills its last row, a pasted
-  zero-width character, mail from a session named in wide characters, and
-  `times = off`. A new day's date is a unit test's only. Still owed: the
-  same in Windows Terminal, with a real model.
+  zero-width character, mail from a session named in wide characters, a
+  turn that ran into the next minute, `/new`, Ctrl+L and `times = off`. A
+  new day's date is a unit test's only. Still owed: the same in Windows
+  Terminal, with a real model.
 - **Hooks in auto, the unasked PATH and control characters as marks:** run
   in a pseudo-terminal against a fake server only. A post-commit hook made
   auto ask on No, and without it the judge let the commit through; an

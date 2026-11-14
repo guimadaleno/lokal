@@ -227,15 +227,21 @@ mod tests {
 
     #[test]
     fn a_mail_says_when_it_came_at_the_right_of_its_first_row() {
-        let arrived = SystemTime::now();
+        // Minutes no other test shows, so the shared last one isn't them.
+        let minute = |n: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(60 * n);
+        let arrived = minute(1_000_011);
         let line = notice_line("api-1:", 40, Some(arrived));
         let (first, rest) = line.split_once('\n').unwrap_or_default();
         assert_eq!((first.chars().count(), rest), (39, ""), "{line}");
         assert!(first.starts_with("  · api-1:  ") && first.chars().nth(36) == Some(':'));
-        // Without room, the row stays as it was.
-        assert_eq!(notice_line("api-1:", 12, Some(arrived)), "  · api-1:\n");
+        // Without room, the row stays as it was: a minute of its own, so
+        // it's the room that says no.
+        assert_eq!(
+            notice_line("api-1:", 12, Some(minute(1_000_017))),
+            "  · api-1:\n"
+        );
         // A name of wide characters takes their columns, not their count.
-        let wide = notice_line("日本語-1:", 40, Some(arrived));
+        let wide = notice_line("日本語-1:", 40, Some(minute(1_000_013)));
         assert_eq!(wide.trim_end_matches('\n').width(), 39, "{wide}");
     }
 }
