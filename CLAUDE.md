@@ -1007,7 +1007,7 @@ cargo clippy --all-targets
 
 | What | Measured |
 |---|---|
-| Release binary (static, stripped) | 2.95 MB, 3.0 MB on the page (0.11.0) |
+| Release binary (static, stripped) | 2.94 MB, 2.9 MB on the page (0.11.0) |
 | Start to the prompt, server found | ~40 ms (0.8.1) |
 | Memory at the prompt | 2.4 MB (0.8.1) |
 | Auto's judge, a 27B model with reasoning off (Ollama 0.40.2) | 0.3–2 s a step; 6–22 s with reasoning; the conversation's prompt cache stays |
