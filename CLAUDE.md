@@ -1066,7 +1066,7 @@ moves them past what's written there changes the words too.
   `>` line and its cursor included; during a turn, with the reasoning
   window open, an answer streaming (a draft under it too), a command
   running and an approval question open, each redrawn within 0.25 s.
-  Still owed: Windows Terminal, where the owner works.
+  Passed by the owner in Windows Terminal with a real model (#50).
 - **The reasoning window with wide characters:** rows are cut by character
   count, so double-width characters may wrap and leave a row behind. Tested
   only with a fake server's plain text. (A resize while it shows redraws it
