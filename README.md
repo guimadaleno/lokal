@@ -76,6 +76,12 @@ model, asked separately, also lets commands run and files change outside the
 working folder. A question starts on No only for what can't be undone,
 leaves your machine or changes what runs later.
 
+Resize the terminal and Lokal lays the conversation out again at the new
+width, its rules, times and notes included, also mid-answer or with a
+question open. To do that it clears the terminal's scrollback and prints
+its own copy, the latest 512 KB (some 7,500 lines): what the tab showed
+before Lokal started goes at the first change of width.
+
 ## MCP servers
 
 An MCP server gives the model tools Lokal doesn't have. Add one a line in
