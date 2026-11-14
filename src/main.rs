@@ -3,6 +3,7 @@ mod answer;
 mod approvals;
 mod chat;
 mod clipboard;
+mod clock;
 mod commands;
 mod compact;
 mod config;
@@ -54,7 +55,7 @@ mod update;
 
 use std::env;
 use std::process::ExitCode;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use commands::{Session, is_command, run_command};
 use conversation::Conversation;
@@ -255,17 +256,18 @@ fn talk(
 ) {
     // What's typed while Lokal works is kept from here (#3).
     queue::open();
+    // Not dated: what start-up printed after it may stand between.
     if let Some(line) = first
-        && !take_line(&line, conversation, input, session)
+        && !take_line(&line, None, conversation, input, session)
     {
         return;
     }
     loop {
         // Queued while the last turn ran, and it ended on its own: it goes
         // as typed. Otherwise what was typed waits at the `>`.
-        if let Some(line) = queue::take_ready() {
+        if let Some((line, queued)) = queue::take_ready() {
             input.show_queued(&line);
-            if !take_line(&line, conversation, input, session) {
+            if !take_line(&line, Some(queued), conversation, input, session) {
                 break;
             }
             continue;
@@ -282,27 +284,32 @@ fn talk(
             }
             Line::Quit => break,
         };
-        if !take_line(&line, conversation, input, session) {
+        if !take_line(&line, Some(SystemTime::now()), conversation, input, session) {
             break;
         }
     }
 }
 
 /// What the person typed at the `>`: a slash command, a command of their
-/// own, mail for another session or a request. False when it's time to quit.
+/// own, mail for another session or a request. All but a slash command
+/// get the time they were `sent` beside them. False when it's time to quit.
 fn take_line(
-    line: &str,
+    typed: &str,
+    sent: Option<SystemTime>,
     conversation: &mut Conversation,
     input: &mut Input,
     session: &mut Session,
 ) -> bool {
-    let line = line.trim();
+    let line = typed.trim();
     if line.is_empty() {
         pass_on_messages(conversation, input);
         return true;
     }
     if is_command(line) {
         return run_command(line, conversation, input, session);
+    }
+    if let Some(sent) = sent {
+        input.date_sent(typed, sent);
     }
     if let Some(command) = own_command(line) {
         // A blank line between the line and what follows, as after a request.
@@ -448,10 +455,25 @@ fn drop_messages(conversation: &Conversation) {
 /// terminal owns those.
 fn print_separator(input: &mut Input) {
     match input.width() {
-        // One column short of the edge, so the terminal doesn't wrap it.
-        Some(width) if width > 1 => eprintln!("{}", style::faint(&"─".repeat(width - 1))),
+        Some(width) if width > 1 => {
+            eprintln!("{}", style::faint(&separator(width, SystemTime::now())));
+        }
         // On stderr, like the line: stdout carries only answers.
         _ => eprintln!(),
+    }
+}
+
+/// The least of the rule that shows beside a time.
+const RULE_BESIDE_TIME: usize = 4;
+
+/// The line between turns, one column short of the edge so the terminal
+/// doesn't wrap it, ending in when the turn ended (#46) where it has room.
+fn separator(width: usize, ended: SystemTime) -> String {
+    let rule = width - 1;
+    let fits = |time: usize| rule >= RULE_BESIDE_TIME + 1 + time;
+    match clock::shown(ended, fits) {
+        Some(time) => format!("{} {time}", "─".repeat(rule - 1 - time.chars().count())),
+        None => "─".repeat(rule),
     }
 }
 
@@ -518,6 +540,21 @@ mod tests {
 
     fn parsed(args: &[&str]) -> Args {
         parse_args(args.iter().map(|arg| arg.to_string()))
+    }
+
+    #[test]
+    fn the_rule_ends_in_its_time_where_there_is_room() {
+        let now = SystemTime::now();
+        let rule = separator(40, now);
+        assert_eq!(rule.chars().count(), 39);
+        let time = rule.rsplit(' ').next().unwrap_or_default();
+        assert!(
+            time.len() >= 5 && time.as_bytes()[time.len() - 3] == b':',
+            "{rule}"
+        );
+        assert!(rule.starts_with("────") && rule.ends_with(&format!(" {time}")));
+        // Without room for the time and a bit of rule, only the rule.
+        assert_eq!(separator(9, now), "─".repeat(8));
     }
 
     #[test]

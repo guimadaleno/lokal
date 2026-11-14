@@ -45,16 +45,7 @@ pub fn gather() -> Facts {
 
 /// Today's local date, as "Thursday, 2026-11-12".
 fn today() -> Option<String> {
-    // SAFETY: time with a null pointer only returns the time; localtime_r
-    // fills the tm it's given, which is plain data.
-    let date = unsafe {
-        let now = libc::time(std::ptr::null_mut());
-        let mut local: libc::tm = std::mem::zeroed();
-        if libc::localtime_r(&now, &mut local).is_null() {
-            return None;
-        }
-        local
-    };
+    let date = crate::clock::local(std::time::SystemTime::now())?;
     const WEEKDAYS: [&str; 7] = [
         "Sunday",
         "Monday",

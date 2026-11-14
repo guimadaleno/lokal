@@ -10,7 +10,7 @@
 
 use std::io::Write;
 use std::sync::{Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::{layout, style, text, tty};
 
@@ -20,7 +20,8 @@ const MOST: usize = 64 * 1024;
 struct Queue {
     open: bool,
     draft: String,
-    queued: Vec<String>,
+    /// Each line Enter queued, and when: its time on screen is then (#46).
+    queued: Vec<(String, SystemTime)>,
     /// The last turn was stopped, said no to or failed: what's queued
     /// waits at the `>`.
     held: bool,
@@ -88,48 +89,49 @@ impl Queue {
     fn enter(&mut self) {
         if !self.draft.trim().is_empty() {
             let line = std::mem::take(&mut self.draft);
-            self.queued.push(line.trim().to_string());
+            self.queued
+                .push((line.trim().to_string(), SystemTime::now()));
             self.changed();
         }
     }
 
     /// The queued lines the model can take mid-turn: those before the first
     /// slash, `!` or `@` line, which waits to work as typed at the `>`.
-    fn take_for_model(&mut self) -> Option<String> {
+    fn take_for_model(&mut self) -> Option<(String, SystemTime)> {
         if self.held {
             return None;
         }
         let count = self
             .queued
             .iter()
-            .take_while(|line| !line.starts_with(['/', '!', '@']))
+            .take_while(|(line, _)| !line.starts_with(['/', '!', '@']))
             .count();
         if count == 0 {
             return None;
         }
         self.version += 1;
-        Some(self.queued.drain(..count).collect::<Vec<_>>().join("\n"))
+        joined(self.queued.drain(..count).collect())
     }
 
     /// ↑ on an empty draft: what's queued comes back to it, to edit.
     fn edit_queued(&mut self) {
         if self.draft.is_empty() && !self.queued.is_empty() {
-            self.draft = std::mem::take(&mut self.queued).join("\n");
+            self.draft = lines(std::mem::take(&mut self.queued)).join("\n");
             self.changed();
         }
     }
 
-    fn take_ready(&mut self) -> Option<String> {
+    fn take_ready(&mut self) -> Option<(String, SystemTime)> {
         if self.held || self.queued.is_empty() {
             return None;
         }
         self.version += 1;
-        Some(std::mem::take(&mut self.queued).join("\n"))
+        joined(std::mem::take(&mut self.queued))
     }
 
     fn take_typed(&mut self) -> String {
         let mut lines = if std::mem::take(&mut self.held) {
-            std::mem::take(&mut self.queued)
+            lines(std::mem::take(&mut self.queued))
         } else {
             Vec::new()
         };
@@ -160,7 +162,7 @@ impl Queue {
                 style::faint(&after)
             ));
         }
-        let last = self.queued.last()?;
+        let (last, _) = self.queued.last()?;
         let label = format!("{} · ", queued.unwrap_or_default());
         let hint = format!(" · {}", text::EDIT_QUEUED);
         let room = room.saturating_sub(label.chars().count() + hint.chars().count());
@@ -169,6 +171,16 @@ impl Queue {
             tail(&shown(last), room)
         )))
     }
+}
+
+/// Queued lines as one message, sent when its first line was queued.
+fn joined(queued: Vec<(String, SystemTime)>) -> Option<(String, SystemTime)> {
+    let at = queued.first()?.1;
+    Some((lines(queued).join("\n"), at))
+}
+
+fn lines(queued: Vec<(String, SystemTime)>) -> Vec<String> {
+    queued.into_iter().map(|(line, _)| line).collect()
 }
 
 static QUEUE: Mutex<Queue> = Mutex::new(Queue::new());
@@ -211,8 +223,8 @@ pub fn edit_queued() {
 }
 
 /// What the model takes after its step, mid-turn: the queued lines before
-/// any slash, `!` or `@` one.
-pub fn take_for_model() -> Option<String> {
+/// any slash, `!` or `@` one, and when the first was queued.
+pub fn take_for_model() -> Option<(String, SystemTime)> {
     queue().take_for_model()
 }
 
@@ -235,9 +247,9 @@ pub fn typing(time: Duration) -> bool {
     !queue.draft.is_empty() || queue.typed_at.is_some_and(|at| at.elapsed() < time)
 }
 
-/// The queued lines, as one request, when the last turn ended on its own.
-/// The draft stays for the next turn.
-pub fn take_ready() -> Option<String> {
+/// The queued lines, as one request, when the last turn ended on its own,
+/// and when the first was queued. The draft stays for the next turn.
+pub fn take_ready() -> Option<(String, SystemTime)> {
     queue().take_ready()
 }
 
@@ -357,6 +369,11 @@ mod tests {
         queue
     }
 
+    /// What was taken, without when.
+    fn text(taken: Option<(String, SystemTime)>) -> Option<String> {
+        taken.map(|(line, _)| line)
+    }
+
     #[test]
     fn keys_make_a_draft_and_enter_queues_it() {
         let mut queue = open();
@@ -372,8 +389,8 @@ mod tests {
         // An empty line queues nothing.
         queue.enter();
         queue.type_text("and the ");
-        assert_eq!(queue.queued, ["fix the docs"]);
-        assert_eq!(queue.take_ready().as_deref(), Some("fix the docs"));
+        assert_eq!(lines(queue.queued.clone()), ["fix the docs"]);
+        assert_eq!(text(queue.take_ready()).as_deref(), Some("fix the docs"));
         // The draft waits for the next turn.
         assert_eq!(queue.take_ready(), None);
         assert_eq!(queue.take_typed(), "and the ");
@@ -388,16 +405,34 @@ mod tests {
             queue.enter();
         }
         assert_eq!(
-            queue.take_for_model().as_deref(),
+            text(queue.take_for_model()).as_deref(),
             Some("and the docs\nalso the readme")
         );
         // A slash command first: nothing for the model until it runs.
         assert_eq!(queue.take_for_model(), None);
-        assert_eq!(queue.take_ready().as_deref(), Some("/compact\nthen this"));
+        assert_eq!(
+            text(queue.take_ready()).as_deref(),
+            Some("/compact\nthen this")
+        );
         queue.type_text("held");
         queue.enter();
         queue.held = true;
         assert_eq!(queue.take_for_model(), None);
+    }
+
+    #[test]
+    fn what_is_taken_was_sent_when_its_first_line_was_queued() {
+        let mut queue = open();
+        queue.type_text("first");
+        queue.enter();
+        let first = queue.queued[0].1;
+        queue.type_text("second");
+        queue.enter();
+        assert!(queue.queued[1].1 >= first);
+        assert_eq!(
+            queue.take_ready(),
+            Some(("first\nsecond".to_string(), first))
+        );
     }
 
     #[test]

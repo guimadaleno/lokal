@@ -276,6 +276,23 @@ pub fn queued(count: usize) -> String {
     }
 }
 
+/// The months, short, for a message's time on a new day.
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// When a message was sent, at the right edge (#46): "14:32", or
+/// "Nov 15 09:12" on a new day. `day` is the month counted from 0, as C's
+/// clock counts it, and the day in it.
+pub fn clock(hour: i32, minute: i32, day: Option<(i32, i32)>) -> String {
+    let time = format!("{hour:02}:{minute:02}");
+    let month = day.and_then(|(month, _)| MONTHS.get(usize::try_from(month).ok()?));
+    match (month, day) {
+        (Some(month), Some((_, day))) => format!("{month} {day} {time}"),
+        _ => time,
+    }
+}
+
 /// Esc on an empty line, for mail on screen: otherwise nothing would say
 /// it went.
 pub const DROPPED: &str = "Dropped.";

@@ -145,6 +145,15 @@ pub fn print_fitted(text: &str, paint: fn(&str) -> String) {
     }
 }
 
+/// The spaces before something `right` columns wide, at the right edge of
+/// a row whose text ends at column `end` in a terminal `width` wide: off
+/// the last column, as Lokal's lines keep, and two at least, or None.
+pub fn right_padding(end: usize, right: usize, width: usize) -> Option<usize> {
+    width
+        .checked_sub(end + 1 + right)
+        .filter(|padding| *padding >= 2)
+}
+
 /// A line in pieces of at most `room` characters, broken at spaces, and a
 /// word longer than that where the room ends.
 pub fn broken(line: &str, room: usize) -> Vec<String> {
@@ -221,6 +230,17 @@ fn pieces(text: &str) -> Vec<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_goes_right_ends_one_column_short_with_room_before_it() {
+        // "> hi" ends at 4; "14:32" then takes 90 to 94 of 96, and 95 stays empty.
+        assert_eq!(right_padding(4, 5, 96), Some(86));
+        assert_eq!(4 + 86 + 5, 95);
+        assert_eq!(right_padding(87, 5, 96), Some(3));
+        assert_eq!(right_padding(88, 5, 96), Some(2));
+        assert_eq!(right_padding(89, 5, 96), None);
+        assert_eq!(right_padding(96, 5, 96), None);
+    }
 
     #[test]
     fn characters_that_show_as_nothing_show_by_their_code() {

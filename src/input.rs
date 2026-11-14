@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -28,7 +28,7 @@ use rustyline::{
 use crate::approvals::ProjectApprovals;
 use crate::peers::{Directory, Inbox};
 use crate::tty::{self, RawMode, discard_typed_ahead};
-use crate::{clipboard, config, diff, layout, menu, mode, queue, style, text};
+use crate::{clipboard, clock, config, diff, layout, menu, mode, queue, style, text};
 
 pub const PROMPT: &str = "> ";
 /// How long after Esc another key makes it part of one, like an arrow
@@ -409,6 +409,26 @@ impl Input {
         }
         if let Some(editor) = &mut self.editor {
             let _ = editor.add_history_entry(line);
+        }
+    }
+
+    /// When the person sent `line`, faint at the right of its last row,
+    /// where the status sat while they typed it (#46). The line is on
+    /// screen right above the cursor, as Enter at the `>` and
+    /// `show_queued` leave it; a last row without room goes without.
+    pub fn date_sent(&self, line: &str, at: SystemTime) {
+        let Some(width) = tty::width().filter(|_| style::enabled()) else {
+            return;
+        };
+        let (_, end) = laid_out(&layout::printable(line), width);
+        let fits = |time: usize| layout::right_padding(end, time, width).is_some();
+        if let Some(time) = clock::shown(at, fits) {
+            // Up to that row, out to where the time starts, and back down.
+            eprint!(
+                "\x1b[1A\x1b[{}G{}\r\n",
+                width - time.width(),
+                style::faint(&time)
+            );
         }
     }
 

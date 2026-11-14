@@ -3,10 +3,11 @@
 //! for what a session is doing.
 
 use std::path::Path;
+use std::time::SystemTime;
 
 use super::{Message, Session};
-use crate::layout::{broken, indented};
-use crate::{config, style, text, tty};
+use crate::layout::{broken, indented, right_padding};
+use crate::{clock, config, style, text, tty};
 
 /// What the model gets when a turn starts on mail, or when Enter passes it
 /// on: each framed with who sent it, from where, and as another model's
@@ -122,8 +123,10 @@ pub fn session_rows(sessions: &[Session], asked: bool) -> Vec<String> {
 }
 
 /// A line about mail and the other sessions: a faint `·`, then `text` in
-/// gray, broken to fit the terminal under its own start.
-pub fn notice_line(text: &str, width: usize) -> String {
+/// gray, broken to fit the terminal under its own start. When a mail
+/// `arrived` shows faint at the right of its first row (#46): a mail is a
+/// message too.
+pub fn notice_line(text: &str, width: usize, arrived: Option<SystemTime>) -> String {
     let mut out = String::new();
     for (index, part) in broken(text, width.saturating_sub(5).max(20))
         .iter()
@@ -134,7 +137,18 @@ pub fn notice_line(text: &str, width: usize) -> String {
         } else {
             " ".repeat(4)
         };
-        out.push_str(&format!("{lead}{}\n", style::gray(part)));
+        out.push_str(&format!("{lead}{}", style::gray(part)));
+        // The lead is four columns wide.
+        let end = 4 + part.chars().count();
+        let padding = |time: usize| right_padding(end, time, width);
+        if index == 0
+            && let Some(arrived) = arrived
+            && let Some(time) = clock::shown(arrived, |time| padding(time).is_some())
+        {
+            let spaces = padding(time.chars().count()).unwrap_or(2);
+            out.push_str(&format!("{}{}", " ".repeat(spaces), style::faint(&time)));
+        }
+        out.push('\n');
     }
     out
 }
@@ -148,7 +162,7 @@ pub(super) fn notice(message: &Message, footer: Option<&str>) -> String {
     } else {
         text::mail_from(&message.from)
     };
-    let mut notice = notice_line(&from, width);
+    let mut notice = notice_line(&from, width, Some(message.arrived));
     notice.push_str(&indented(&message.text, 4, width));
     for line in indented(footer.unwrap_or_default(), 4, width).lines() {
         notice.push_str(&format!("{}\n", style::faint(line)));
@@ -179,6 +193,7 @@ mod tests {
             by_user,
             now,
             shown: None,
+            arrived: SystemTime::now(),
         };
         let messages = [
             message("api-1", false, true),
@@ -199,8 +214,23 @@ mod tests {
     fn a_notice_line_breaks_under_its_own_start() {
         // Plain, as stderr isn't a terminal in a test.
         assert_eq!(
-            notice_line(&format!("Mail from api-1, in /{}:", "x".repeat(20)), 25),
+            notice_line(
+                &format!("Mail from api-1, in /{}:", "x".repeat(20)),
+                25,
+                None
+            ),
             format!("  · Mail from api-1, in\n    /{}\n    x:\n", "x".repeat(19))
         );
+    }
+
+    #[test]
+    fn a_mail_says_when_it_came_at_the_right_of_its_first_row() {
+        let arrived = SystemTime::now();
+        let line = notice_line("api-1:", 40, Some(arrived));
+        let (first, rest) = line.split_once('\n').unwrap_or_default();
+        assert_eq!((first.chars().count(), rest), (39, ""), "{line}");
+        assert!(first.starts_with("  · api-1:  ") && first.chars().nth(36) == Some(':'));
+        // Without room, the row stays as it was.
+        assert_eq!(notice_line("api-1:", 12, Some(arrived)), "  · api-1:\n");
     }
 }

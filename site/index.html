@@ -123,6 +123,13 @@ main { position: relative; }
 .t-rule { color: var(--term-faint); overflow: hidden; white-space: nowrap; }
 .t-cursor { background: var(--term-ink); }
 .t-status { float: right; color: var(--term-dim); }
+/* When each message was sent, faint at the right edge as in Lokal: a
+   request's takes the status's place once Enter is pressed, and the
+   answer's ends the rule under it. */
+.t-time { float: right; color: var(--term-dim); }
+.screen .l.t-rule { display: flex; }
+.t-rule .t-line { flex: 1; overflow: hidden; }
+.t-rule .t-time { flex: none; float: none; padding-left: 1ch; }
 /* Lokal's two pulses: the working label slowly, the approval's marker quicker. */
 .t-label { color: var(--term-dim); animation: label-pulse 2.4s ease-in-out infinite; }
 .t-marker { color: var(--term-orange); animation: marker-pulse 1s ease-in-out infinite; }
@@ -177,19 +184,20 @@ footer { margin-top: 64px; padding: 24px 0 48px; border-top: 1px solid var(--rul
     <!-- The last frame of the conversation the script plays, and what shows
          without it. data-type is typed at the prompt; data-think and data-run
          wait on the spinner first, with the reasoning window if there's a
-         thought; data-stream comes in as the answer does. -->
+         thought; data-stream comes in as the answer does. A request's
+         t-time shows as it's sent, in place of the status. -->
     <div class="terminal" aria-label="Lokal in a terminal">
       <div class="screen" id="screen">
         <span class="l"><span class="t-bold">Lokal</span> <span id="term-version">0.3.0</span>  <span class="t-gray">qwen3.8-27b</span></span>
-        <span class="l t-orange" data-type>&gt; is the web container running?</span>
+        <span class="l t-orange" data-type>&gt; is the web container running?<span class="t-time">14:02</span></span>
         <span class="l"></span>
         <span class="l" data-think="The user is asking whether the web container is running. Probably a Docker container named web. docker ps -a with a name filter lists it even if it has stopped, and shows its status." data-used="~1k of 33k tokens" data-speed="52 tok/s" data-call><span class="t-orange">$</span> docker ps -a --filter name=web --format '{{.Names}} {{.Status}}'</span>
         <span class="l"></span>
         <span class="l" data-run>  <span class="t-gray">web Exited (0) 2 hours ago</span></span>
         <span class="l"></span>
         <span class="l" data-think="Exited (0) two hours ago: it stopped cleanly. Say so." data-stream>It's <span class="t-bold">stopped</span>: it exited 2 hours ago.</span>
-        <span class="l t-rule">────────────────────────────────────────────────────────────────────────────────────────────────</span>
-        <span class="l t-orange" data-type data-status="4s · 3% · 52 tok/s">&gt; start it</span>
+        <span class="l t-rule"><span class="t-line">────────────────────────────────────────────────────────────────────────────────────────────────</span><span class="t-time">14:02</span></span>
+        <span class="l t-orange" data-type data-status="4s · 3% · 52 tok/s">&gt; start it<span class="t-time">14:03</span></span>
         <span class="l"></span>
         <span class="l" data-think="They want it running again. It exists and exited cleanly, so docker start web brings it back as it was." data-used="~2k of 33k tokens" data-speed="53 tok/s" data-call><span class="t-orange">$</span> docker start web</span>
         <span class="l"></span>
@@ -402,9 +410,12 @@ document.addEventListener('click', function (event) {
     return rows.slice(-REASONING_ROWS);
   }
 
-  // Typed at the prompt, with the last turn's status at the far right.
+  // Typed at the prompt, with the last turn's status at the far right,
+  // which gives way to the time the request was sent.
   async function type(line) {
-    var html = line.innerHTML, request = line.textContent.slice(2);
+    var time = line.querySelector('.t-time');
+    var html = line.innerHTML;
+    var request = line.textContent.slice(2, time ? -time.textContent.length : undefined);
     var cursor = span('t-cursor', ' ');
     var status = line.dataset.status && span('t-status', line.dataset.status);
     screen.appendChild(line);

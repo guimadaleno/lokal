@@ -8,7 +8,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::PoisonError;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde_json::{Value, json};
 
@@ -102,6 +102,7 @@ fn check(request: &Value, name: &str) -> Result<Message, &'static str> {
         by_user: request["by_user"] == true,
         now: request["now"] != false,
         shown: None,
+        arrived: SystemTime::now(),
     })
 }
 

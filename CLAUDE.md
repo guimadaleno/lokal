@@ -468,8 +468,8 @@ of MCP servers the person sets up. One binary, few dependencies.
     not shortened for the screen.
   - **The page's terminal plays the real screen** (`site/index.html`): the
     approval's options, the working labels, the prompt's status, the
-    spinner's frames, the reasoning window (as `/reasoning` shows it) and
-    the two pulses, at Lokal's timings. When one of them changes here, it
+    spinner's frames, the reasoning window (as `/reasoning` shows it), the
+    times beside the messages and the two pulses, at Lokal's timings. When one of them changes here, it
     changes there too. Its markup is the last frame, and what shows without
     motion.
 - **The look stays discreet:** faint and gray tones from `src/style.rs`, one
@@ -494,6 +494,18 @@ of MCP servers the person sets up. One binary, few dependencies.
     works, slowly, and the marker on the option an approval is on, quicker.
     Only the marker moves, never an option itself: the pulse follows the
     selection, wherever the question opened, instead of pulling toward one.
+  - **When each message was sent sits faint at the right edge** (#46,
+    `src/clock.rs`), so scrolling back says when the person asked and when
+    the model answered. A line sent at the `>` (a request, a `!` line,
+    `@name` mail) gets it on its last row once Enter is pressed, where the
+    status sat while it was typed; a queued line, when Enter queued it; the
+    rule under an answer ends in when the turn ended; a mail, by its `·`
+    line. Hours and minutes from the computer's clock, and the date on the
+    first time of a day other than the last one shown.
+    - **The words win the room:** a row without two spaces to spare goes
+      without, and a slash command gets none.
+    - **On screen only:** the model, the saved conversation and the other
+      sessions get nothing of it, and a one-shot request shows none.
 - **Every block gets room to breathe,** so the screen never feels
   cluttered. A blank line follows the request and the `$` line of a command.
   Output starts after one, only when there is output, so a silent command
@@ -537,6 +549,7 @@ of MCP servers the person sets up. One binary, few dependencies.
 | `queue.rs` | What's typed while Lokal works: the draft under the spinner or the answer, the lines Enter queued, where they go when the turn ends |
 | `input.rs` | The `>` prompt (hints, completion, Ctrl+C twice, an image pasted as `[Image #N]`) and approvals |
 | `clipboard.rs` | The clipboard's image, read on the person's key by Lokal's own fixed programs |
+| `clock.rs` | When a message was sent, as the screen shows it: the local time, and the date on a new day |
 | `menu.rs` | The arrow-key choice the approvals use |
 | `tty.rs` | `/dev/tty` itself: its width, raw mode, waiting for a key, dropping keys typed ahead |
 | `mode.rs` | The mode Shift+Tab picks: manual, accept edits or auto |

@@ -2,7 +2,7 @@
 //! the `>`, after the person's next request, or never on its own.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use super::show::{notice, spaced};
 use super::{REQUEST_LIMIT, SEEN_AFTER, WAITING_LIMIT};
@@ -20,6 +20,8 @@ pub struct Message {
     pub now: bool,
     /// When it showed on screen.
     pub(super) shown: Option<Instant>,
+    /// When it came: its time on screen (#46).
+    pub arrived: SystemTime,
 }
 
 /// What becomes of a mail taken, as its sender hears it.
@@ -350,6 +352,7 @@ mod tests {
             by_user: false,
             now,
             shown: shown.map(|ago| Instant::now() - ago),
+            arrived: SystemTime::now(),
         };
         let second = Some(Duration::from_secs(1));
         inbox.lock().waiting.extend([

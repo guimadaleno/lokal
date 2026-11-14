@@ -523,10 +523,11 @@ impl Conversation {
     /// Slash, `!` and `@` lines wait for the turn's end, where they work as
     /// typed at the `>`.
     fn take_queued(&mut self, input: &mut Input) {
-        let Some(line) = queue::take_for_model() else {
+        let Some((line, queued)) = queue::take_for_model() else {
             return;
         };
         input.show_queued(&line);
+        input.date_sent(&line, queued);
         eprintln!();
         if let Some(peers) = &self.peers {
             peers.inbox().person_acted(Some(&line));
