@@ -269,8 +269,8 @@ fn talk(
         // Queued while the last turn ran, and it ended on its own: it goes
         // as typed. Otherwise what was typed waits at the `>`.
         if let Some((line, queued)) = queue::take_ready() {
-            input.show_queued(&line);
-            if !take_line(&line, Some(queued), conversation, input, session) {
+            input.show_queued(&line, queued);
+            if !take_line(&line, None, conversation, input, session) {
                 break;
             }
             continue;
@@ -295,7 +295,8 @@ fn talk(
 
 /// What the person typed at the `>`: a slash command, a command of their
 /// own, mail for another session or a request. All but a slash command
-/// get the time they were `sent` beside them. False when it's time to quit.
+/// get the time they were `sent` beside them, when given: a queued line
+/// shows its own. False when it's time to quit.
 fn take_line(
     typed: &str,
     sent: Option<SystemTime>,

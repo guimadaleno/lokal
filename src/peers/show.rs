@@ -6,6 +6,8 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use super::{Message, Session};
+use unicode_width::UnicodeWidthStr;
+
 use crate::layout::{broken, indented, right_padding};
 use crate::{clock, config, style, text, tty};
 
@@ -138,14 +140,14 @@ pub fn notice_line(text: &str, width: usize, arrived: Option<SystemTime>) -> Str
             " ".repeat(4)
         };
         out.push_str(&format!("{lead}{}", style::gray(part)));
-        // The lead is four columns wide.
-        let end = 4 + part.chars().count();
+        // The lead is four columns wide; a name may hold wide characters.
+        let end = 4 + part.width();
         let padding = |time: usize| right_padding(end, time, width);
         if index == 0
             && let Some(arrived) = arrived
             && let Some(time) = clock::shown(arrived, |time| padding(time).is_some())
         {
-            let spaces = padding(time.chars().count()).unwrap_or(2);
+            let spaces = padding(time.width()).unwrap_or(2);
             out.push_str(&format!("{}{}", " ".repeat(spaces), style::faint(&time)));
         }
         out.push('\n');
@@ -232,5 +234,8 @@ mod tests {
         assert!(first.starts_with("  · api-1:  ") && first.chars().nth(36) == Some(':'));
         // Without room, the row stays as it was.
         assert_eq!(notice_line("api-1:", 12, Some(arrived)), "  · api-1:\n");
+        // A name of wide characters takes their columns, not their count.
+        let wide = notice_line("日本語-1:", 40, Some(arrived));
+        assert_eq!(wide.trim_end_matches('\n').width(), 39, "{wide}");
     }
 }

@@ -526,8 +526,7 @@ impl Conversation {
         let Some((line, queued)) = queue::take_for_model() else {
             return;
         };
-        input.show_queued(&line);
-        input.date_sent(&line, queued);
+        input.show_queued(&line, queued);
         eprintln!();
         if let Some(peers) = &self.peers {
             peers.inbox().person_acted(Some(&line));

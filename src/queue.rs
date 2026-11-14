@@ -173,9 +173,10 @@ impl Queue {
     }
 }
 
-/// Queued lines as one message, sent when its first line was queued.
+/// Queued lines as one message, sent once its last line was queued: its
+/// time shows beside that line.
 fn joined(queued: Vec<(String, SystemTime)>) -> Option<(String, SystemTime)> {
-    let at = queued.first()?.1;
+    let at = queued.last()?.1;
     Some((lines(queued).join("\n"), at))
 }
 
@@ -421,17 +422,18 @@ mod tests {
     }
 
     #[test]
-    fn what_is_taken_was_sent_when_its_first_line_was_queued() {
+    fn what_is_taken_was_sent_when_its_last_line_was_queued() {
         let mut queue = open();
         queue.type_text("first");
         queue.enter();
         let first = queue.queued[0].1;
         queue.type_text("second");
         queue.enter();
-        assert!(queue.queued[1].1 >= first);
+        let second = queue.queued[1].1;
+        assert!(second >= first);
         assert_eq!(
             queue.take_ready(),
-            Some(("first\nsecond".to_string(), first))
+            Some(("first\nsecond".to_string(), second))
         );
     }
 

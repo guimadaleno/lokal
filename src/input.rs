@@ -400,29 +400,38 @@ impl Input {
     }
 
     /// A line queued while Lokal worked, shown as the `>` shows one typed
-    /// there, and kept in the history as one would be.
-    pub fn show_queued(&mut self, line: &str) {
+    /// there, with the time Enter `queued` it at the right of its last row
+    /// (#46), and kept in the history as one would be.
+    pub fn show_queued(&mut self, line: &str, queued: SystemTime) {
         let shown = layout::printable(line);
-        for (index, row) in shown.lines().enumerate() {
+        let time = tty::width()
+            .filter(|_| style::enabled())
+            .and_then(|width| time_beside(&shown, queued, width));
+        let rows: Vec<&str> = shown.lines().collect();
+        for (index, row) in rows.iter().enumerate() {
             let prompt = if index == 0 { PROMPT } else { "" };
-            eprintln!("{}", style::accent(&format!("{prompt}{row}")));
+            let after = match &time {
+                Some((padding, time)) if index + 1 == rows.len() => {
+                    format!("{}{}", " ".repeat(*padding), style::faint(time))
+                }
+                _ => String::new(),
+            };
+            eprintln!("{}{after}", style::accent(&format!("{prompt}{row}")));
         }
         if let Some(editor) = &mut self.editor {
             let _ = editor.add_history_entry(line);
         }
     }
 
-    /// When the person sent `line`, faint at the right of its last row,
-    /// where the status sat while they typed it (#46). The line is on
-    /// screen right above the cursor, as Enter at the `>` and
-    /// `show_queued` leave it; a last row without room goes without.
+    /// When the person sent `line` at the `>`, faint at the right of its
+    /// last row, where the status sat while they typed it (#46). Enter
+    /// leaves the line right above the cursor.
     pub fn date_sent(&self, line: &str, at: SystemTime) {
         let Some(width) = tty::width().filter(|_| style::enabled()) else {
             return;
         };
-        let (_, end) = laid_out(&layout::printable(line), width);
-        let fits = |time: usize| layout::right_padding(end, time, width).is_some();
-        if let Some(time) = clock::shown(at, fits) {
+        // rustyline draws the line as typed, so it's laid out as typed.
+        if let Some((_, time)) = time_beside(line, at, width) {
             // Up to that row, out to where the time starts, and back down.
             eprint!(
                 "\x1b[1A\x1b[{}G{}\r\n",
@@ -737,6 +746,22 @@ fn laid_out(line: &str, width: usize) -> (usize, usize) {
 
 /// rustyline's tab stop, which Lokal leaves as it comes.
 const TAB_STOP: usize = 8;
+
+/// When a line `drawn` after the prompt was sent, and the spaces before it
+/// at the right of the line's last row; None without room (#46).
+fn time_beside(drawn: &str, at: SystemTime, width: usize) -> Option<(usize, String)> {
+    let time = clock::shown(at, |time| time_padding(drawn, time, width).is_some())?;
+    Some((time_padding(drawn, time.width(), width)?, time))
+}
+
+/// The spaces before something `right` columns wide at the right of the
+/// last row of a line `drawn` after the prompt, or None. A last row the
+/// line filled has no room: past it is an empty row rustyline adds, or
+/// none at all for a line printed whole.
+fn time_padding(drawn: &str, right: usize, width: usize) -> Option<usize> {
+    let (_, end) = laid_out(drawn, width);
+    layout::right_padding(end, right, width).filter(|_| end > 0)
+}
 
 /// The clipboard's image, kept as the session's next, and its marker; or
 /// why there's none.
@@ -1200,6 +1225,25 @@ mod tests {
         assert_eq!(laid_out("olá 漢字 ok", 80), (1, 13));
         assert_eq!(laid_out(&"x".repeat(78), 80), (2, 0));
         assert_eq!(laid_out("a\nbc", 80), (2, 2));
+    }
+
+    #[test]
+    fn a_time_goes_beside_the_last_row_only_where_it_has_room() {
+        // "> hi" ends at 4: the time ends one column short of the edge.
+        assert_eq!(time_padding("hi", 5, 40), Some(30));
+        // Wide characters take their columns.
+        assert_eq!(time_padding("日本", 5, 20), Some(8));
+        // A last row the line filled has none; a row after it has its own.
+        assert_eq!(time_padding(&"a".repeat(18), 5, 20), None);
+        assert_eq!(
+            time_padding(&format!("{}\nab", "a".repeat(18)), 5, 20),
+            Some(12)
+        );
+        // A hidden character takes no room as rustyline draws it: this row
+        // ends at 76 of 80, with no room for a time.
+        let pasted = format!("{}\u{200B}", "x".repeat(74));
+        assert_eq!(time_padding(&pasted, 5, 80), None);
+        assert_eq!(laid_out(&pasted, 80), (1, 76));
     }
 
     #[test]
