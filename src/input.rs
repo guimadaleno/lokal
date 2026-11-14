@@ -400,8 +400,9 @@ impl Input {
         editor.unbind_sequence(KeyEvent::ctrl('C'));
         editor.unbind_sequence(KeyEvent::ctrl('V'));
         editor.unbind_sequence(KeyEvent::alt('v'));
-        // A reminder left over must not show at the next question.
-        self.quit_armed.store(false, Ordering::SeqCst);
+        // A reminder left over must not show at the next question; a reading
+        // that goes on (`Read::Again`) is the same `>`, and keeps it.
+        let armed = self.quit_armed.swap(false, Ordering::SeqCst);
         // A signal for a redraw that came as the line ended raised Lokal's
         // own flag instead, which no Ctrl+C of the person's raised: at the
         // `>`, Ctrl+C is a key.
@@ -436,6 +437,7 @@ impl Input {
                     .helper()
                     .map(|helper| helper.drawn.borrow().clone())
                     .unwrap_or_default();
+                self.quit_armed.store(armed, Ordering::SeqCst);
                 Read::Again(line, pos)
             }
             Ok(_) if dropping.load(Ordering::SeqCst) => {
