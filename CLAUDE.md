@@ -649,7 +649,10 @@ of MCP servers the person sets up. One binary, few dependencies.
     cursor where rustyline last drew them (`Helper::drawn`), though its
     undo and its place in the history start over. Such an ending is never
     a quit, and a signal that came as the line ended, which only raised
-    Lokal's own flag, is cleared then: at the `>`, Ctrl+C is a key.
+    Lokal's own flag, is cleared then: at the `>`, Ctrl+C is a key. Nor is
+    any reading ended by a signal no one waits for (a paste's watch or
+    mail that came as the line changed hands): it reads on, since a quit
+    at the `>` is Ctrl+D or a second Ctrl+C, both an end of input.
   - **During a turn, the redraw is due** (`screen::due`) and happens at the
     next step of what's drawing, which then draws its live parts anew
     rather than over what's there: the spinner's tick (the model, a

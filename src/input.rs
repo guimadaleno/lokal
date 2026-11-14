@@ -124,8 +124,10 @@ enum Read {
     Line(Line),
     EmptyPaste(String, usize),
     AutoChosen(String, usize),
-    /// The width changed: the screen is laid out again, and the line read on.
-    Resized(String, usize),
+    /// The reading ended for no quit: for a redraw at a new width (#49), or
+    /// for a signal that came late, as an empty paste's or mail's can. The
+    /// line is read on, the screen laid out again first if the width changed.
+    Again(String, usize),
 }
 
 /// What shows after the line until it changes: the line, and the word.
@@ -266,12 +268,13 @@ impl Input {
                         eprint!("\x1b[?25h");
                     }
                 }
-                Read::Resized(line, pos) => {
+                Read::Again(line, pos) => {
                     first = false;
                     // The screen again at the new width; the next reading
-                    // draws the line under it, the cursor where it was. Had
-                    // the width gone back meanwhile, the line rustyline left
-                    // goes, as for auto's warning, and is drawn again.
+                    // draws the line under it, the cursor where it was. With
+                    // no redraw (the width went back, or none was asked), the
+                    // line rustyline left goes, as for auto's warning, and is
+                    // drawn again.
                     if !screen::redraw() && style::enabled() {
                         eprint!("\x1b[{}A\r\x1b[J", rows(&line));
                     }
@@ -423,14 +426,17 @@ impl Input {
                 }
                 Read::Line(Line::Mail)
             }
-            // Ended for a redraw: never a quit. The line and the cursor are
+            // Ended for a redraw, or by a signal no one here is waiting for
+            // (a paste's watch or mail that came as the line changed hands):
+            // never a quit, which at the `>` comes as Ctrl+D or a second
+            // Ctrl+C, both an end of input. The line and the cursor are
             // where the last refresh drew them.
-            Err(ReadlineError::Interrupted) if resized => {
+            Err(ReadlineError::Interrupted) => {
                 let (line, pos) = editor
                     .helper()
                     .map(|helper| helper.drawn.borrow().clone())
                     .unwrap_or_default();
-                Read::Resized(line, pos)
+                Read::Again(line, pos)
             }
             Ok(_) if dropping.load(Ordering::SeqCst) => {
                 screen::kept(Box::new(|width| sent_line("", None, width)));
