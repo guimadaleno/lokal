@@ -5,6 +5,25 @@ How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.11.0 — 2026-11-14
+
+- Each message shows when it was sent: your request's time at the right
+  of its line, the answer's at the end of the line under it, and a mail's
+  beside it. Faint, and only when the minute changed, so a quick exchange
+  carries one; a new day adds the date. `times = off` in the settings
+  turns them off.
+- Resize the terminal and Lokal lays the conversation out again at the new
+  width, also while it works, mid-answer or with a question open. To do
+  that it clears the terminal's scrollback: what the tab showed before
+  Lokal started goes at the first change of width, and the latest 512 KB
+  of the conversation come back.
+- `/sysprompt`, the model's name and the folders of the project's notes
+  show control characters as marks, as everything else from a file does.
+- A stray signal at the > no longer quits Lokal: the line you were typing
+  comes back as it was.
+- An MCP server that fails as it starts says why more reliably: its last
+  words were sometimes read too early.
+
 ## 0.10.1 — 2026-11-12
 
 - The model knows today's date, weekday and time zone, from your computer's
