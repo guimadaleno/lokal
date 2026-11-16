@@ -1,7 +1,8 @@
 # Lokal — what each version brings
 
 For whoever uses Lokal: what changed, version by version, newest first.
-How versions are numbered and tagged is in `CLAUDE.md`, under "Versioning".
+How versions are numbered and tagged is in the `release` skill
+(`.claude/skills/release/SKILL.md`), under "Versioning and releases".
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
