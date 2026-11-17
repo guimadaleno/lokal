@@ -116,12 +116,10 @@ def _openssl(args: list, **kw) -> subprocess.CompletedProcess:
     return subprocess.run(["openssl", *args], capture_output=True, **kw)
 
 
+# The private key reaches openssl through its stdin and never touches the disk,
+# where a file would outlive a step killed before it cleaned up.
 def public_of(secret: str) -> bytes:
-    with tempfile.TemporaryDirectory() as tmp:
-        key = Path(tmp) / "key.pem"
-        key.touch(mode=0o600)
-        key.write_text(_pem_private(secret))
-        out = _openssl(["pkey", "-in", str(key), "-pubout", "-outform", "DER"])
+    out = _openssl(["pkey", "-pubout", "-outform", "DER"], input=_pem_private(secret).encode())
     if out.returncode != 0 or len(out.stdout) != 44:
         die("UPDATE_KEY is not an Ed25519 key")
     return out.stdout[-32:]
@@ -129,12 +127,13 @@ def public_of(secret: str) -> bytes:
 
 def sign_bytes(message: bytes, secret: str) -> bytes:
     with tempfile.TemporaryDirectory() as tmp:
-        key, msg, sig = (Path(tmp) / n for n in ("key.pem", "msg", "sig"))
-        key.touch(mode=0o600)
-        key.write_text(_pem_private(secret))
+        msg, sig = Path(tmp) / "msg", Path(tmp) / "sig"
         msg.write_bytes(message)
-        out = _openssl(["pkeyutl", "-sign", "-inkey", str(key), "-rawin",
-                        "-in", str(msg), "-out", str(sig)])
+        # openssl 3.0 takes no `-` for a key; /dev/stdin is the same pipe on
+        # the Linux runner every release publishes from.
+        out = _openssl(["pkeyutl", "-sign", "-inkey", "/dev/stdin", "-rawin",
+                        "-in", str(msg), "-out", str(sig)],
+                       input=_pem_private(secret).encode())
         if out.returncode != 0:
             die("openssl could not sign: " + out.stderr.decode(errors="replace"))
         signature = sig.read_bytes()

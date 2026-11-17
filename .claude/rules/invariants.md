@@ -16,8 +16,9 @@ paths:
   modules are declared with `#[rustfmt::skip]` and `#[allow(clippy::all)]`:
   an edit here makes the copies disagree.
   - **So is `.github/actions/publish/`,** `guimadaleno/base/release`'s
-    `publish/` as of base's 2541007, `release-v1.2.0`'s code with examples
-    that name no app: base is private, and a public repository can't use an
+    `publish/` as of base's 86196c8, `release-v1.2.0`'s code with examples
+    that name no app and the key handed to openssl through stdin, never a
+    file: base is private, and a public repository can't use an
     action from a private one (#42). A newer one comes in as a fresh copy,
     its commit named in `release.yml`'s comment.
 - **Only the release workflow's build updates itself.** `update.rs` is
