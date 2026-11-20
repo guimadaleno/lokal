@@ -10,13 +10,9 @@ description: "Use it before changing Lokal's version, tagging or publishing, and
   `guimadaleno/base/release`'s action, copied into `.github/actions/publish/`.
   Read its README before
   touching `update.rs`, `install.rs`, the workflow or the key.
-- **Every tag reaches every installed copy, unasked,** so a tag is pushed
-  only when the user says so.
 - **`Cargo.toml`'s version, the tag and a `## <version> — <date>` entry in
   `CHANGELOG.md` must agree;** the workflow refuses a tag otherwise. The
   entry is the release's notes, written for the person using Lokal.
-- **Bump the smallest part that fits:** patch for fixes, minor for anything
-  new, while below 1.0.
 
 ## Keys and secrets
 
