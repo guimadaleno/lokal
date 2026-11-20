@@ -1,6 +1,6 @@
 ---
 name: release
-description: "Use it before changing Lokal's version, tagging or publishing, and before touching update.rs, install.rs, the release workflow or the update key: how versions are numbered and tagged, what a release publishes, where the keys and secrets live, and base's release protocol to read first."
+description: "Use it before changing Lokal's version, tagging or publishing, and before touching update.rs, install.rs, the release workflow or the update key: how a version is tagged, what a release publishes, where the keys and secrets live, and base's release protocol to read first."
 ---
 
 ## Versioning and releases
