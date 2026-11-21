@@ -73,8 +73,10 @@ pastes the image on your clipboard as `[Image #1]`, and several can go in
 one request. Shift+Tab switches between asking for
 everything, accepting file edits once their diff shows, and auto, where the
 model, asked separately, also lets commands run and files change outside the
-working folder. A question starts on No only for what can't be undone,
-leaves your machine or changes what runs later.
+working folder. `mode = auto` (or `accept-edits`) in the settings starts
+each conversation there instead of asking for everything. A question
+starts on No only for what can't be undone, leaves your machine or changes
+what runs later.
 
 Resize the terminal and Lokal lays the conversation out again at the new
 width, its rules, times and notes included, also mid-answer or with a
@@ -105,9 +107,9 @@ what each server's tools cost in context.
 
 - Run a command that may change something without your yes. Which commands
   count as read-only is Lokal's own list, never the model's call. Auto is
-  the one exception: you switch it on for a session, and what can't be
-  undone or leaves your machine, like deleting outside the project, sudo
-  or sending data, still asks.
+  the one exception: you switch it on for a session, or in your settings
+  for every one, and what can't be undone or leaves your machine, like
+  deleting outside the project, sudo or sending data, still asks.
 - Change a file without showing you the diff first.
 - Call an MCP server's tool without your yes, or give the model a server's
   tools before you've seen what it says about them. A project's own

@@ -176,6 +176,8 @@ fn run(started: Instant, resume: bool, request: &str) -> ExitCode {
     let project = approvals::ProjectApprovals::load(approvals::project_root(&folder));
     let mut input = Input::new(project);
     input.set_vision(server.vision);
+    // The settings' mode, in a conversation whose `>` will show it.
+    mode::start(config.mode, talking && input.can_ask());
     // MCP servers in a conversation at a terminal only, where each call can
     // be asked about; started now, so they're up by the first request.
     let mcp = if talking && input.can_ask() {
@@ -192,6 +194,8 @@ fn run(started: Instant, resume: bool, request: &str) -> ExitCode {
         // From here on the screen is kept, to lay out again at a new width.
         screen::keep();
         commands::print_header(&server);
+        // Above the other notes, which would bury it.
+        mode::show_start_warning();
         warn_if_context_is_small(&server, false);
         first_line = ask_first_question(&mut input);
         commands::warn_if_user_md_is_long();

@@ -47,8 +47,13 @@ paths:
     (`protected::is_protected`), on No, and `remember`.
   - **A turn mail started stays manual,** since another model wrote that
     mail, and it may have been steered.
-  - **Every session starts on manual,** with no setting to start
-    otherwise, so the mode is chosen with eyes open each time.
+  - **Every session starts on manual unless the settings say otherwise**
+    (#55): `mode = accept-edits` or `mode = auto` starts a conversation
+    at a terminal there. Only the person writes that line, since the
+    model can't change Lokal's own files, and auto's warning shows as such
+    a session starts, saying where it came from. A one-shot request starts
+    on manual whatever the setting: it often runs in a script, and without
+    a terminal accept edits would write with nobody there to see it.
   - **A long diff still shows only its start:** the person chose not to
     be asked, and inside git, `git diff` shows the rest.
   - **The mode shows at the right of the `>` and in the spinner's label**

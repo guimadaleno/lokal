@@ -89,6 +89,10 @@ pub const HELP_MORE: &[(&str, &str)] = &[
         "mcp.<name>",
         "a server set in /config offers its tools; each call asks",
     ),
+    (
+        "mode",
+        "set in /config: the mode each conversation starts on",
+    ),
     ("lokal -r", "pick up the last conversation"),
 ];
 
@@ -107,6 +111,10 @@ pub const SETTINGS_TEMPLATE: &str = "\
 
 # The time beside what you send and at the end of each answer:
 # times = off
+
+# The mode each conversation starts on, instead of manual: accept-edits or
+# auto. Shift+Tab still cycles them, and a turn mail started stays manual.
+# mode = auto
 
 # Mail between your Lokal sessions on this computer. auto: it starts a turn
 # on its own. ask: it waits for Enter. off: no mail.
@@ -172,6 +180,8 @@ pub const WRITTEN_UNASKED: &str = "written: accept edits is on";
 pub const AUTO_WARNING: &str = "Auto lets the model approve its own steps, and it'll get some \
     wrong: use it at your own risk. Deletes outside the folder, sudo, uploads and your settings \
     still ask.";
+/// Before it, as a session starts on auto from the settings.
+pub const AUTO_FROM_SETTINGS: &str = "Starting on auto (mode = auto in /config).";
 /// Beside the spinner while the judge decides.
 pub const JUDGING: &str = "auto · asking the model apart";
 /// Under a file change auto made.
@@ -824,9 +834,13 @@ pub fn bad_times_setting(path: &str, line: usize) -> String {
     format!("{path}, line {line}: `times` is either on or off.")
 }
 
+pub fn bad_mode_setting(path: &str, line: usize) -> String {
+    format!("{path}, line {line}: `mode` is manual, accept-edits or auto.")
+}
+
 pub fn unknown_setting(path: &str, line: usize, name: &str) -> String {
     format!(
-        "{path}, line {line}: there's no setting called `{name}`. The ones that exist are `server`, `model`, `updates`, `times`, `mail`, `mail_turns` and `mcp.<name>`."
+        "{path}, line {line}: there's no setting called `{name}`. The ones that exist are `server`, `model`, `updates`, `times`, `mode`, `mail`, `mail_turns` and `mcp.<name>`."
     )
 }
 

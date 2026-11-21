@@ -5,6 +5,7 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+use crate::mode::Mode;
 use crate::text;
 
 /// Settings that pin what Lokal would otherwise find on its own.
@@ -17,6 +18,8 @@ pub struct Config {
     pub updates_off: bool,
     /// `times = off`: no time beside what's sent and each turn's end (#46).
     pub times_off: bool,
+    /// The mode a conversation at a terminal starts on (#55, `mode.rs`).
+    pub mode: Mode,
     /// Mail between the person's sessions on this machine (`peers.rs`).
     pub mail: Mail,
     /// How many turns in a row mail may start on its own.
@@ -82,6 +85,14 @@ fn parse(contents: &str, path: &str) -> Result<Config, String> {
                 Some("off") => config.times_off = true,
                 _ => return Err(text::bad_times_setting(path, index + 1)),
             },
+            "mode" => {
+                config.mode = match value.as_deref() {
+                    Some("manual") => Mode::Manual,
+                    Some("accept-edits") => Mode::AcceptEdits,
+                    Some("auto") => Mode::Auto,
+                    _ => return Err(text::bad_mode_setting(path, index + 1)),
+                }
+            }
             "mail" => {
                 config.mail = match value.as_deref() {
                     Some("auto") => Mail::Auto,
@@ -349,6 +360,22 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn reads_the_mode_a_conversation_starts_on() {
+        let mode = |contents: &str| parse(contents, "config").map(|config| config.mode);
+        assert_eq!(mode(""), Ok(Mode::Manual));
+        assert_eq!(mode("mode = manual"), Ok(Mode::Manual));
+        assert_eq!(mode("mode = accept-edits"), Ok(Mode::AcceptEdits));
+        assert_eq!(mode("mode = auto"), Ok(Mode::Auto));
+        for wrong in ["mode = on", "mode = Auto", "mode = accept edits", "mode ="] {
+            let error = mode(wrong).unwrap_err();
+            assert!(
+                error.contains("line 1: `mode` is manual, accept-edits or auto."),
+                "{error}"
+            );
+        }
     }
 
     #[test]

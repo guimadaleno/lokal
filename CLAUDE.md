@@ -27,8 +27,8 @@ of MCP servers the person sets up. One binary, few dependencies.
   and what changes what runs later), by Lokal's own rule (`allowlist::opens_on_yes`,
   `src/allowlist/hard.rs`, `files::asking`), never the model's
   judgement. Everything else opens on Yes, so Enter alone approves, and in
-  the modes the person picks on Shift+Tab (`.claude/rules/files.md`,
-  `commands.md`) it may need no Enter at all. Esc is always No, and a key or a number only moves to its option,
+  the modes the person picks on Shift+Tab or in their settings
+  (`.claude/rules/files.md`, `commands.md`) it may need no Enter at all. Esc is always No, and a key or a number only moves to its option,
   for Enter to pick, so a stray key never approves. Saying no ends the
   turn, so the person says what to do instead.
   How it holds: `.claude/rules/commands.md`.

@@ -1,15 +1,18 @@
 //! How much Lokal asks before a step: the mode the person picks with
-//! Shift+Tab, at the `>` or while Lokal works. Every session starts on
-//! manual, and a turn mail started stays manual whatever the mode.
+//! Shift+Tab, at the `>` or while Lokal works. A conversation at a terminal
+//! starts on the one the settings name (`mode = auto`), manual without one;
+//! a one-shot request on manual. A turn mail started stays manual whatever
+//! the mode.
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use crate::{layout, style, text};
 
 /// Kept in `MODE` as its number, which `current` reads back.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mode {
     /// Every step that isn't read-only asks.
+    #[default]
     Manual = 0,
     /// File changes whose question would open on Yes go through without it.
     AcceptEdits = 1,
@@ -28,6 +31,15 @@ pub fn current() -> Mode {
         2 => Mode::Auto,
         _ => Mode::Manual,
     }
+}
+
+/// The mode a session starts on: the settings' `mode` in a conversation at
+/// a terminal, where the `>` shows it. A one-shot request starts on manual:
+/// it often runs in a script, with no `>` to show the mode, and without a
+/// terminal accept edits would write with nobody there to see it.
+pub fn start(setting: Mode, at_the_prompt: bool) {
+    let mode = if at_the_prompt { setting } else { Mode::Manual };
+    MODE.store(mode as u8, Ordering::SeqCst);
 }
 
 /// Shift+Tab: the next mode, after the last one manual again.
@@ -61,8 +73,21 @@ pub fn warn_of_auto() -> bool {
 
 /// Auto's warning, when it's due, with a blank line after it.
 pub fn show_warning() {
+    show(text::AUTO_WARNING);
+}
+
+/// Auto's warning as a session starts on auto, saying where that came from.
+pub fn show_start_warning() {
+    show(&format!(
+        "{} {}",
+        text::AUTO_FROM_SETTINGS,
+        text::AUTO_WARNING
+    ));
+}
+
+fn show(warning: &str) {
     if warn_of_auto() {
-        crate::screen::fitted(layout::indented_rows(text::AUTO_WARNING, 0, style::gray));
+        crate::screen::fitted(layout::indented_rows(warning, 0, style::gray));
         showln!();
     }
 }
@@ -71,8 +96,9 @@ pub fn show_warning() {
 mod tests {
     use super::*;
 
+    // One test, since the mode is one for the whole process.
     #[test]
-    fn shift_tab_goes_round_and_mail_stays_manual() {
+    fn modes_start_as_set_go_round_and_stay_manual_on_mail() {
         assert_eq!(current(), Mode::Manual);
         assert!(!warn_of_auto());
         next();
@@ -88,6 +114,17 @@ mod tests {
         assert!(!warning_due());
         assert!(!warn_of_auto());
         next();
+        assert_eq!(current(), Mode::Manual);
+        // The settings' mode, at the `>` only.
+        start(Mode::Auto, false);
+        assert_eq!(current(), Mode::Manual);
+        start(Mode::AcceptEdits, true);
+        assert_eq!(current(), Mode::AcceptEdits);
+        assert_eq!(for_step(true), Mode::Manual);
+        start(Mode::Auto, true);
+        assert_eq!(current(), Mode::Auto);
+        assert_eq!(for_step(true), Mode::Manual);
+        start(Mode::Manual, true);
         assert_eq!(current(), Mode::Manual);
     }
 }
