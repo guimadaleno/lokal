@@ -13,6 +13,14 @@ description: "Use it before changing Lokal's version, tagging or publishing, and
 - **`Cargo.toml`'s version, the tag and a `## <version> — <date>` entry in
   `CHANGELOG.md` must agree;** the workflow refuses a tag otherwise. The
   entry is the release's notes, written for the person using Lokal.
+- **The release build is tried in WSL, never on a virtual machine,** at the
+  owner's word (2026-11-21): base's protocol installs it on one, but the
+  only machine runs Windows, and Lokal is a Linux program. It's built as
+  the workflow builds it, put in place with `lokal --install` under a
+  scratch `HOME`, and run from there, never over the person's own copy.
+- **A page that says what a version brings is pushed after its tag's
+  run:** a push that changes `site/` publishes the page, which offers the
+  version `latest.json` names.
 
 ## Keys and secrets
 
