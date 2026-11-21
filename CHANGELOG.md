@@ -6,6 +6,23 @@ How versions are numbered and tagged is in the `release` skill
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.12.0 — 2026-11-21
+
+- `mode = auto` in the settings starts each conversation on auto, and
+  `mode = accept-edits` on accept edits, instead of asking for everything.
+  Auto's warning shows as the session starts. A one-shot request still
+  starts asking, and a turn mail started still asks.
+- MCP servers on the network: `mcp.<name> = https://…`, and
+  `mcp.<name>.header = Authorization: Bearer <token>` for one that wants a
+  token. Lokal reaches them through your system's curl, the token never
+  shows on a command line, and plain `http://` works only for this
+  computer or your local network. Every call still asks first. Lokal
+  doesn't do the browser sign-in (OAuth) some servers ask for.
+- When your settings file is a link to a file somewhere else, as a
+  dotfiles folder makes it, the model can no longer change that file,
+  under any name it has, not even with your yes. Before, it could.
+- Built with Rust 1.100.
+
 ## 0.11.0 — 2026-11-14
 
 - Each message shows when it was sent: your request's time at the right
