@@ -6,6 +6,13 @@ How versions are numbered and tagged is in the `release` skill
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.12.1 — 2026-11-21
+
+- Ask the model to use an app through MCP that isn't connected yet, and
+  it tells you the line to add with /config and asks for the app's
+  command, instead of searching your computer and other programs'
+  settings for a way in.
+
 ## 0.12.0 — 2026-11-21
 
 - `mode = auto` in the settings starts each conversation on auto, and
