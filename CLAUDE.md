@@ -37,7 +37,9 @@ of MCP servers the person sets up. One binary, few dependencies.
   How it holds: `.claude/rules/commands.md`.
 - **Let the model change Lokal's own files,** not even with a yes. That means
   the settings, user.md, the approvals and the saved conversation, checked
-  on the path the kernel would reach (`config::is_lokal_own`). Otherwise one
+  on the path the kernel would reach (`config::is_lokal_own`), and the file
+  any of them links to, under any name, as a dotfiles checkout makes it
+  (#57). Otherwise one
   approved diff could send every later conversation to another server,
   approve commands, or plant instructions in what every conversation starts
   with. The one way in is `remember`, which adds a line to user.md when

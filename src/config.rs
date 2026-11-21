@@ -380,12 +380,54 @@ pub fn shown(path: &Path) -> String {
 /// One of Lokal's own files: its settings, user.md, its approvals, its
 /// saved conversation. The model never writes to them, even with a yes: it
 /// must not change what it may do, where its words are sent, or what every
-/// conversation starts with.
+/// conversation starts with. Also the file one of them links to, wherever
+/// it is, as a dotfiles checkout makes the settings (#57): even before it
+/// exists, and under any other name it has (a hard link, another case on
+/// a Windows drive).
 pub fn is_lokal_own(path: &Path) -> bool {
-    let path = resolved(path);
+    is_lokal_own_resolved(&resolved(path))
+}
+
+/// `is_lokal_own` for a path `resolved` gave already.
+pub fn is_lokal_own_resolved(path: &Path) -> bool {
+    let path = followed(path);
     [config_dir(), state_dir()]
         .iter()
         .any(|dir| path.starts_with(resolved(dir)))
+        || own_targets()
+            .iter()
+            .any(|target| is_same_file(&path, target))
+}
+
+/// Where each of Lokal's own files keeps what it holds: its links followed.
+pub fn own_targets() -> Vec<PathBuf> {
+    own_files()
+        .iter()
+        .map(|file| followed(&resolved(file)))
+        .collect()
+}
+
+/// A resolved path whose last part is a link that leads nowhere yet,
+/// which `resolved` leaves as it is, followed to where it leads.
+fn followed(path: &Path) -> PathBuf {
+    let mut path = path.to_path_buf();
+    // A chain ends; a loop of links is cut short.
+    for _ in 0..40 {
+        let Ok(target) = fs::read_link(&path) else {
+            break;
+        };
+        let folder = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        path = resolved(&folder.join(target));
+    }
+    path
+}
+
+/// The same path, or, when both exist, the same file on the same device.
+fn is_same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    a == b
+        || matches!((fs::metadata(a), fs::metadata(b)),
+            (Ok(a), Ok(b)) if a.dev() == b.dev() && a.ino() == b.ino())
 }
 
 /// The path the kernel would reach, so no spelling of it (`..`, a link, a
@@ -622,6 +664,39 @@ mod tests {
         ));
         assert!(!is_lokal_own(&home.join("work/notes.md")));
         assert!(!is_lokal_own(&home.join(".config/lokal-other/config")));
+        // The settings a link to a file elsewhere, as a dotfiles checkout
+        // makes them (#57): that file is Lokal's own, for a write and for a
+        // command alike.
+        let target = home.join("work/notes.txt");
+        fs::write(&target, "mode = manual\n").unwrap();
+        std::os::unix::fs::symlink(&target, config.join("config")).unwrap();
+        assert!(is_lokal_own(&target));
+        assert!(crate::protected::is_protected(&target));
+        // Another name for the same file, and a link that leads nowhere yet.
+        fs::hard_link(&target, home.join("work/draft.txt")).unwrap();
+        assert!(is_lokal_own(&home.join("work/draft.txt")));
+        std::os::unix::fs::symlink(home.join("work/later.md"), config.join("user.md")).unwrap();
+        assert!(is_lokal_own(&home.join("work/later.md")));
+        // A command that names it, however it uses it, asks on No, as one
+        // naming ~/.config/lokal does; one beside it doesn't.
+        let work = vec![home.join("work")];
+        let at = |name: &str| home.join("work").join(name).display().to_string();
+        for command in [
+            format!("echo mode = auto >> {}", at("notes.txt")),
+            format!("perl -pi -e s/manual/auto/ {}", at("notes.txt")),
+            format!("mv {} {}", at("notes.txt"), at("notes.bak")),
+            format!("ln {} {}", at("notes.txt"), at("copy.txt")),
+            format!("sed -i s/a/b/ {}", at("draft.txt")),
+            format!("echo mode = auto >> {}", at("note?.txt")),
+            format!("cp /dev/null {}", at("later*")),
+        ] {
+            assert!(
+                !crate::allowlist::opens_on_yes(&command, &work),
+                "{command}"
+            );
+        }
+        let beside = format!("perl -pi -e s/a/b/ {}", at("other.txt"));
+        assert!(crate::allowlist::opens_on_yes(&beside, &work));
         fs::remove_dir_all(&home).unwrap();
     }
 

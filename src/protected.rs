@@ -33,10 +33,14 @@ const MORE: &[&str] = &[
 
 /// Whether `path` is protected: on the lists above, in any case (a
 /// Windows drive under WSL ignores it), the person's settings hidden right
-/// in the home folder, `~/bin`, a bare repository's hooks, or a folder on
-/// the PATH, where a file could pass for a program.
+/// in the home folder, `~/bin`, a bare repository's hooks, a folder on the
+/// PATH, where a file could pass for a program, or one of Lokal's own
+/// files, wherever a link of theirs leads (#57).
 pub fn is_protected(path: &Path) -> bool {
     let path = config::resolved(path);
+    if config::is_lokal_own_resolved(&path) {
+        return true;
+    }
     let parts: Vec<String> = path
         .components()
         .filter_map(|part| match part {

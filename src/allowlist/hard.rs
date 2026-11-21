@@ -278,12 +278,14 @@ pub(super) fn is_hard(command: &str, here: &Path, folders: &[PathBuf]) -> bool {
     {
         return true;
     }
+    let own = config::own_targets();
     programs.iter().any(|program| {
         let hard = program
             .outputs
             .iter()
             .any(|output| output_is_hard(output, places.as_deref(), folders))
-            || program_is_hard(program, places.as_deref(), folders);
+            || program_is_hard(program, places.as_deref(), folders)
+            || names_lokals_own(program, places.as_deref(), &own);
         if whole {
             places = moved(program, places.take());
         }
@@ -692,6 +694,48 @@ fn protected_at(word: &str, places: Option<&[PathBuf]>) -> bool {
                         && protected::names().any(|name| glob_matches(&part, &name.to_lowercase())))
             })
     })
+}
+
+/// Whether a word of `program` names one of Lokal's own files, however the
+/// line uses it (#57): where a link takes the settings is as much Lokal's
+/// as `~/.config/lokal`, whose names `names_a_place_that_runs_later`
+/// catches. `own` is where each one keeps what it holds
+/// (`config::own_targets`). A glob counts when it could be one in its
+/// folder; with no place known, a relative word counts by its name.
+fn names_lokals_own(program: &Program, places: Option<&[PathBuf]>, own: &[PathBuf]) -> bool {
+    let could_be = |target: &PathBuf, name: &str| {
+        target
+            .file_name()
+            .is_some_and(|own| glob_matches(name, &own.to_string_lossy().to_lowercase()))
+    };
+    let own_name = |name: &str| own.iter().any(|target| could_be(target, name));
+    program
+        .words
+        .iter()
+        .map(String::as_str)
+        .chain(program.outputs.iter().map(|output| output.file.as_str()))
+        .filter_map(expanded)
+        .any(|path| {
+            let Some(name) = path.file_name().map(|n| n.to_string_lossy().to_lowercase()) else {
+                return false;
+            };
+            let bases: Vec<PathBuf> = match (path.is_absolute(), places) {
+                (true, _) => vec![PathBuf::new()],
+                (false, Some(places)) => places.to_vec(),
+                (false, None) => return own_name(&name),
+            };
+            bases.iter().any(|base| {
+                let full = base.join(&path);
+                if name.contains(['*', '?', '[']) {
+                    let folder = full.parent().map(config::resolved);
+                    own.iter().any(|target| {
+                        target.parent() == folder.as_deref() && could_be(target, &name)
+                    })
+                } else {
+                    config::is_lokal_own(&full)
+                }
+            })
+        })
 }
 
 /// find's starting points: the words before its expression, after the
