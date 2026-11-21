@@ -1,6 +1,6 @@
 # Cutting a tag builds Lokal and publishes it to download.guimadaleno.com
 # with the signed manifest every installed Lokal updates from. The
-# publishing is guimadaleno/base/release's action, the same for every app;
+# publishing is guimadaleno/download's action, the same for every app;
 # README.md there is the authority on the format, the keys and the rules.
 #
 # Every `v*` tag is a release: it reaches every installed copy, unasked.
@@ -69,7 +69,7 @@ jobs:
           awk -v head="## $version " 'index($0, head) == 1 { on = 1; next } on && /^## / { exit } on' \
             CHANGELOG.md | sed '/./,$!d' > out/notes/en.txt
 
-      # guimadaleno/base/release's action as of base's 86196c8 (release-v1.2.0's
+      # guimadaleno/download's publish/ as of 79b2307 (v1.4.1's
       # code, with the key handed to openssl through stdin), copied here
       # unchanged: a public repository can't use one from a private one.
       - name: Publish to download.guimadaleno.com
