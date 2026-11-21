@@ -28,14 +28,33 @@ pub struct Config {
     pub mcp: Vec<McpServer>,
 }
 
-/// An MCP server: `mcp.<name> = <command line>`, and optionally
-/// `mcp.<name>.tools = a, b` for the only tools of its the model gets.
+/// An MCP server: `mcp.<name> = <command line>`, or its address
+/// (`https://…`); optionally `mcp.<name>.tools = a, b` for the only tools
+/// of its the model gets, and for an address `mcp.<name>.header = Name:
+/// value`, sent with every request.
 #[derive(Clone, Debug, PartialEq)]
 pub struct McpServer {
     pub name: String,
-    /// The program and its arguments, split as a shell would.
+    /// The program and its arguments, split as a shell would, or the
+    /// address alone.
     pub command: Vec<String>,
     pub tools: Option<Vec<String>>,
+    /// A header for a server reached by its address: a token, as a rule.
+    pub header: Option<String>,
+}
+
+impl McpServer {
+    /// The address, for a server reached by one rather than started.
+    pub fn address(&self) -> Option<&str> {
+        match self.command.as_slice() {
+            [one] if is_address(one) => Some(one),
+            _ => None,
+        }
+    }
+}
+
+fn is_address(value: &str) -> bool {
+    value.starts_with("https://") || value.starts_with("http://")
 }
 
 /// The longest name a server may have: it starts every tool's name, which
@@ -115,6 +134,13 @@ fn parse(contents: &str, path: &str) -> Result<Config, String> {
     if let Some(server) = config.mcp.iter().find(|server| server.command.is_empty()) {
         return Err(text::mcp_tools_without_server(path, &server.name));
     }
+    if let Some(server) = config
+        .mcp
+        .iter()
+        .find(|server| server.header.is_some() && server.address().is_none())
+    {
+        return Err(text::mcp_header_without_address(path, &server.name));
+    }
     Ok(config)
 }
 
@@ -140,6 +166,7 @@ fn set_mcp(servers: &mut Vec<McpServer>, setting: &str, value: &str) -> Result<(
                 name: name.to_string(),
                 command: Vec::new(),
                 tools: None,
+                header: None,
             });
             servers.len() - 1
         }
@@ -148,10 +175,26 @@ fn set_mcp(servers: &mut Vec<McpServer>, setting: &str, value: &str) -> Result<(
     match field {
         None if !server.command.is_empty() => Err(text::mcp_set_twice(name)),
         None => {
-            server.command = words(value);
-            if server.command.is_empty() {
+            let command = words(value);
+            // Quoted or escaped, an address is one all the same.
+            if let Some(first) = command.first().filter(|first| is_address(first)) {
+                if command.len() > 1 {
+                    return Err(text::mcp_address_one_word(value));
+                }
+                check_address(first)?;
+            }
+            if command.is_empty() {
                 return Err(text::mcp_no_command(name));
             }
+            server.command = command;
+            Ok(())
+        }
+        Some("header") if server.header.is_some() => {
+            Err(text::mcp_set_twice(&format!("{name}.header")))
+        }
+        Some("header") => {
+            check_header(value)?;
+            server.header = Some(value.to_string());
             Ok(())
         }
         Some("tools") => {
@@ -166,6 +209,62 @@ fn set_mcp(servers: &mut Vec<McpServer>, setting: &str, value: &str) -> Result<(
         }
         Some(other) => Err(text::unknown_mcp_field(name, other)),
     }
+}
+
+/// An MCP server's address: one word, and plain HTTP only to this machine
+/// or the local network, so a token never crosses the internet unencrypted.
+fn check_address(address: &str) -> Result<(), String> {
+    if address.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(text::mcp_address_one_word(address));
+    }
+    let Some(rest) = address.strip_prefix("http://") else {
+        return Ok(());
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority.rsplit('@').next().unwrap_or_default();
+    let host = match host.strip_prefix('[') {
+        Some(inside) => inside.split(']').next().unwrap_or_default(),
+        None => host.split(':').next().unwrap_or_default(),
+    };
+    if is_local(host) {
+        Ok(())
+    } else {
+        Err(text::mcp_plain_http(address))
+    }
+}
+
+/// This machine or the local network: loopback, the private ranges, and
+/// link-local, where WSL reaches Windows.
+fn is_local(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback(),
+        Err(_) => false,
+    }
+}
+
+/// `Name: value`, with a name HTTP takes (RFC 9110's token) and a value
+/// with no control characters, which could start another header.
+fn check_header(header: &str) -> Result<(), String> {
+    let well_formed = header.split_once(':').is_some_and(|(name, value)| {
+        !name.is_empty()
+            && name.chars().all(is_token_char)
+            && !value.trim().is_empty()
+            && !value.chars().any(char::is_control)
+    });
+    if well_formed {
+        Ok(())
+    } else {
+        Err(text::BAD_MCP_HEADER.to_string())
+    }
+}
+
+/// A character of an HTTP token (RFC 9110, section 5.6.2).
+pub fn is_token_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c)
 }
 
 /// A value split as a shell would: quotes and a backslash keep a space in
@@ -352,11 +451,13 @@ mod tests {
                     name: "github".into(),
                     command: vec!["npx".into(), "-y".into(), "@scope/server github".into()],
                     tools: Some(vec!["create_issue".into(), "search_issues".into()]),
+                    header: None,
                 },
                 McpServer {
                     name: "fs-2".into(),
                     command: vec!["/opt/fs".into(), "--root".into(), "/srv".into()],
                     tools: None,
+                    header: None,
                 },
             ]
         );
@@ -376,6 +477,76 @@ mod tests {
                 "{error}"
             );
         }
+    }
+
+    #[test]
+    fn reads_a_server_reached_by_its_address() {
+        let config = parse(
+            "mcp.docs.header = Authorization: Bearer abc\n\
+             mcp.docs = https://mcp.example.com/mcp?key=1\n\
+             mcp.local = http://127.0.0.1:8080/mcp\n\
+             mcp.host = http://[::1]:9/mcp\n\
+             mcp.wsl = http://172.20.0.1:3000\n",
+            "config",
+        )
+        .unwrap();
+        let docs = &config.mcp[0];
+        assert_eq!(docs.address(), Some("https://mcp.example.com/mcp?key=1"));
+        assert_eq!(docs.header.as_deref(), Some("Authorization: Bearer abc"));
+        assert!(
+            config.mcp[1..]
+                .iter()
+                .all(|server| server.address().is_some())
+        );
+        // A command is never an address, even one that names one.
+        let config = parse("mcp.x = curl https://example.com", "config").unwrap();
+        assert_eq!(config.mcp[0].address(), None);
+    }
+
+    #[test]
+    fn a_wrong_address_or_header_says_what_and_where() {
+        let error = |contents: &str| parse(contents, "config").unwrap_err();
+        for plain in [
+            "http://example.com/mcp",
+            "http://192.0.2.1/mcp",
+            "http://user@203.0.113.9:80",
+            "http://127.0.0.1.example.com/",
+        ] {
+            assert!(
+                error(&format!("mcp.a = {plain}")).contains("only to this machine"),
+                "{plain}"
+            );
+        }
+        assert!(error("mcp.a = https://a.example/ x").contains("one word"));
+        // Quoted or escaped, an address is still checked.
+        for hidden in [
+            "\"http://example.com/mcp\"",
+            "'http://example.com/mcp'",
+            "http\\://example.com/mcp",
+        ] {
+            let error = error(&format!("mcp.a = {hidden}"));
+            assert!(error.contains("only to this machine"), "{hidden}: {error}");
+        }
+        for header in [
+            "Bearer abc",
+            "Bad Name: x",
+            "X-Key:",
+            "X-Key: a\u{1b}b",
+            ": x",
+        ] {
+            let error = error(&format!(
+                "mcp.a = https://a.example\nmcp.a.header = {header}"
+            ));
+            assert!(error.contains("`Name: value`"), "{header}: {error}");
+        }
+        assert!(
+            error("mcp.a = https://a.example\nmcp.a.header = A: 1\nmcp.a.header = B: 2")
+                .contains("`mcp.a.header` is set twice.")
+        );
+        assert!(
+            error("mcp.a = npx server\nmcp.a.header = A: 1")
+                .contains("`mcp.a.header` is only for a server reached by its address")
+        );
     }
 
     #[test]

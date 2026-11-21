@@ -1,7 +1,8 @@
-//! One MCP server: its process, and the JSON-RPC lines between it and
-//! Lokal on its stdin and stdout, in either era of the protocol.
+//! One MCP server and the JSON-RPC between it and Lokal, in either era of
+//! the protocol: a process Lokal started, a message a line on its stdin
+//! and stdout, or an address, a message a POST (`http.rs`).
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::process::CommandExt;
@@ -15,8 +16,13 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use super::http::{self, Http, Param};
 use crate::spinner::Spinner;
 use crate::{interrupt, keys, shell, system, text};
+
+/// A message from the server, or why the answer to a request (its id)
+/// won't come.
+pub(super) type Reply = Result<Value, (u64, String)>;
 
 /// Sent with `initialize`: the newest revision that starts with it.
 const LEGACY_VERSION: &str = "2025-11-25";
@@ -26,7 +32,7 @@ const LEGACY_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "20
 /// The stateless revision: no `initialize`, and `_meta` on every request.
 const MODERN_VERSION: &str = "2026-07-28";
 /// The longest line a server may send; a result with an image fits.
-const LINE_MOST: u64 = 32 * 1024 * 1024;
+pub(super) const LINE_MOST: u64 = 32 * 1024 * 1024;
 /// How long a server may take to answer the first request: `npx` may
 /// fetch its package first.
 const START_TIME: Duration = Duration::from_secs(60);
@@ -46,7 +52,7 @@ const STDERR_SETTLE: Duration = Duration::from_millis(300);
 /// The most servers whose processes a signal handler can end.
 const GROUPS_MOST: usize = 64;
 /// JSON-RPC's code for a method the other end doesn't have.
-const NO_SUCH_METHOD: i64 = -32601;
+pub(super) const NO_SUCH_METHOD: i64 = -32601;
 
 /// Which revision of the protocol a server speaks.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -64,19 +70,41 @@ pub enum Era {
 static GROUPS: [AtomicI32; GROUPS_MOST] = [const { AtomicI32::new(0) }; GROUPS_MOST];
 
 pub struct Client {
+    wire: Wire,
+    replies: Receiver<Reply>,
+    /// The id of the request waiting for its answer, 0 while none does:
+    /// only that is passed on, so a server can't fill Lokal's memory with
+    /// answers no one asked for.
+    awaited: Arc<AtomicU64>,
+    era: Era,
+    /// The revision agreed on, which goes with every request over HTTP.
+    version: &'static str,
+    next_id: u64,
+    /// Over HTTP in the 2026-07-28 era: the arguments each tool wants as
+    /// headers too, by the tool's name.
+    params: HashMap<String, Vec<Param>>,
+    /// Tools left out for a header mark that revision doesn't allow.
+    invalid: Vec<String>,
+    /// A call is under way, so Esc stops what it waits for: a new
+    /// session's start too, which has a time limit of its own.
+    in_call: bool,
+}
+
+/// How Lokal reaches a server.
+enum Wire {
+    /// A process it started: a JSON message a line on its stdin and stdout.
+    Process(Process),
+    /// Its address: a POST a message.
+    Http(Http),
+}
+
+struct Process {
     child: Child,
     /// Lines for the server's stdin, which a thread of their own writes:
     /// a server that stops reading can't hang a turn past Esc. Shared with
     /// the reader, which answers pings; None once closed, which ends the
     /// writer and so closes the stdin.
     lines: Arc<Mutex<Option<Sender<String>>>>,
-    replies: Receiver<Value>,
-    /// The id of the request waiting for its answer, 0 while none does:
-    /// the reader passes on only that, so a server can't fill Lokal's
-    /// memory with answers no one asked for.
-    awaited: Arc<AtomicU64>,
-    era: Era,
-    next_id: u64,
     stderr: Arc<Mutex<VecDeque<String>>>,
     /// The thread keeping `stderr`, done once the server closed it.
     stderr_reader: Option<thread::JoinHandle<()>>,
@@ -164,16 +192,39 @@ impl Client {
             let kept = Arc::clone(&stderr);
             thread::spawn(move || keep_stderr(output, &kept))
         });
-        let mut client = Client {
+        let process = Process {
             child,
             lines,
-            replies,
-            awaited,
-            era: Era::Legacy,
-            next_id: 1,
             stderr,
             stderr_reader,
             ended: false,
+        };
+        Client::agreed(Wire::Process(process), replies, awaited)
+    }
+
+    /// Reaches the server at `address`, with `header` on every request, and
+    /// agrees on the protocol with it.
+    pub fn reach(name: &str, address: &str, header: Option<String>) -> Result<Client, String> {
+        let (sender, replies) = mpsc::sync_channel(1);
+        let http = Http::new(name, address, header, sender)?;
+        Client::agreed(Wire::Http(http), replies, Arc::new(AtomicU64::new(0)))
+    }
+
+    fn agreed(
+        wire: Wire,
+        replies: Receiver<Reply>,
+        awaited: Arc<AtomicU64>,
+    ) -> Result<Client, String> {
+        let mut client = Client {
+            wire,
+            replies,
+            awaited,
+            era: Era::Legacy,
+            version: LEGACY_VERSION,
+            next_id: 1,
+            params: HashMap::new(),
+            invalid: Vec::new(),
+            in_call: false,
         };
         match client.agree() {
             Ok(()) => Ok(client),
@@ -192,6 +243,8 @@ impl Client {
     /// every start on the many servers that answer nothing before
     /// `initialize`.
     fn agree(&mut self) -> Result<(), Failure> {
+        self.era = Era::Legacy;
+        self.version = LEGACY_VERSION;
         let params = json!({
             "protocolVersion": LEGACY_VERSION,
             "capabilities": {},
@@ -200,14 +253,16 @@ impl Client {
         match self.request("initialize", params, Some(START_TIME)) {
             Ok(result) => {
                 let version = result["protocolVersion"].as_str().unwrap_or_default();
-                if !LEGACY_VERSIONS.contains(&version) {
+                let Some(agreed) = LEGACY_VERSIONS.iter().find(|known| **known == version) else {
                     return Err(Failure::Refused(text::mcp_unknown_version(version)));
-                }
+                };
+                self.version = agreed;
                 self.notify("notifications/initialized");
                 Ok(())
             }
             Err(Failure::Refused(_)) => {
                 self.era = Era::Modern;
+                self.version = MODERN_VERSION;
                 let result = self.request("server/discover", json!({}), Some(ANSWER_TIME))?;
                 let supported = result["supportedVersions"].as_array();
                 if supported.is_some_and(|versions| versions.iter().any(|v| v == MODERN_VERSION)) {
@@ -223,7 +278,9 @@ impl Client {
         }
     }
 
-    /// The tools the server lists, page after page.
+    /// The tools the server lists, page after page. Over HTTP in the
+    /// 2026-07-28 era, a tool whose header marks that revision doesn't allow
+    /// is left out, as it asks (`invalid` says which).
     pub fn list_tools(&mut self) -> Result<Vec<Value>, Failure> {
         let mut tools = Vec::new();
         let mut cursor: Option<String> = None;
@@ -239,22 +296,65 @@ impl Client {
                 _ => break,
             }
         }
+        if matches!(self.wire, Wire::Http(_)) && self.era == Era::Modern {
+            tools.retain(|tool| {
+                let name = tool["name"].as_str().unwrap_or_default().to_string();
+                match http::params_of(&tool["inputSchema"]) {
+                    Some(params) => {
+                        self.params.insert(name, params);
+                        true
+                    }
+                    None => {
+                        self.invalid.push(name);
+                        false
+                    }
+                }
+            });
+        }
         Ok(tools)
+    }
+
+    /// The tools left out for a header mark the protocol doesn't allow.
+    pub fn invalid(&self) -> &[String] {
+        &self.invalid
     }
 
     /// Calls a tool, for as long as it takes; Esc or Ctrl+C cancels it.
     pub fn call_tool(&mut self, name: &str, arguments: &Value) -> Result<Value, Failure> {
         let _keys = keys::KeyWatch::start();
-        self.request(
+        self.in_call = true;
+        let reply = self.request(
             "tools/call",
             json!({"name": name, "arguments": arguments}),
             None,
-        )
+        );
+        self.in_call = false;
+        reply
     }
 
     /// Sends a request and waits for its answer, until `time` passes when
-    /// there's a limit, or the person stops it when there isn't.
+    /// there's a limit, or the person stops it when there isn't. A server
+    /// reached by its address that dropped the session gets a new one, and
+    /// the request again, once.
     fn request(
+        &mut self,
+        method: &str,
+        params: Value,
+        time: Option<Duration>,
+    ) -> Result<Value, Failure> {
+        let reply = self.request_once(method, params.clone(), time);
+        let dropped = match &self.wire {
+            Wire::Http(http) => http.take_dropped(),
+            Wire::Process(_) => false,
+        };
+        if dropped && method != "initialize" && matches!(reply, Err(Failure::Lost(_))) {
+            self.agree()?;
+            return self.request_once(method, params, time);
+        }
+        reply
+    }
+
+    fn request_once(
         &mut self,
         method: &str,
         mut params: Value,
@@ -269,10 +369,19 @@ impl Client {
                 "io.modelcontextprotocol/clientInfo": client_info(),
             });
         }
+        let headers = self.headers(method, &params);
         let message = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         self.awaited.store(id, Ordering::SeqCst);
-        if !self.send(&message) {
-            return Err(Failure::Lost(text::MCP_ENDED.to_string()));
+        let pings = (self.era == Era::Legacy).then(|| self.headers("", &Value::Null));
+        let sent = match &mut self.wire {
+            Wire::Process(process) => queue_line(&process.lines, &message)
+                .then_some(())
+                .ok_or_else(|| text::MCP_ENDED.to_string()),
+            Wire::Http(http) => http.post(&message, &headers, id, &self.awaited, pings),
+        };
+        if let Err(why) = sent {
+            self.awaited.store(0, Ordering::SeqCst);
+            return Err(Failure::Lost(why));
         }
         let started = Instant::now();
         // A call can take long: the spinner shows it's still going.
@@ -283,6 +392,27 @@ impl Client {
             spinner.clear();
         }
         reply
+    }
+
+    /// What goes with a message over HTTP: the revision, and in the
+    /// 2026-07-28 one the method, the tool's name and the arguments it
+    /// wants as headers. Nothing goes over stdio.
+    fn headers(&self, method: &str, params: &Value) -> Vec<(String, String)> {
+        if matches!(self.wire, Wire::Process(_)) {
+            return Vec::new();
+        }
+        let mut headers = vec![("MCP-Protocol-Version".to_string(), self.version.to_string())];
+        if self.era == Era::Modern {
+            headers.push(("Mcp-Method".to_string(), method.to_string()));
+            if method == "tools/call" {
+                let name = params["name"].as_str().unwrap_or_default();
+                headers.push(("Mcp-Name".to_string(), http::encoded(name)));
+                if let Some(marked) = self.params.get(name) {
+                    headers.extend(http::param_headers(marked, &params["arguments"]));
+                }
+            }
+        }
+        headers
     }
 
     fn wait_for(
@@ -297,19 +427,19 @@ impl Client {
             if let Some(spinner) = spinner.as_deref_mut() {
                 spinner.tick();
             }
-            if time.is_none() && interrupt::happened() {
-                self.send(&json!({
-                    "jsonrpc": "2.0",
-                    "method": "notifications/cancelled",
-                    "params": {"requestId": id, "reason": text::STOPPED},
-                }));
+            if (time.is_none() || self.in_call) && interrupt::happened() {
+                self.cancel(id);
                 return Err(Failure::Stopped);
             }
             if time.is_some_and(|time| started.elapsed() > time) {
+                if let Wire::Http(http) = &mut self.wire {
+                    http.give_up();
+                }
                 return Err(Failure::Lost(text::mcp_no_answer(method)));
             }
             match self.replies.recv_timeout(Duration::from_millis(50)) {
-                Ok(reply) if reply["id"] == id => return answer(reply),
+                Ok(Ok(reply)) if reply["id"] == id => return answer(reply),
+                Ok(Err((from, why))) if from == id => return Err(Failure::Lost(why)),
                 // An answer to a request given up on.
                 Ok(_) | Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
@@ -319,22 +449,53 @@ impl Client {
         }
     }
 
+    /// Tells the server the person stopped request `id`. Over HTTP the
+    /// stream is closed too, which is all the 2026-07-28 revision takes.
+    fn cancel(&mut self, id: u64) {
+        let cancelled = json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": {"requestId": id, "reason": text::STOPPED},
+        });
+        let headers = self.headers("notifications/cancelled", &Value::Null);
+        match &mut self.wire {
+            Wire::Process(process) => {
+                queue_line(&process.lines, &cancelled);
+            }
+            Wire::Http(http) => {
+                http.give_up();
+                if self.era == Era::Legacy {
+                    http.notify(&cancelled, &headers, false, || false);
+                }
+            }
+        }
+    }
+
     fn notify(&mut self, method: &str) {
-        self.send(&json!({"jsonrpc": "2.0", "method": method}));
+        let message = json!({"jsonrpc": "2.0", "method": method});
+        let headers = self.headers(method, &Value::Null);
+        match &self.wire {
+            Wire::Process(process) => {
+                queue_line(&process.lines, &message);
+            }
+            Wire::Http(http) => {
+                let stoppable = self.in_call;
+                http.notify(&message, &headers, true, || {
+                    stoppable && interrupt::happened()
+                });
+            }
+        }
     }
 
-    /// One line for the server's stdin, never waiting on it. False once
-    /// it's closed or gone.
-    fn send(&self, message: &Value) -> bool {
-        queue_line(&self.lines, message)
-    }
-
-    /// `message`, with the last lines the server wrote to stderr, which
-    /// usually say why it failed: read once the server closed its stderr,
-    /// or after `STDERR_SETTLE` if it's still open.
+    /// `message`, with the last lines a server Lokal started wrote to
+    /// stderr, which usually say why it failed: read once the server closed
+    /// its stderr, or after `STDERR_SETTLE` if it's still open.
     pub fn with_stderr(&self, message: &str) -> String {
+        let Wire::Process(process) = &self.wire else {
+            return message.to_string();
+        };
         let started = Instant::now();
-        while self
+        while process
             .stderr_reader
             .as_ref()
             .is_some_and(|reader| !reader.is_finished())
@@ -342,7 +503,7 @@ impl Client {
         {
             thread::sleep(Duration::from_millis(5));
         }
-        let tail = self
+        let tail = process
             .stderr
             .lock()
             .map(|tail| tail.clone())
@@ -351,27 +512,42 @@ impl Client {
         text::mcp_with_stderr(message, &lines)
     }
 
-    /// Closes its stdin, once what's queued is written, which asks the
-    /// server to end.
+    /// Asks the server to end: a process by closing its stdin, once what's
+    /// queued is written; a session over HTTP with a DELETE.
     pub fn close(&mut self) {
-        if let Ok(mut lines) = self.lines.lock() {
-            lines.take();
+        let headers = self.headers("", &Value::Null);
+        match &mut self.wire {
+            Wire::Process(process) => {
+                if let Ok(mut lines) = process.lines.lock() {
+                    lines.take();
+                }
+            }
+            Wire::Http(http) => http.close(&headers),
         }
     }
 
-    /// Whether the server has ended; once it has, it's reaped and its group
-    /// no longer signalled.
+    /// Whether the server, or the curl reaching it, has ended; once it has,
+    /// it's reaped and no longer signalled.
     pub fn has_ended(&mut self) -> bool {
-        if !self.ended && !matches!(self.child.try_wait(), Ok(None)) {
-            self.ended = true;
-            unwatch_group(self.child.id() as i32);
+        match &mut self.wire {
+            Wire::Process(process) => {
+                if !process.ended && !matches!(process.child.try_wait(), Ok(None)) {
+                    process.ended = true;
+                    unwatch_group(process.child.id() as i32);
+                }
+                process.ended
+            }
+            Wire::Http(http) => http.has_ended(),
         }
-        self.ended
     }
 
-    /// A signal to the server and everything it started.
+    /// A signal to the server and everything it started, or to the curl
+    /// reaching it.
     pub fn signal(&self, signal: libc::c_int) {
-        shell::signal_group(self.child.id(), signal);
+        match &self.wire {
+            Wire::Process(process) => shell::signal_group(process.child.id(), signal),
+            Wire::Http(http) => http.signal(signal),
+        }
     }
 }
 
@@ -463,7 +639,7 @@ extern "C" fn on_ending(signal: libc::c_int) {
     }
 }
 
-fn watch_group(pid: i32) {
+pub(super) fn watch_group(pid: i32) {
     for group in &GROUPS {
         if group
             .compare_exchange(0, pid, Ordering::SeqCst, Ordering::SeqCst)
@@ -474,7 +650,7 @@ fn watch_group(pid: i32) {
     }
 }
 
-fn unwatch_group(pid: i32) {
+pub(super) fn unwatch_group(pid: i32) {
     for group in &GROUPS {
         let _ = group.compare_exchange(pid, 0, Ordering::SeqCst, Ordering::SeqCst);
     }
@@ -485,7 +661,7 @@ fn unwatch_group(pid: i32) {
 /// left. It ends with the server, or at a line over `LINE_MOST`.
 fn read_messages(
     stdout: ChildStdout,
-    replies: &SyncSender<Value>,
+    replies: &SyncSender<Reply>,
     lines: &Mutex<Option<Sender<String>>>,
     awaited: &AtomicU64,
 ) {
@@ -522,7 +698,7 @@ fn read_messages(
                     .as_u64()
                     .is_some_and(|id| id != 0 && id == awaited.load(Ordering::SeqCst)) =>
             {
-                if replies.send(message).is_err() {
+                if replies.send(Ok(message)).is_err() {
                     return;
                 }
             }
@@ -625,7 +801,10 @@ mod tests {
     #[test]
     fn a_server_ended_with_lokal_is_no_longer_signalled() {
         let mut client = Client::start(&fake("legacy")).unwrap();
-        let pid = client.child.id() as i32;
+        let Wire::Process(process) = &client.wire else {
+            unreachable!()
+        };
+        let pid = process.child.id() as i32;
         let watched = || GROUPS.iter().any(|g| g.load(Ordering::SeqCst) == pid);
         assert!(watched());
         client.close();
@@ -634,6 +813,224 @@ mod tests {
             thread::sleep(Duration::from_millis(20));
         }
         assert!(!watched());
+    }
+
+    /// The fake server over HTTP, its address, and the file it logs what
+    /// it gets to; ended when dropped.
+    struct HttpFake {
+        child: Child,
+        address: String,
+        log: std::path::PathBuf,
+    }
+
+    impl Drop for HttpFake {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            let _ = std::fs::remove_file(&self.log);
+        }
+    }
+
+    fn http_fake(mode: &str) -> HttpFake {
+        static COUNT: AtomicU64 = AtomicU64::new(0);
+        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/mcp/fake_http_server.py");
+        let log = env::temp_dir().join(format!(
+            "lokal-mcp-http-{}-{}",
+            std::process::id(),
+            COUNT.fetch_add(1, Ordering::SeqCst)
+        ));
+        let mut child = Command::new("python3")
+            .arg(script)
+            .arg(mode)
+            .arg(&log)
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let port = line.trim().strip_prefix("PORT ").unwrap().to_string();
+        HttpFake {
+            child,
+            address: format!("http://127.0.0.1:{port}/mcp"),
+            log,
+        }
+    }
+
+    /// What the fake got, a request a line.
+    fn logged(fake: &HttpFake) -> Vec<Value> {
+        std::fs::read_to_string(&fake.log)
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    fn echo(client: &mut Client, words: &str) -> String {
+        let result = client.call_tool("echo", &json!({"text": words})).unwrap();
+        result["content"][0]["text"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn speaks_to_a_server_by_its_address_in_a_session() {
+        let fake = http_fake("legacy");
+        let mut client = Client::reach("test", &fake.address, None).unwrap();
+        assert_eq!(client.era(), Era::Legacy);
+        assert_eq!(client.list_tools().unwrap().len(), 3);
+        assert_eq!(echo(&mut client, "hi"), "hi");
+        client.close();
+        let started = Instant::now();
+        while !client.has_ended() && started.elapsed() < Duration::from_secs(5) {
+            thread::sleep(Duration::from_millis(20));
+        }
+        let log = logged(&fake);
+        let session = log[0]["body"]["method"] == "initialize";
+        assert!(session);
+        // Every message after initialize carries the session and the version.
+        for entry in &log[1..] {
+            assert!(entry["headers"]["mcp-session-id"].is_string(), "{entry}");
+            assert_eq!(entry["headers"]["mcp-protocol-version"], "2025-11-25");
+            assert_eq!(
+                entry["headers"]["accept"],
+                "application/json, text/event-stream"
+            );
+        }
+        assert_eq!(log.last().unwrap()["method"], "DELETE");
+    }
+
+    #[test]
+    fn an_answer_streamed_as_events_comes_after_a_ping_is_answered() {
+        let fake = http_fake("sse");
+        let mut client = Client::reach("test", &fake.address, None).unwrap();
+        assert_eq!(client.list_tools().unwrap().len(), 3);
+        assert_eq!(echo(&mut client, "hi"), "hi");
+        let pongs = logged(&fake)
+            .iter()
+            .filter(|entry| entry["body"]["id"] == "ping-1" && entry["body"]["result"] == json!({}))
+            .count();
+        // One for each request: initialize, tools/list, the call.
+        assert_eq!(pongs, 3);
+    }
+
+    #[test]
+    fn a_token_goes_in_a_header_and_never_on_a_command_line() {
+        let fake = http_fake("token");
+        let error = Client::reach("test", &fake.address, None).err().unwrap();
+        assert!(error.contains("401"), "{error}");
+        assert!(
+            error.contains("`mcp.test.header = Authorization: Bearer <token>`"),
+            "{error}"
+        );
+        let header = Some("Authorization: Bearer secret-token".to_string());
+        let mut client = Client::reach("test", &fake.address, header).unwrap();
+        let result = client.call_tool("argv", &json!({})).unwrap();
+        // The call's own curl runs as the server looks.
+        assert_eq!(
+            result["content"][0]["text"],
+            "curls: True, token in argv: False"
+        );
+        let refused = Client::reach(
+            "test",
+            &fake.address,
+            Some("Authorization: Bearer x".into()),
+        );
+        assert!(refused.err().unwrap().contains("refused the token"));
+    }
+
+    #[test]
+    fn a_session_the_server_dropped_starts_again() {
+        let fake = http_fake("expire");
+        let mut client = Client::reach("test", &fake.address, None).unwrap();
+        assert_eq!(echo(&mut client, "one"), "one");
+        assert_eq!(echo(&mut client, "two"), "two");
+        let initializes = logged(&fake)
+            .iter()
+            .filter(|entry| entry["body"]["method"] == "initialize")
+            .count();
+        assert_eq!(initializes, 2);
+    }
+
+    #[test]
+    fn the_stateless_era_sends_its_headers_and_leaves_out_bad_marks() {
+        let fake = http_fake("modern");
+        let mut client = Client::reach("test", &fake.address, None).unwrap();
+        assert_eq!(client.era(), Era::Modern);
+        let tools = client.list_tools().unwrap();
+        let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+        assert_eq!(names, ["echo", "argv", "slow", "where"]);
+        assert_eq!(client.invalid(), ["broken"]);
+        for region in ["us-west1", "Hello, 世界", " padded "] {
+            let result = client
+                .call_tool("where", &json!({"region": region}))
+                .unwrap();
+            assert_eq!(result["content"][0]["text"], format!("region {region}"));
+        }
+        assert_eq!(echo(&mut client, "hi"), "hi");
+    }
+
+    #[test]
+    fn a_redirect_is_never_followed() {
+        let fake = http_fake("redirect");
+        let error = Client::reach("test", &fake.address, None).err().unwrap();
+        assert!(
+            error.contains("redirect to https://elsewhere.example/mcp"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_request_given_up_on_closes_its_stream() {
+        let fake = http_fake("sse");
+        let mut client = Client::reach("test", &fake.address, None).unwrap();
+        let failure = client.request(
+            "tools/call",
+            json!({"name": "slow", "arguments": {}}),
+            Some(Duration::from_millis(1500)),
+        );
+        assert!(matches!(failure, Err(Failure::Lost(_))));
+        let started = Instant::now();
+        while !logged(&fake).iter().any(|entry| entry["method"] == "GONE")
+            && started.elapsed() < Duration::from_secs(5)
+        {
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert!(logged(&fake).iter().any(|entry| entry["method"] == "GONE"));
+        assert_eq!(echo(&mut client, "after"), "after");
+    }
+
+    #[test]
+    fn a_flood_of_pings_starts_one_curl_at_a_time() {
+        let fake = http_fake("flood");
+        let mut client = Client::reach("test", &fake.address, None).unwrap();
+        let started = Instant::now();
+        assert_eq!(echo(&mut client, "hi"), "hi");
+        assert!(started.elapsed() < Duration::from_secs(2));
+        // 30 pings came at once, with the answer right after them: one is
+        // answered at most, and that one is given up on with the request.
+        thread::sleep(Duration::from_millis(500));
+        let answered = logged(&fake)
+            .iter()
+            .filter(|entry| entry["body"]["result"] == json!({}))
+            .count();
+        assert!(answered <= 1, "{answered} pings answered");
+    }
+
+    #[test]
+    fn a_server_that_holds_a_notification_holds_the_start_only_so_long() {
+        let fake = http_fake("hangnote");
+        let started = Instant::now();
+        let mut client = Client::reach("test", &fake.address, None).unwrap();
+        assert!(started.elapsed() < http::NOTICE_TIME + Duration::from_secs(2));
+        assert_eq!(echo(&mut client, "hi"), "hi");
+    }
+
+    #[test]
+    fn an_address_no_one_answers_says_why() {
+        let error = Client::reach("test", "http://127.0.0.1:9/mcp", None)
+            .err()
+            .unwrap();
+        assert!(error.contains("couldn't reach it: curl:"), "{error}");
     }
 
     #[test]

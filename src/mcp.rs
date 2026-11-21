@@ -3,6 +3,7 @@
 //! ended with Lokal.
 
 mod client;
+mod http;
 mod seen;
 
 use std::thread::{self, JoinHandle};
@@ -72,9 +73,12 @@ impl Mcp {
         let starting = servers
             .iter()
             .map(|server| {
-                let command = server.command.clone();
+                let setup = server.clone();
                 let start = thread::spawn(move || {
-                    let mut client = Client::start(&command)?;
+                    let mut client = match setup.address() {
+                        Some(address) => Client::reach(&setup.name, address, setup.header.clone())?,
+                        None => Client::start(&setup.command)?,
+                    };
                     match client.list_tools() {
                         Ok(tools) => Ok((client, tools)),
                         Err(failure) => Err(client.with_stderr(&failure.message())),
@@ -182,7 +186,13 @@ impl Mcp {
         input: &mut Input,
     ) -> Server {
         let index = self.servers.len();
-        let (tools, notes) = offered(setup, listed, index, &self.tools);
+        let (tools, mut notes) = offered(setup, listed, index, &self.tools);
+        notes.extend(
+            client
+                .invalid()
+                .iter()
+                .map(|tool| text::mcp_bad_header_mark(&setup.name, tool)),
+        );
         // Every session, reviewed or not: a name mistyped in `.tools`.
         for note in &notes {
             layout::print_fitted(note, style::gray);
@@ -431,6 +441,7 @@ mod tests {
             name: "files".into(),
             command: vec!["x".into()],
             tools: tools.map(|tools| tools.iter().map(|t| t.to_string()).collect()),
+            header: None,
         }
     }
 

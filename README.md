@@ -103,6 +103,18 @@ changes what it tells the model about its tools, Lokal shows you all of it
 and asks before the model gets them. Every call asks too, and `/info` shows
 what each server's tools cost in context.
 
+A server on the network goes by its address, with a header for its token
+if it wants one:
+
+```
+mcp.docs = https://mcp.example.com/mcp
+mcp.docs.header = Authorization: Bearer <token>
+```
+
+Lokal reaches it through your system's curl, and the token never shows on
+a command line. Plain `http://` works only for this computer or your local
+network. Lokal doesn't do the browser sign-in (OAuth) some servers ask for.
+
 ## What it won't do
 
 - Run a command that may change something without your yes. Which commands
@@ -116,8 +128,9 @@ what each server's tools cost in context.
   `.mcp.json` starts nothing.
 - Take a key you pressed before the question as its answer.
 - Send anything anywhere on its own, except one update check a day, which
-  `updates = off` turns off. `/feedback` sends a report only when you write
-  it, see all of it and choose Send.
+  `updates = off` turns off, and what goes to an MCP server you set by its
+  address. `/feedback` sends a report only when you write it, see all of it
+  and choose Send.
 - Grow on your disk. It keeps the last conversation only.
 
 ## Made by

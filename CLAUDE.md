@@ -69,8 +69,9 @@ of MCP servers the person sets up. One binary, few dependencies.
   redrawing on every turn is noise to whoever doesn't read it. The
   conversation and the scrollback keep none of it. Reasoning sent inside
   `<think>` never shows (`src/answer.rs`).
-- **Send anything on its own beyond the update check.** The model server is
-  the only other address it talks to on its own. The check is one GET a day,
+- **Send anything on its own beyond the update check.** The model server,
+  and an MCP server the person set by its address, are the only other
+  addresses it talks to on its own. The check is one GET a day,
   carries nothing that identifies the machine, and `updates = off` switches it
   off.
 - **Send a report the person hasn't seen whole.** `/feedback` goes to

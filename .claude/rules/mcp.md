@@ -9,7 +9,8 @@ paths:
 ## Let an MCP server act without a yes, or give the model its tools before the person has seen them whole
 
 - **Servers are set in the person's settings only** (`mcp.<name> =
-  <command line>`, optionally `mcp.<name>.tools = a, b`), never a
+  <command line>` or its address, optionally `mcp.<name>.tools = a, b`,
+  and for an address `mcp.<name>.header = Name: value`), never a
   project's `.mcp.json`, or a cloned repository could start programs.
   The settings are Lokal's own, so the model can't add one.
 - **A server starts in the home folder, never the project's:** a
@@ -46,8 +47,43 @@ paths:
   image to a model that sees, anything else a line saying so. A server's
   words on screen, its last stderr lines included, show their control
   characters as marks.
-- **Stdio and tools only:** no HTTP (TLS and OAuth, and an address Lokal
-  would talk to), no sampling (a server writing to the person's model),
+- **A server reached by its address goes through the system's curl**
+  (#54, `src/mcp/http.rs`), as updates do: Lokal carries no TLS of its
+  own. One curl a message, in a session of its own.
+  - **The address, the headers and the body reach curl on its stdin**
+    (`--config -`), never its command line, which other users can read; a
+    test fails if a curl running a call has the token there. `-q` keeps
+    the person's `.curlrc` out, only http and https are spoken, a
+    redirect is never followed, since the token would go with it, and
+    `globoff` keeps `{a,b}` in an address from making it two. A line
+    break in any value is refused, since it would start another option;
+    a session id is kept only as visible ASCII for that reason.
+  - **Plain `http://` only to this machine or the local network**
+    (`config::check_address`, however the address is quoted or escaped):
+    a token sent with it can be read on the way. No proxy for it either
+    (`noproxy`), which would carry the token on in the clear.
+  - **A server can't have Lokal start curl after curl, or hold it:** what
+    isn't a request (a notification, the answer to a ping, the DELETE)
+    takes at most 10 s, and its curl is signalled with the servers' as
+    Lokal quits. Pings are answered one at a time, the others left, and
+    given up on with their request. Esc stops whatever a call waits for,
+    a new session's start included.
+  - **The token is the person's `mcp.<name>.header`,** on every request,
+    never in the address's query. No OAuth (a browser, a local callback,
+    tokens to keep and refresh): a server that needs it is left to a
+    stdio bridge that signs in, started as a command. A 401 or 403 says
+    what to set.
+  - **The 2025 revisions:** the session the server gives at `initialize`
+    and `MCP-Protocol-Version` go with every message, a ping on an event
+    stream is answered, a 404 inside a session starts a new one and sends
+    the request again, once, and quitting ends the session with a DELETE.
+  - **2026-07-28:** `Mcp-Method`, `Mcp-Name` and `Mcp-Param-*` for the
+    arguments a tool marks `x-mcp-header`, in Base64 where the spec says.
+    A tool whose mark breaks its rules is left out, with a line saying so.
+    Esc closes the stream, which is how that revision cancels.
+  - **Not spoken:** the GET stream, resuming a stream, and the old HTTP+SSE
+    transport (2024-11-05). An answer is at most 32 MB, as a line is.
+- **Tools only:** no sampling (a server writing to the person's model),
   no resources or prompts, and a server's `instructions` aren't passed
   on. Both eras: `initialize` first, then `server/discover` with `_meta`
   (2026-07-28) when that fails.

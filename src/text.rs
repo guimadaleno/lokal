@@ -128,6 +128,10 @@ pub const SETTINGS_TEMPLATE: &str = "\
 # mcp.files = npx -y @modelcontextprotocol/server-filesystem /home/you/notes
 # Only some of a server's tools, to save context:
 # mcp.files.tools = read_text_file, list_directory
+# Or a server reached by its address, with a header to send it, such as a
+# token. Plain http only to this computer or your local network:
+# mcp.docs = https://mcp.example.com/mcp
+# mcp.docs.header = Authorization: Bearer <token>
 ";
 pub const SETTINGS_NEXT_START: &str = "Saved. It applies the next time Lokal starts.";
 
@@ -966,6 +970,59 @@ pub fn mcp_same_name(server: &str, name: &str) -> String {
     )
 }
 pub const MCP_ENDED: &str = "the server ended.";
+pub const MCP_NO_CURL: &str =
+    "curl isn't installed, and Lokal reaches a server by its address through it.";
+pub const MCP_LINE_BREAK: &str = "a header or the address holds a line break.";
+pub const MCP_OTHER_ANSWER: &str = "it answered another request.";
+pub const MCP_NOT_JSON: &str = "its answer isn't JSON.";
+pub const MCP_TOO_LONG: &str = "its answer is over 32 MB.";
+pub const MCP_STREAM_ENDED: &str = "it closed its answer before it was done.";
+pub const MCP_SESSION_DROPPED: &str = "it ended the session.";
+
+pub fn mcp_unreachable(reason: &str) -> String {
+    format!("couldn't reach it: {reason}")
+}
+
+pub fn mcp_wants_token(name: &str, has_header: bool) -> String {
+    if has_header {
+        format!("it answered 401: it refused the token in `mcp.{name}.header`.")
+    } else {
+        format!(
+            "it answered 401: it wants a token. Add `mcp.{name}.header = Authorization: Bearer <token>` in /config."
+        )
+    }
+}
+
+pub fn mcp_forbidden(name: &str, has_header: bool) -> String {
+    if has_header {
+        format!("it answered 403: the token in `mcp.{name}.header` doesn't allow this.")
+    } else {
+        format!(
+            "it answered 403: it doesn't allow this without a token. Add `mcp.{name}.header = Authorization: Bearer <token>` in /config."
+        )
+    }
+}
+
+pub fn mcp_redirect(location: &str) -> String {
+    format!(
+        "it answered with a redirect to {location}, which Lokal doesn't follow: if that's the server, set it as its address."
+    )
+}
+
+pub fn mcp_http_status(status: u16, words: &str) -> String {
+    let words: String = words.trim().chars().take(200).collect();
+    if words.is_empty() {
+        format!("it answered {status}.")
+    } else {
+        format!("it answered {status}: {words}")
+    }
+}
+
+pub fn mcp_bad_header_mark(server: &str, name: &str) -> String {
+    format!(
+        "The MCP server {server}'s tool {name} is left out: it asks for one of its arguments as a header in a way MCP doesn't allow (x-mcp-header)."
+    )
+}
 
 pub fn mcp_relative_program(program: &str) -> String {
     format!("`{program}` is a relative path: use an absolute one, or a program the PATH finds.")
@@ -1017,13 +1074,34 @@ pub fn mcp_no_command(name: &str) -> String {
 
 pub fn unknown_mcp_field(name: &str, field: &str) -> String {
     format!(
-        "`mcp.{name}.{field}` isn't a setting: an MCP server takes `mcp.{name}` and `mcp.{name}.tools`."
+        "`mcp.{name}.{field}` isn't a setting: an MCP server takes `mcp.{name}`, `mcp.{name}.tools` and `mcp.{name}.header`."
     )
 }
 
 pub fn mcp_tools_without_server(path: &str, name: &str) -> String {
-    format!("{path}: `mcp.{name}.tools` is set, but not `mcp.{name}`, the command that starts it.")
+    format!(
+        "{path}: `mcp.{name}.tools` is set, but not `mcp.{name}`, the command that starts it or its address."
+    )
 }
+
+pub fn mcp_header_without_address(path: &str, name: &str) -> String {
+    format!(
+        "{path}: `mcp.{name}.header` is only for a server reached by its address, as in `mcp.{name} = https://…`."
+    )
+}
+
+pub fn mcp_address_one_word(address: &str) -> String {
+    format!("`{address}` should be the server's address alone, one word with no spaces.")
+}
+
+pub fn mcp_plain_http(address: &str) -> String {
+    format!(
+        "`{address}`: plain http goes only to this machine or the local network, since a token sent with it could be read on the way. Use https://."
+    )
+}
+
+pub const BAD_MCP_HEADER: &str =
+    "a header is `Name: value`, as in `Authorization: Bearer <token>`.";
 
 pub fn bad_mail_setting(path: &str, line: usize) -> String {
     format!("{path}, line {line}: `mail` is auto, ask or off.")

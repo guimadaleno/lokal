@@ -33,7 +33,8 @@ paths:
 | `tools/remember.rs` | remember: a line added to user.md, or one swapped for it |
 | `tools/mcp.rs` | A call to an MCP server's tool: shown, asked, and what it gave as an output |
 | `mcp.rs` | The session's MCP servers: started, their tool lists shown to the person, offered, ended |
-| `mcp/client.rs` | One MCP server's process and the JSON-RPC with it, in both eras of the protocol |
+| `mcp/client.rs` | One MCP server and the JSON-RPC with it, in both eras of the protocol: a process Lokal started, or an address |
+| `mcp/http.rs` | A server reached by its address: a POST a message through curl, its answer JSON or an event stream, the headers each era asks for |
 | `mcp/seen.rs` | The tool lists the person has seen, a hash a server |
 | `tools/mail.rs` | list_sessions and mail, shown as steps |
 | `allowlist.rs` | Which commands run without asking, and which questions open on Yes |
