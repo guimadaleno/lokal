@@ -7,7 +7,7 @@ description: "Use it before and after a change that could move Lokal's size, sta
 
 | What | Measured |
 |---|---|
-| Release binary (static, stripped) | 3.11 MB (3,105,976 bytes), 3.1 MB on the page (0.12.0) |
+| Release binary (static, stripped) | 3.10 MB (3,101,880 bytes, as published), 3.1 MB on the page (0.12.0) |
 | Start to the prompt, server found | ~40 ms (0.8.1) |
 | Memory at the prompt | 2.4 MB (0.8.1) |
 | Auto's judge, a 27B model with reasoning off (Ollama 0.40.2) | 0.3–2 s a step; 6–22 s with reasoning; the conversation's prompt cache stays |
