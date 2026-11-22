@@ -1,8 +1,8 @@
 //! The release manifest every app updates from: what a `latest.json` says,
 //! whether to believe it, and whether it is newer.
 //!
-//! This file is guimadaleno/base's `release/client/release.rs`, copied into
-//! each app unchanged; `release/README.md` there is the format and the rules.
+//! This file is guimadaleno/download's `client/release.rs`, copied into
+//! each app unchanged; `README.md` there is the format and the rules.
 //! It is pure: fetching, hashing the downloads and putting them in place are
 //! the app's. What it decides is everything that comes before a single byte
 //! is fetched on the manifest's word.
@@ -209,7 +209,7 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
     text.chunks(2).map(|p| Some(digit(p[0])? << 4 | digit(p[1])?)).collect()
 }
 
-/// The vectors in guimadaleno/base's release/testdata/, which an app copies to
+/// The vectors in guimadaleno/download's testdata/, which an app copies to
 /// `tests/release/`. Every copy of this file reaches the same verdicts.
 #[cfg(test)]
 mod tests {

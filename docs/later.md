@@ -40,7 +40,7 @@ Decided, and kept here so they aren't undone:
   `curl -fsSLo lokal https://download.guimadaleno.com/lokal/<version>/lokal && chmod +x lokal && ./lokal --install`.
   A `curl … | sh` script would be a second artifact outside the signed
   release: swapped on the server, it runs anything, and no signature
-  notices. It would also be the installer program guimadaleno/base/release
+  notices. It would also be the installer program guimadaleno/download
   refuses. The page shows the file's SHA-256, from `SHA256SUMS`.
 - **Package managers** (Homebrew, AUR, `.deb`) only when people ask. Each is
   one more channel to keep, and each updates on its own. `update.rs`

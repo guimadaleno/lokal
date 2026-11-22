@@ -2,7 +2,7 @@
 # put the files in the app's bucket, put the manifest after them, and read it
 # all back from download.guimadaleno.com as an installed copy would.
 #
-#   - uses: guimadaleno/base/release/publish@release-v1.2.0
+#   - uses: guimadaleno/download/publish@v1.4.1
 #     with:
 #       app: molde
 #       version: 0.6.0

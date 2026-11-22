@@ -34,12 +34,12 @@ mod protected;
 mod queue;
 mod reasoning;
 mod recon;
-// guimadaleno/base/release's client/release.rs, copied unchanged: no formatting or
+// guimadaleno/download's client/release.rs, copied unchanged: no formatting or
 // lint fixes may touch its bytes.
 #[rustfmt::skip]
 #[allow(clippy::all)]
 mod release;
-// guimadaleno/base/issues' client/report.rs, copied unchanged, like release.rs.
+// guimadaleno/issues' client/report.rs, copied unchanged, like release.rs.
 #[rustfmt::skip]
 #[allow(clippy::all)]
 mod report;
