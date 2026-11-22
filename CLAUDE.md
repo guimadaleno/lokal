@@ -77,7 +77,7 @@ of MCP servers the person sets up. One binary, few dependencies.
   carries nothing that identifies the machine, and `updates = off` switches it
   off.
 - **Send a report the person hasn't seen whole.** `/feedback` goes to
-  guimadaleno/base/issues only when the person writes it, sees all of it, and
+  guimadaleno/issues only when the person writes it, sees all of it, and
   picks Send. The menu starts on Don't send. It sends kinds, never names:
   no server address, no model. **The conversation is never part of it,**
   since it can hold files and secrets the model read.
@@ -100,7 +100,7 @@ of MCP servers the person sets up. One binary, few dependencies.
   Studio says so.
 - **Simple code over clever code:** small modules with one job, short
   functions, plain names, no traits or generics where a function does, no
-  abstraction before a second real use. `stack-rust.md` does not apply here.
+  abstraction before a second real use. `gms-rust` does not apply here.
 - **Every word on screen lives in `src/text.rs`.** The voice is casual but
   precise, like a colleague, with no jokes and no emoji. Approval prompts,
   "Stopped." and errors stay plain.

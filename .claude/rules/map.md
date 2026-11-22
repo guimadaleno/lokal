@@ -54,8 +54,8 @@ paths:
 | `memory.rs` | The project's notes: LOKAL.md and AGENTS.md, from the git root down |
 | `recon.rs` | `/recon`: what the machine and the project have, gathered by Lokal itself |
 | `update.rs`, `install.rs` | Updating itself; `lokal --install` and `--uninstall` |
-| `release.rs` | guimadaleno/base/release's client, **copied unchanged** |
-| `report.rs` | guimadaleno/base/issues' client, **copied unchanged** |
+| `release.rs` | guimadaleno/download's client, **copied unchanged** |
+| `report.rs` | guimadaleno/issues' client, **copied unchanged** |
 | `feedback.rs` | `/feedback`: the form, the preview, the POST through curl |
 | `approvals.rs` | Commands approved for a project |
 | `reasoning.rs` | The small window the reasoning shows in while the model thinks |
@@ -71,6 +71,6 @@ paths:
 | `spinner.rs`, `style.rs`, `interrupt.rs`, `text.rs` | Spinner, colors, Ctrl+C flag, every word on screen |
 | `site/` | The page at guimadaleno.com/lokal/, published by `.github/workflows/site.yml` |
 | `README.md` | What a person reads first in the repository: what Lokal is, setting up a model, what it won't do |
-| `.github/actions/publish/` | guimadaleno/base/release's publish action, **copied unchanged**: signs the manifest and uploads the release |
+| `.github/actions/publish/` | guimadaleno/download's publish action, **copied unchanged**: signs the manifest and uploads the release |
 | `.github/workflows/ci.yml` | Formatting, lints and tests on every push to main and every pull request |
 | `tools/icon.py` | Draws the mark and writes `site/`'s icons from one definition |

@@ -1,20 +1,20 @@
 ---
 name: release
-description: "Use it before changing Lokal's version, tagging or publishing, and before touching update.rs, install.rs, the release workflow or the update key: how a version is tagged, what a release publishes, where the keys and secrets live, and base's release protocol to read first."
+description: "Use it before changing Lokal's version, tagging or publishing, and before touching update.rs, install.rs, the release workflow or the update key: how a version is tagged, what a release publishes, where the keys and secrets live, and guimadaleno/download's README to read first."
 ---
 
 ## Versioning and releases
 
 - **A release is a `v<version>` tag.** `.github/workflows/release.yml`
   builds it and publishes it to `download.guimadaleno.com/lokal/` with
-  `guimadaleno/base/release`'s action, copied into `.github/actions/publish/`.
+  `guimadaleno/download`'s action, copied into `.github/actions/publish/`.
   Read its README before
   touching `update.rs`, `install.rs`, the workflow or the key.
 - **`Cargo.toml`'s version, the tag and a `## <version> — <date>` entry in
   `CHANGELOG.md` must agree;** the workflow refuses a tag otherwise. The
   entry is the release's notes, written for the person using Lokal.
 - **The release build is tried in WSL, never on a virtual machine,** at the
-  owner's word (2026-11-21): base's protocol installs it on one, but the
+  owner's word (2026-11-21): gms-handoff tries such a build on one, but the
   only machine runs Windows, and Lokal is a Linux program. It's built as
   the workflow builds it, put in place with `lokal --install` under a
   scratch `HOME`, and run from there, never over the person's own copy.

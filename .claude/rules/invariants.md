@@ -11,14 +11,14 @@ paths:
 
 - **`src/release.rs` and `tests/release/`, `src/report.rs` and
   `tests/report/` are copies, changed only at their source:**
-  `guimadaleno/base/release` (`client/release.rs`, `testdata/`) and
-  `guimadaleno/base/issues` (`client/report.rs`, `testdata/`). That's why both
+  `guimadaleno/download` (`client/release.rs`, `testdata/`) and
+  `guimadaleno/issues` (`client/report.rs`, `testdata/`). That's why both
   modules are declared with `#[rustfmt::skip]` and `#[allow(clippy::all)]`:
   an edit here makes the copies disagree.
-  - **So is `.github/actions/publish/`,** `guimadaleno/base/release`'s
+  - **So is `.github/actions/publish/`,** `guimadaleno/download`'s
     `publish/` as of base's 86196c8, `release-v1.2.0`'s code with examples
     that name no app and the key handed to openssl through stdin, never a
-    file: base is private, and a public repository can't use an
+    file: guimadaleno/download is private, and a public repository can't use an
     action from a private one (#42). A newer one comes in as a fresh copy,
     its commit named in `release.yml`'s comment.
 - **Only the release workflow's build updates itself.** `update.rs` is
