@@ -48,6 +48,7 @@ How commands will run unasked in a box is designed in `docs/sandbox.md` (#2): re
 - **The person asked for this (#36):** a question that always opens on No stops being read. The rule only picks where the question starts, never whether there is one, except in accept edits and auto, which the person picked.
 - **Best effort at reading bash, never complete:** auto's judge stands behind it, and the box (#2) will bound it. What a session sent to find ways around it found is closed (#36).
 - **On No** (`allowlist::opens_on_yes`, `src/allowlist/hard.rs`):
+  - Lokal itself (#61), by its name or a `/proc/*/exe`, behind a wrapper, a shell or a terminal of its own (tmux, screen, expect) too: `lokal mcp add` writes its settings, and a scripted terminal could answer its question. Behind another program it counts when followed by `mcp`, an option or nothing, so a folder named lokal isn't it. A copy under another name, or `cargo run` in Lokal's own repository, isn't caught: the judge reads it.
   - Root and other machines (sudo, ssh, `wsl.exe`, Windows' script hosts), and sends: curl or wget that send, scp, rsync to a remote, nc, `/dev/tcp`, gh's writes, publishing, `docker push`, git push with force or delete or to an address, a new remote.
   - Something downloaded and run: piped into a shell or an interpreter that reads its code there (not `| python3 -c`, where it's data), or handed to one (`bash <(curl …)`, `eval "$(curl …)"`); `git clone` with `-c` or `--template`. A download that only fills a variable is data.
   - Disks, power and crontab.

@@ -74,6 +74,11 @@ enum Args {
     Version,
     Install,
     Uninstall,
+    /// `lokal mcp add <name> <command or address>`.
+    McpAdd {
+        name: String,
+        command: Vec<String>,
+    },
     /// An option Lokal doesn't know.
     Unknown(String),
     /// A conversation when `request` is empty, otherwise a one-shot request.
@@ -84,8 +89,19 @@ enum Args {
 }
 
 /// Options come first; from the first word on, everything is the request,
-/// so `lokal explain -r` asks about `-r`.
+/// so `lokal explain -r` asks about `-r`. The one exception is `mcp add`
+/// as the first two words; `lokal mcp …` otherwise is a request.
 fn parse_args(args: impl Iterator<Item = String>) -> Args {
+    let args: Vec<String> = args.collect();
+    if let [first, second, rest @ ..] = args.as_slice()
+        && first == "mcp"
+        && second == "add"
+    {
+        return Args::McpAdd {
+            name: rest.first().cloned().unwrap_or_default(),
+            command: rest.get(1..).unwrap_or_default().to_vec(),
+        };
+    }
     let mut resume = false;
     let mut words = Vec::new();
     for arg in args {
@@ -143,6 +159,7 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         }
+        Args::McpAdd { name, command } => mcp::add::run(&name, &command),
         Args::Unknown(option) => {
             eprintln!("{}", text::unknown_option(&option));
             ExitCode::from(2)
@@ -588,5 +605,28 @@ mod tests {
         assert_eq!(parsed(&["explain", "-r"]), run(false, "explain -r"));
         assert_eq!(parsed(&["-V", "x"]), Args::Version);
         assert_eq!(parsed(&["--nope"]), Args::Unknown("--nope".into()));
+    }
+
+    #[test]
+    fn mcp_add_is_a_command_only_as_the_first_two_words() {
+        let add = |name: &str, command: &[&str]| Args::McpAdd {
+            name: name.to_string(),
+            command: command.iter().map(|word| word.to_string()).collect(),
+        };
+        // The server's own options are its words, never Lokal's.
+        assert_eq!(
+            parsed(&["mcp", "add", "x", "x.exe", "--mcp", "-r"]),
+            add("x", &["x.exe", "--mcp", "-r"])
+        );
+        assert_eq!(parsed(&["mcp", "add"]), add("", &[]));
+        assert_eq!(parsed(&["mcp", "add", "x"]), add("x", &[]));
+        // Anything else stays a request.
+        let run = |resume, request: &str| Args::Run {
+            resume,
+            request: request.to_string(),
+        };
+        assert_eq!(parsed(&["mcp", "servers?"]), run(false, "mcp servers?"));
+        assert_eq!(parsed(&["-r", "mcp", "add", "x"]), run(true, "mcp add x"));
+        assert_eq!(parsed(&["mcp add x y"]), run(false, "mcp add x y"));
     }
 }

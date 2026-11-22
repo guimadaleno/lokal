@@ -968,6 +968,49 @@ mod tests {
     }
 
     #[test]
+    fn lokal_itself_opens_on_no() {
+        // `lokal mcp add` writes its settings, and a scripted terminal
+        // could answer the question it asks.
+        for command in [
+            "lokal mcp add x https://example.com/mcp",
+            "lokal --version",
+            "~/.local/bin/lokal mcp add x y",
+            "./target/release/lokal mcp add x y",
+            "env lokal mcp add x y",
+            "nohup lokal mcp add x y &",
+            "bash -c 'lokal mcp add x y'",
+            "yes | script -qc 'lokal mcp add x y' /dev/null",
+            "script -q -c \"lokal mcp add x y\" /dev/null",
+            "cd ~/.local/bin && ./lokal mcp add x y",
+            "for p in lokal; do $p mcp add x y; done",
+            // Terminals of their own, which a script can type into.
+            "tmux new-session -d -s s 'lokal mcp add x https://example.com/mcp'",
+            "screen -dmS s lokal mcp add x y",
+            "unbuffer -p lokal mcp add x y",
+            "expect -c 'spawn lokal mcp add x y'",
+            "dtach -n /tmp/s lokal mcp add x y",
+            "yes | python3 -c 'import pty; pty.spawn([\"lokal\",\"mcp\",\"add\",\"x\",\"y\"])'",
+            "/proc/1234/exe mcp add x y",
+            "/proc/self/exe --version",
+        ] {
+            assert!(!on_yes(command), "should open on No: {command}");
+        }
+        // Naming it isn't running it, nor is a folder named after it.
+        for command in [
+            "which lokal",
+            "command -v lokal",
+            "grep -rn lokal README.md",
+            "cat docs/lokal.md",
+            "echo lokal",
+            "bash -c 'cd ~/src/lokal && cargo test'",
+            "env -C ~/src/lokal cargo test",
+            "timeout 60 grep -rn lokal src",
+        ] {
+            assert!(on_yes(command), "should open on Yes: {command}");
+        }
+    }
+
+    #[test]
     fn what_the_review_found_opens_on_no() {
         for command in [
             // Shell words before a program.

@@ -53,7 +53,7 @@ impl McpServer {
     }
 }
 
-fn is_address(value: &str) -> bool {
+pub fn is_address(value: &str) -> bool {
     value.starts_with("https://") || value.starts_with("http://")
 }
 
@@ -293,6 +293,67 @@ pub fn words(value: &str) -> Vec<String> {
     words
 }
 
+/// `lokal mcp add`'s line, `mcp.<name> = <value>`, checked by the parser
+/// that will read it: it must read back as this one server with these
+/// words. A control character is refused, since a line break would start
+/// another setting. Err says what's wrong.
+pub fn mcp_line(name: &str, command: &[String]) -> Result<String, String> {
+    let words = command.iter().flat_map(|word| word.chars());
+    if name.chars().chain(words).any(char::is_control) {
+        return Err(text::MCP_ADD_CONTROL.to_string());
+    }
+    // `mcp.x.tools` is a field of x's, not a server named "x.tools".
+    if name.contains('.') {
+        return Err(text::bad_mcp_name(name, MCP_NAME_MOST));
+    }
+    let value: Vec<String> = command.iter().map(|word| quoted(word)).collect();
+    let value = value.join(" ");
+    let mut servers = Vec::new();
+    set_mcp(&mut servers, &format!("mcp.{name}"), &value)?;
+    // Every word reads back but an empty one, which `words` drops.
+    if servers.first().map(|server| &server.command[..]) != Some(command) {
+        return Err(text::MCP_ADD_EMPTY_WORD.to_string());
+    }
+    Ok(format!("mcp.{name} = {value}"))
+}
+
+/// A word as `words` reads it back: in double quotes, with `"` and `\`
+/// escaped, when it holds a space, a quote or a backslash.
+fn quoted(word: &str) -> String {
+    let plain = !word
+        .chars()
+        .any(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '\\'));
+    if plain {
+        return word.to_string();
+    }
+    let mut out = String::from('"');
+    for c in word.chars() {
+        if matches!(c, '"' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
+}
+
+/// The settings with `line`, the server `name`'s, added at the end, once
+/// they read as they are and don't set that server already.
+pub fn with_mcp_line(contents: &str, name: &str, line: &str, path: &str) -> Result<String, String> {
+    let config = parse(contents, path)?;
+    if config.mcp.iter().any(|server| server.name == name) {
+        return Err(text::mcp_already_set(name));
+    }
+    let mut new = contents.to_string();
+    if !new.is_empty() && !new.ends_with('\n') {
+        new.push('\n');
+    }
+    new.push_str(line);
+    new.push('\n');
+    parse(&new, path)?;
+    Ok(new)
+}
+
 pub fn approvals_path() -> PathBuf {
     config_dir().join("approved")
 }
@@ -476,6 +537,78 @@ fn xdg_dir(variable: &str, fallback: &str) -> PathBuf {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    fn owned(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| word.to_string()).collect()
+    }
+
+    #[test]
+    fn an_added_server_reads_back_as_its_words() {
+        for command in [
+            &["vemka.exe", "--mcp", "--name", "Lokal"][..],
+            &["npx", "-y", "@scope/server github"],
+            &["/mnt/c/Program Files/x/x.exe", "--root", "C:\\Users"],
+            &["say", "it's \"quoted\""],
+            &["https://mcp.example.com/mcp?a=1&b=2"],
+            &["http://127.0.0.1:8080/mcp"],
+        ] {
+            let command = owned(command);
+            let line = mcp_line("x", &command).unwrap();
+            let config = parse(&line, "config").unwrap();
+            assert_eq!(config.mcp.len(), 1, "{line}");
+            assert_eq!(config.mcp[0].name, "x");
+            assert_eq!(config.mcp[0].command, command, "{line}");
+        }
+        assert_eq!(
+            mcp_line("files", &owned(&["npx", "-y", "server"])).unwrap(),
+            "mcp.files = npx -y server"
+        );
+    }
+
+    #[test]
+    fn an_added_server_that_wouldnt_read_back_is_refused() {
+        let refused = |name: &str, command: &[&str]| mcp_line(name, &owned(command)).unwrap_err();
+        // A line break would start another setting.
+        assert_eq!(
+            refused("x", &["x", "--a\nmode = auto"]),
+            text::MCP_ADD_CONTROL
+        );
+        assert_eq!(refused("x\ny", &["x"]), text::MCP_ADD_CONTROL);
+        assert_eq!(refused("x", &["x\r"]), text::MCP_ADD_CONTROL);
+        // A field of a server's, or a name the settings don't take.
+        for name in ["x.tools", "x.header", "X", "my server", "a=b", ""] {
+            assert!(refused(name, &["x"]).contains("can't name"), "{name}");
+        }
+        assert_eq!(refused("x", &["x", ""]), text::MCP_ADD_EMPTY_WORD);
+        assert!(refused("x", &["http://example.com/mcp"]).contains("only to this machine"));
+        assert!(refused("x", &["https://a.example/", "--b"]).contains("one word"));
+    }
+
+    #[test]
+    fn an_added_server_goes_at_the_end_of_settings_that_read() {
+        let line = "mcp.files = npx -y server";
+        assert_eq!(
+            with_mcp_line("model = m", "files", line, "config").unwrap(),
+            "model = m\nmcp.files = npx -y server\n"
+        );
+        assert_eq!(
+            with_mcp_line("", "files", line, "config").unwrap(),
+            "mcp.files = npx -y server\n"
+        );
+        // The template /config writes reads, its servers commented out.
+        let first = with_mcp_line(text::SETTINGS_TEMPLATE, "files", line, "config").unwrap();
+        assert_eq!(parse(&first, "config").unwrap().mcp.len(), 1);
+        // A server set already, or settings that don't read, stay as they are.
+        assert_eq!(
+            with_mcp_line("mcp.files = other\n", "files", line, "config").unwrap_err(),
+            text::mcp_already_set("files")
+        );
+        assert!(
+            with_mcp_line("mode = sometimes\n", "files", line, "config")
+                .unwrap_err()
+                .contains("line 1")
+        );
+    }
 
     #[test]
     fn reads_mcp_servers_and_their_tools() {

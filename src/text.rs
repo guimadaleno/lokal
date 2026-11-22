@@ -22,6 +22,8 @@ Usage:
   lokal -r <request> add to the last conversation
   lokal --install    install to ~/.local/bin, where it keeps itself up to date
   lokal --uninstall  remove it, and your files if you say so
+  lokal mcp add <name> <command or address>
+                     connect an MCP server, once you've said yes
 
 Settings live in ~/.config/lokal/config (server = 192.0.2.10:1234, model = name, updates = off,
 mail = ask).";
@@ -87,7 +89,7 @@ pub const HELP_MORE: &[(&str, &str)] = &[
     ),
     (
         "mcp.<name>",
-        "a server set in /config offers its tools; each call asks",
+        "a server set in /config or by lokal mcp add; each call asks",
     ),
     (
         "mode",
@@ -1102,6 +1104,46 @@ pub fn mcp_plain_http(address: &str) -> String {
 
 pub const BAD_MCP_HEADER: &str =
     "a header is `Name: value`, as in `Authorization: Bearer <token>`.";
+
+pub const MCP_ADD_USAGE: &str = "\
+Usage: lokal mcp add <name> <the command that starts the server, or its address>
+  lokal mcp add files npx -y @modelcontextprotocol/server-filesystem ~/notes
+  lokal mcp add docs https://mcp.example.com/mcp";
+pub const MCP_ADD_CONTROL: &str = "A word holds a control character, such as a line break, which would start another setting. Nothing added.";
+pub const MCP_ADD_EMPTY_WORD: &str =
+    "Lokal's settings can't keep an empty word in a command. Nothing added.";
+
+pub fn mcp_already_set(name: &str) -> String {
+    format!("`mcp.{name}` is already in your settings: change it with /config.")
+}
+
+pub fn mcp_add_goes_to(path: &str) -> String {
+    format!("This line goes into {path}:")
+}
+
+pub const MCP_ADD_NOTE: &str = "The server starts with your next conversation, in your home folder, and the model gets its tools only once you've seen them. Every call asks first.";
+pub const MCP_ADD_ADDRESS_NOTE: &str = "Lokal reaches it from your next conversation, and the model gets its tools only once you've seen them. Every call asks first.";
+
+pub fn mcp_add_header_hint(name: &str) -> String {
+    format!(
+        "If it needs a token, add `mcp.{name}.header = Authorization: Bearer <token>` with /config."
+    )
+}
+
+pub const MCP_ADD_QUESTION: &str = "Add it?";
+
+pub fn mcp_added(path: &str) -> String {
+    format!("Added to {path}. It applies the next time Lokal starts.")
+}
+
+pub const MCP_NOT_ADDED: &str = "Not added.";
+pub const MCP_ADD_NO_TERMINAL: &str = "Nothing added: lokal mcp add shows the line and asks first, at a terminal. Run it in your own shell, not from Lokal.";
+pub const MCP_ADD_SETTINGS_CHANGED: &str =
+    "Your settings changed while Lokal asked, so nothing was added. Run it again.";
+
+pub fn cant_read_settings(path: &str, error: &str) -> String {
+    format!("Couldn't read {path}: {error}")
+}
 
 pub fn bad_mail_setting(path: &str, line: usize) -> String {
     format!("{path}, line {line}: `mail` is auto, ask or off.")

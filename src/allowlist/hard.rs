@@ -32,6 +32,9 @@ const SENDERS: &[&str] = &[
     "smbclient",
     "rclone",
 ];
+/// Lokal itself: `lokal mcp add` writes its settings, and a scripted
+/// terminal (`yes | script -c …`) could answer the question it asks.
+const LOKAL: &str = "lokal";
 /// Disks, power, and what runs on a schedule.
 const MACHINE: &[&str] = &[
     "dd", "wipefs", "shred", "fdisk", "sfdisk", "cfdisk", "parted", "mkswap", "shutdown", "reboot",
@@ -52,6 +55,8 @@ const PASSING_ON: &[&str] = &[
     "builtin", "watch", "setsid", "stdbuf", "ionice", "taskset", "chroot", "unshare", "nsenter",
     "flock", "parallel", "script", "strace", "awk", "gawk", "mawk", "nawk", "sed", "find",
     "python", "python3", "perl", "ruby", "node", "php", "lua", "deno", "bun", "docker", "podman",
+    // Terminals of their own, which a script can type into.
+    "tmux", "screen", "unbuffer", "expect", "dtach", "abduco",
 ];
 /// Programs that run the program in their arguments: git behind one of
 /// them is out of reach of the settings check.
@@ -405,6 +410,9 @@ fn program_is_hard(
         || [PAST_THE_PERSON, SENDERS, MACHINE]
             .iter()
             .any(|list| list.contains(&name))
+        || name == LOKAL
+        // A running program by its process, Lokal itself among them.
+        || (program.starts_with("/proc/") && name == "exe")
         || name.starts_with("mkfs")
         || WINDOWS_PAST_THE_PERSON.contains(&lower.as_str())
         || writes_where_it_may_not(name, args, places, folders)
@@ -1168,7 +1176,8 @@ fn inline_flags(runner: &str) -> &'static [&'static str] {
 fn words_of(args: &[String]) -> Vec<String> {
     args.iter()
         .flat_map(|arg| {
-            arg.split(|c: char| c.is_whitespace() || ";|&(){}<>$`,".contains(c))
+            // Brackets too: `pty.spawn(["lokal", "mcp"])` names its words in a list.
+            arg.split(|c: char| c.is_whitespace() || ";|&(){}[]<>$`,".contains(c))
                 .map(|word| {
                     word.chars()
                         .filter(|c| !matches!(c, '\'' | '"' | '\\'))
@@ -1401,6 +1410,7 @@ fn names_the_hard_core(words: &[String], placed: bool) -> bool {
     [PAST_THE_PERSON, SENDERS, MACHINE]
         .iter()
         .any(|list| named(list))
+        || runs_lokal(&names, words)
         || (!placed && named(DELETERS))
         || after("gh").is_some_and(|args| !gh_only_reads(&args) || clones_with_settings(&args))
         || after("rsync").is_some_and(|args| {
@@ -1424,6 +1434,18 @@ fn names_the_hard_core(words: &[String], placed: bool) -> bool {
         || (named(&["docker", "podman"]) && said(&["prune", "push"]))
         || said(&["publish", "unpublish", "send-email"])
         || (named(&["find"]) && said(&["-delete"]))
+}
+
+/// Lokal run behind another program: `lokal` followed by `mcp`, an option
+/// or nothing. A folder named lokal (`cd ~/src/lokal && cargo test`) isn't
+/// Lokal running.
+fn runs_lokal(names: &[&str], words: &[String]) -> bool {
+    names.iter().enumerate().any(|(at, name)| {
+        *name == LOKAL
+            && words
+                .get(at + 1)
+                .is_none_or(|next| next == "mcp" || next.starts_with('-'))
+    })
 }
 
 /// A line without the text of its here-documents, when what reads them

@@ -2,6 +2,7 @@
 //! tools offered to the model once the person has seen what they say, and
 //! ended with Lokal.
 
+pub mod add;
 mod client;
 mod http;
 mod seen;

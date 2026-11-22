@@ -92,8 +92,19 @@ it:
 
 ```
 mcp.notes = npx -y @modelcontextprotocol/server-filesystem ~/notes
-mcp.notes.tools = read_text_file, list_directory    # optional: only these
+# Optional: only these of its tools.
+mcp.notes.tools = read_text_file, list_directory
 ```
+
+Or let Lokal write the line, from your own terminal: it shows the line and
+where it goes, and adds it once you pick Yes.
+
+```
+lokal mcp add notes npx -y @modelcontextprotocol/server-filesystem ~/notes
+```
+
+The model can't run it for you: a command of its that runs Lokal asks you
+first, starting on No.
 
 Servers start with a conversation, in your home folder, and speak MCP over
 their standard input and output. Under WSL, a Windows program that serves
