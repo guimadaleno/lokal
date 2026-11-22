@@ -20,55 +20,21 @@ paths:
   - "src/keys.rs"
 ---
 
+# Files
+
 ## Write a file without showing the diff and getting a yes
 
-- **A long diff shows its first lines and how many are left out**
-  (`src/diff.rs`), so a new file doesn't flood the conversation. "Show the
-  rest", between Yes and No, prints them and asks again. Saying yes without
-  them is the person's choice, made with the count in front of them.
-- **What reaches the screen from a file, a command or the model shows
-  its control characters as marks** (`layout::printable`: ESC as `^[`, a
-  lone `\r` as `^M`): the diff, the `$` line and its explanation, the
-  paths, a command's output and the answer. Otherwise they could move the
-  cursor and write over a line, so the diff or the command the person
-  approves isn't what runs, or set the clipboard. The conversation and
-  the files keep the bytes as they are.
-- **Accept edits is the one exception, and the person picks it** with
-  Shift+Tab (`src/mode.rs`), at the `>` or while Lokal works, from the
-  next step on, and auto after it includes it. Then a change in the
-  working or scratch folder, with nothing hidden on the way and in no
-  protected place (`files::asking`), is written once its diff shows, with
-  a faint line saying so.
-  - **Auto adds the judge for the rest** (#36): a change anywhere else
-    that isn't protected, a working folder of `~` and the Windows desktop
-    under `/mnt/c` included, is written once the judge says yes. It reads
-    the path, never the content.
-  - **Everything else asks as always:** a protected place
-    (`protected::is_protected`), on No, and `remember`.
-  - **A turn mail started stays manual,** since another model wrote that
-    mail, and it may have been steered.
-  - **Every session starts on manual unless the settings say otherwise**
-    (#55): `mode = accept-edits` or `mode = auto` starts a conversation
-    at a terminal there. Only the person writes that line, since the
-    model can't change Lokal's own files, and auto's warning shows as such
-    a session starts, saying where it came from. A one-shot request starts
-    on manual whatever the setting: it often runs in a script, and without
-    a terminal accept edits would write with nobody there to see it.
-  - **A long diff still shows only its start:** the person chose not to
-    be asked, and inside git, `git diff` shows the rest.
-  - **The mode shows at the right of the `>` and in the spinner's label**
-    while it isn't manual, so Shift+Tab is seen to take, also mid-turn.
-    At the `>`, "(Shift+Tab to cycle)" follows it while there's room. In
-    a turn mail started they show the mode chosen, not the one that
-    applies there.
+- **A long diff shows its start and how many lines are left out** (`src/diff.rs`); "Show the rest", between Yes and No, prints them and asks again. A yes without them is the person's choice, made with the count in front of them.
+- **Control characters show as marks** (`layout::printable`) in the diff, the `$` line and its explanation, the paths, a command's output and the answer: otherwise they could write over a line, so what's approved isn't what runs, or set the clipboard. The conversation and the files keep the bytes as they are.
+- **Accept edits is the one exception, and the person picks it** with Shift+Tab (`src/mode.rs`), at the `>` or mid-turn, from the next step on; auto includes it. A change in the working or scratch folder, with nothing hidden on the way and in no protected place (`files::asking`), is written once its diff shows, with a faint line saying so.
+  - **Auto adds the judge for the rest** (#36): a change anywhere else that isn't protected, a working folder of `~` or the Windows desktop included, is written once the judge says yes. It reads the path, never the content.
+  - **Everything else asks as always:** a protected place (`protected::is_protected`), on No, and `remember`.
+  - **A turn mail started stays manual:** another model wrote that mail, and it may have been steered.
+  - **A session starts on manual unless the settings say otherwise** (#55): `mode = accept-edits` or `mode = auto`, a line only the person writes. Auto's warning then shows as the session starts, saying where it came from.
+  - **A long diff still shows only its start:** the person chose not to be asked, and inside git, `git diff` shows the rest.
+  - **The mode shows at the right of the `>` and in the spinner's label** while it isn't manual, so Shift+Tab is seen to take, mid-turn too. In a turn mail started, they show the mode chosen, not the one that applies.
 
 ## Let the model change Lokal's own files
 
-- **`remember` never adds a line that's already there,** and can put a
-  note in place of one line and its copies (`replaces`), so notes saved
-  twice can be tidied from the conversation. It can't remove a line
-  without putting the new one in its place: the person sees the swap in
-  the diff, and `/prefs` is where they delete.
-- **user.md was about-me.md:** a copy under the old name moves to the new
-  one the first time it's needed (`config::user_md_path`), and stays in use
-  where the move fails, so the person's notes are never lost.
+- **`remember` never adds a line that's already there,** and can put a note in place of one line and its copies (`replaces`), so notes saved twice can be tidied. It never removes a line without putting the new one in its place: the person sees the swap in the diff, and `/prefs` is where they delete.
+- **user.md was about-me.md:** a copy under the old name moves the first time it's needed (`config::user_md_path`), and stays in use where the move fails, so the person's notes are never lost.
