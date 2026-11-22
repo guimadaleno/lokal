@@ -6,6 +6,20 @@ How versions are numbered and tagged is in the `release` skill
 A version exists when it is tagged, and its entry here is what an installed
 copy and the page show as its notes.
 
+## 0.13.0 — 2026-11-22
+
+- `lokal mcp add <name> <command or address>` connects an MCP server
+  from your shell: it shows the line and where it goes, and adds it to
+  your settings once you pick Yes. The question starts on No, and the
+  model can't run it for you: a command of its that runs Lokal asks you
+  first, starting on No, in auto too.
+- The model treats instructions it finds in files, command output and
+  web pages as text to tell you about, not orders, unless you asked it
+  to follow them.
+- A command the model runs inside tmux, screen or expect is read like
+  one behind `bash -c`: what can't be undone or leaves your machine asks
+  you first, starting on No.
+
 ## 0.12.1 — 2026-11-21
 
 - Ask the model to use an app through MCP that isn't connected yet, and
