@@ -20,7 +20,8 @@ Usage:
   lokal <request>    ask one thing, get the answer
   lokal -r           pick up the last conversation
   lokal -r <request> add to the last conversation
-  lokal --install    install to ~/.local/bin, where it keeps itself up to date
+  lokal -m <model>   use this model this time, not the settings' one
+  lokal --install   install to ~/.local/bin, where it keeps itself up to date
   lokal --uninstall  remove it, and your files if you say so
   lokal mcp add <name> <command or address>
                      connect an MCP server, once you've said yes
@@ -805,6 +806,11 @@ pub fn more_lines(count: usize) -> String {
 
 pub fn unknown_option(option: &str) -> String {
     format!("There's no {option} option. Try lokal --help.")
+}
+
+/// `lokal -m` without a model's name after it.
+pub fn needs_model(option: &str) -> String {
+    format!("{option} needs a model's name, as in lokal {option} some-model.")
 }
 
 pub fn unknown_command(command: &str) -> String {

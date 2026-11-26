@@ -65,6 +65,7 @@ model = some-model
 lokal              start a conversation
 lokal <request>    ask one thing, get the answer, done
 lokal -r           pick up the last conversation
+lokal -m <model>   use this model this time, not the settings' one
 ```
 
 At the `>`, `/help` lists the commands and keys. A line starting with `!`

@@ -81,9 +81,13 @@ enum Args {
     },
     /// An option Lokal doesn't know.
     Unknown(String),
-    /// A conversation when `request` is empty, otherwise a one-shot request.
+    /// `-m` or `--model` without a model's name after it.
+    NoModel(String),
+    /// A conversation when `request` is empty, otherwise a one-shot request;
+    /// `model` in place of the settings' one, for this run only.
     Run {
         resume: bool,
+        model: Option<String>,
         request: String,
     },
 }
@@ -103,14 +107,20 @@ fn parse_args(args: impl Iterator<Item = String>) -> Args {
         };
     }
     let mut resume = false;
+    let mut model = None;
     let mut words = Vec::new();
-    for arg in args {
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
         if !words.is_empty() {
             words.push(arg);
             continue;
         }
         match arg.as_str() {
             "-r" | "--resume" => resume = true,
+            "-m" | "--model" => match args.next() {
+                Some(name) if is_model_name(&name) => model = Some(name),
+                _ => return Args::NoModel(arg),
+            },
             "-h" | "--help" => return Args::Help,
             "-V" | "--version" => return Args::Version,
             "--install" => return Args::Install,
@@ -121,8 +131,15 @@ fn parse_args(args: impl Iterator<Item = String>) -> Args {
     }
     Args::Run {
         resume,
+        model,
         request: words.join(" "),
     }
+}
+
+/// A name a server could list: not empty, not another option, and nothing
+/// that would redraw the screen where it shows.
+fn is_model_name(name: &str) -> bool {
+    !name.trim().is_empty() && !name.starts_with('-') && !name.chars().any(char::is_control)
 }
 
 fn main() -> ExitCode {
@@ -164,21 +181,33 @@ fn main() -> ExitCode {
             eprintln!("{}", text::unknown_option(&option));
             ExitCode::from(2)
         }
-        Args::Run { resume, request } => run(started, resume, &request),
+        Args::NoModel(option) => {
+            eprintln!("{}", text::needs_model(&option));
+            ExitCode::from(2)
+        }
+        Args::Run {
+            resume,
+            model,
+            request,
+        } => run(started, resume, model, &request),
     }
 }
 
 /// Start-up, then the conversation or the one-shot request.
-fn run(started: Instant, resume: bool, request: &str) -> ExitCode {
+fn run(started: Instant, resume: bool, model: Option<String>, request: &str) -> ExitCode {
     // A conversation at the `>`, rather than a one-shot request.
     let talking = request.is_empty();
-    let config = match config::load() {
+    let mut config = match config::load() {
         Ok(config) => config,
         Err(message) => {
             eprintln!("{}", style::red(&message));
             return ExitCode::FAILURE;
         }
     };
+    // `-m` wins over the settings, and only in memory: nothing is saved.
+    if model.is_some() {
+        config.model = model;
+    }
     if config.times_off {
         clock::switch_off();
     }
@@ -596,6 +625,7 @@ mod tests {
     fn options_come_before_the_request() {
         let run = |resume, request: &str| Args::Run {
             resume,
+            model: None,
             request: request.to_string(),
         };
         assert_eq!(parsed(&[]), run(false, ""));
@@ -603,8 +633,34 @@ mod tests {
         assert_eq!(parsed(&["--resume", "fix", "it"]), run(true, "fix it"));
         // From the first word on, an option is part of the request.
         assert_eq!(parsed(&["explain", "-r"]), run(false, "explain -r"));
+        assert_eq!(parsed(&["explain", "-m", "x"]), run(false, "explain -m x"));
         assert_eq!(parsed(&["-V", "x"]), Args::Version);
         assert_eq!(parsed(&["--nope"]), Args::Unknown("--nope".into()));
+    }
+
+    #[test]
+    fn a_model_comes_by_name_after_its_option() {
+        let run = |resume, model: &str, request: &str| Args::Run {
+            resume,
+            model: Some(model.to_string()),
+            request: request.to_string(),
+        };
+        assert_eq!(parsed(&["-m", "some-model"]), run(false, "some-model", ""));
+        assert_eq!(
+            parsed(&["--model", "a/b:7b", "-r", "fix", "it"]),
+            run(true, "a/b:7b", "fix it")
+        );
+        assert_eq!(parsed(&["-r", "-m", "x", "hi"]), run(true, "x", "hi"));
+        // The last one named wins, as with a setting written twice.
+        assert_eq!(parsed(&["-m", "x", "-m", "y"]), run(false, "y", ""));
+        // No name, another option, or what would redraw the screen.
+        let none = |option: &str| Args::NoModel(option.to_string());
+        assert_eq!(parsed(&["-m"]), none("-m"));
+        assert_eq!(parsed(&["--model", ""]), none("--model"));
+        assert_eq!(parsed(&["-m", " "]), none("-m"));
+        assert_eq!(parsed(&["-m", "-r"]), none("-m"));
+        assert_eq!(parsed(&["-m", "x\u{1b}[2J"]), none("-m"));
+        assert_eq!(parsed(&["-m", "x\ny"]), none("-m"));
     }
 
     #[test]
@@ -623,6 +679,7 @@ mod tests {
         // Anything else stays a request.
         let run = |resume, request: &str| Args::Run {
             resume,
+            model: None,
             request: request.to_string(),
         };
         assert_eq!(parsed(&["mcp", "servers?"]), run(false, "mcp servers?"));
