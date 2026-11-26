@@ -26,7 +26,7 @@ paths:
 
 ## Words
 
-- **The voice is casual but precise, like a colleague,** with no jokes and no emoji, but for the ⚠️ that opens the auto warning. Approval prompts, "Stopped." and errors stay plain.
+- **The voice is casual but precise, like a colleague,** with no jokes and no emoji, but for the ⚠ that opens the auto warning. Approval prompts, "Stopped." and errors stay plain.
 - **Short first (#45):** one line, the fact first, and a why only where it changes what the person does next. An approval question, the auto warning, the reason a question opens on No, and an error that says what to do keep theirs: cut short there, Lokal reads as offhand where it must be taken seriously, and a No without its reason looks like a bug.
 - **What goes to the model** (a bracketed note in an output) is written for the model, not shortened for the screen.
 
