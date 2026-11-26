@@ -182,10 +182,9 @@ pub const MODE_KEYS: &str = "(Shift+Tab to cycle)";
 /// Under a diff that went through without a question.
 pub const WRITTEN_UNASKED: &str = "written: accept edits is on";
 
-/// Once a session, as auto is chosen.
-pub const AUTO_WARNING: &str = "Auto lets the model approve its own steps, and it'll get some \
-    wrong: use it at your own risk. Deletes outside the folder, sudo, uploads and your settings \
-    still ask.";
+/// Once a session, as auto is chosen. Two spaces after the sign: some
+/// terminals give it one column and draw it over two.
+pub const AUTO_WARNING: &str = "⚠️  Auto lets the model approve its own steps: use it at your own risk. The riskiest still ask.";
 /// Before it, as a session starts on auto from the settings.
 pub const AUTO_FROM_SETTINGS: &str = "Starting on auto (mode = auto in /config).";
 /// Beside the spinner while the judge decides.
