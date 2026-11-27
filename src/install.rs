@@ -9,7 +9,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{config, menu, style, text};
+use crate::{config, menu, style, text, tty};
 
 pub fn install() -> Result<String, String> {
     let running = env::current_exe().map_err(|error| text::cant_install(&error.to_string()))?;
@@ -65,6 +65,8 @@ pub fn uninstall() -> bool {
             key: 'r',
         },
     ];
+    // Keys pressed before the question showed aren't its answer (#62).
+    tty::discard_typed_ahead();
     match menu::choose(text::REMOVE_FILES_QUESTION, &items, 0, 0, Duration::ZERO) {
         Some(menu::Choice::Picked(1)) => remove(&files),
         Some(_) => eprintln!("{}", style::gray(&text::kept_files(&folders_of(&files)))),

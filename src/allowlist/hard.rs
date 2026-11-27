@@ -35,6 +35,25 @@ const SENDERS: &[&str] = &[
 /// Lokal itself: `lokal mcp add` writes its settings, and a scripted
 /// terminal (`yes | script -c …`) could answer the question it asks.
 const LOKAL: &str = "lokal";
+/// Programs that make keys up, typed into whatever has the focus, the
+/// terminal Lokal asks in among them: they could answer its question (#62).
+const TYPISTS: &[&str] = &["xdotool", "ydotool", "wtype", "xte", "xvkbd"];
+/// tmux's commands that type into a pane, or run tmux commands from a
+/// file, by their names and aliases.
+const TMUX_TYPING: &[&str] = &[
+    "send-keys",
+    "send",
+    "send-prefix",
+    "paste-buffer",
+    "pasteb",
+    "source-file",
+    "source",
+];
+/// screen's, given with `-X` or `-Q`.
+const SCREEN_TYPING: &[&str] = &["stuff", "paste", "source"];
+/// Words, in lowercase, of calls that type into a window or a terminal:
+/// Windows' SendKeys and SendInput, Linux's TIOCSTI.
+const TYPING_CALLS: &[&str] = &["sendkeys", "sendinput", "keybd_event", "tiocsti"];
 /// Disks, power, and what runs on a schedule.
 const MACHINE: &[&str] = &[
     "dd", "wipefs", "shred", "fdisk", "sfdisk", "cfdisk", "parted", "mkswap", "shutdown", "reboot",
@@ -413,6 +432,7 @@ fn program_is_hard(
         || name == LOKAL
         // A running program by its process, Lokal itself among them.
         || (program.starts_with("/proc/") && name == "exe")
+        || types_keys(name, args)
         || name.starts_with("mkfs")
         || WINDOWS_PAST_THE_PERSON.contains(&lower.as_str())
         || writes_where_it_may_not(name, args, places, folders)
@@ -1411,6 +1431,14 @@ fn names_the_hard_core(words: &[String], placed: bool) -> bool {
         .iter()
         .any(|list| named(list))
         || runs_lokal(&names, words)
+        || names
+            .iter()
+            .enumerate()
+            .any(|(at, name)| types_keys(name, &words[at + 1..]))
+        || words.iter().any(|word| {
+            let lower = word.to_lowercase();
+            TYPING_CALLS.iter().any(|call| lower.contains(call))
+        })
         || (!placed && named(DELETERS))
         || after("gh").is_some_and(|args| !gh_only_reads(&args) || clones_with_settings(&args))
         || after("rsync").is_some_and(|args| {
@@ -1434,6 +1462,33 @@ fn names_the_hard_core(words: &[String], placed: bool) -> bool {
         || (named(&["docker", "podman"]) && said(&["prune", "push"]))
         || said(&["publish", "unpublish", "send-email"])
         || (named(&["find"]) && said(&["-delete"]))
+}
+
+/// A program that types into a terminal, with what follows its name: a
+/// typist, tmux typing or reading commands from a file or stdin (`-C`),
+/// or screen typing with `-X` or `-Q`. tmux takes any unambiguous start
+/// of a command's name, so a word of three letters or more that starts one
+/// counts.
+fn types_keys(name: &str, args: &[String]) -> bool {
+    let words = words_of(args);
+    let commands = || words.iter().filter(|word| !word.starts_with('-'));
+    match name {
+        name if TYPISTS.contains(&name) => true,
+        "tmux" => {
+            args.iter().any(|arg| arg == "-C" || arg == "-CC")
+                || commands().any(|word| {
+                    word.len() >= 3
+                        && TMUX_TYPING
+                            .iter()
+                            .any(|typing| typing.starts_with(word.as_str()))
+                })
+        }
+        "screen" => {
+            uses_any(args, &["-X", "-Q"])
+                && commands().any(|word| SCREEN_TYPING.contains(&word.as_str()))
+        }
+        _ => false,
+    }
 }
 
 /// Lokal run behind another program: `lokal` followed by `mcp`, an option

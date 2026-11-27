@@ -16,6 +16,8 @@ paths:
 ## Take an answer from anything but a terminal as approval
 
 - **Nor a key meant for a message being typed** (#3): what's typed while Lokal works goes to a draft in Lokal's memory (`queue.rs`), never the terminal's buffer, so it can't answer a question. While there's a draft, or a key went into one just before, a question takes only Esc and Ctrl+C at first (`menu::choose`'s `deaf`): an Enter meant to queue the draft would approve a step the person hasn't read.
+- **Nor keys pressed before it showed, at any question** (`tty::discard_typed_ahead`): a conversation's, `lokal mcp add`'s and `--uninstall`'s (#62).
+- **Nor keys a command types into the terminal:** what types keys (`tmux send-keys`, SendKeys, `xdotool`) is the hard core (rule `commands`, #62).
 - **Esc is always No, and a key or a number only moves to its option,** for Enter to pick, so a stray key never approves. Saying no ends the turn, so the person says what to do instead.
 
 ## While Lokal works

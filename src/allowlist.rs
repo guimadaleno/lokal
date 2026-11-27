@@ -968,6 +968,51 @@ mod tests {
     }
 
     #[test]
+    fn typing_into_a_terminal_opens_on_no() {
+        // Keys typed into the terminal Lokal asks in would answer its next
+        // question, one that opens on No included (#62).
+        for command in [
+            "tmux send-keys -t s y Enter",
+            "(sleep 20; tmux send-keys -t \"$TMUX_PANE\" y Enter) >/dev/null 2>&1 &",
+            "tmux send -t s y Enter",
+            "tmux send-k -t s y",
+            "tmux send-prefix",
+            "tmux paste-buffer -t s",
+            "tmux pasteb",
+            "tmux new -d \\; send-keys y Enter",
+            "tmux source-file /tmp/keys.conf",
+            "echo 'send-keys y Enter' | tmux -C attach",
+            "tmux -CC attach",
+            "screen -X stuff 'y\\n'",
+            "screen -S s -X paste .",
+            "screen -X source /tmp/keys",
+            "bash -c 'tmux send-keys y Enter'",
+            "nohup tmux send-keys y Enter &",
+            "powershell.exe -c \"(New-Object -ComObject WScript.Shell).SendKeys('y~')\"",
+            "powershell.exe -c \"[System.Windows.Forms.SendKeys]::SendWait('y~')\"",
+            "pwsh -c '$w = New-Object -ComObject wscript.shell; $w.SendKeys(\"y\")'",
+            "xdotool type y",
+            "xdotool key Return",
+            "ydotool type y",
+            "wtype y",
+            "python3 -c 'import fcntl, termios; fcntl.ioctl(0, termios.TIOCSTI, b\"y\")'",
+        ] {
+            assert!(!on_yes(command), "should open on No: {command}");
+        }
+        // What only looks, or runs a program of its own, stays on Yes.
+        for command in [
+            "tmux ls",
+            "tmux list-sessions",
+            "tmux new-session -d -s dev 'npm run dev'",
+            "tmux capture-pane -p -t dev",
+            "tmux kill-session -t dev",
+            "screen -ls",
+        ] {
+            assert!(on_yes(command), "should open on Yes: {command}");
+        }
+    }
+
+    #[test]
     fn lokal_itself_opens_on_no() {
         // `lokal mcp add` writes its settings, and a scripted terminal
         // could answer the question it asks.
