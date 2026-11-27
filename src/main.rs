@@ -233,10 +233,9 @@ fn run(started: Instant, resume: bool, model: Option<String>, request: &str) -> 
     };
     // Conversations only: a one-shot request often runs in a script, and
     // shouldn't reach the network on its own.
-    let mut update = None;
     let mut first_line = None;
     if talking {
-        update = update::start(config.updates_off);
+        update::start(config.updates_off);
         // From here on the screen is kept, to lay out again at a new width.
         screen::keep();
         commands::print_header(&server);
@@ -291,8 +290,7 @@ fn run(started: Instant, resume: bool, model: Option<String>, request: &str) -> 
             feedback_draft: None,
         };
         talk(&mut conversation, &mut input, &mut session, first_line);
-        let updated_to = update.and_then(|check| check.installed());
-        let goodbye = text::lasted(started.elapsed(), updated_to.as_deref());
+        let goodbye = text::lasted(started.elapsed(), update::installed().as_deref());
         showln!("{}", style::gray(&goodbye));
     } else if conversation.send(request, &mut input, Some(request)) != conversation::Turn::Answered
     {

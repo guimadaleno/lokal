@@ -4,13 +4,15 @@
 //! silent and leaves everything as it was. guimadaleno/download's README is
 //! the authority on the format and the rules; release.rs is its client.
 
+use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -32,16 +34,12 @@ const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 /// from a working tree never replaces itself, or a rebuild would be undone.
 const RELEASE_BUILD: bool = option_env!("LOKAL_RELEASE_BUILD").is_some();
 
-/// A check running in the background.
-pub struct Check {
-    result: Receiver<String>,
-}
+/// The version this session put in place, by the day's check or `/update`.
+static PUT_IN_PLACE: OnceLock<String> = OnceLock::new();
 
-impl Check {
-    /// The version put in place during this session, if the check is done and found one.
-    pub fn installed(&self) -> Option<String> {
-        self.result.try_recv().ok()
-    }
+/// The version put in place during this session, if a check found one.
+pub fn installed() -> Option<String> {
+    PUT_IN_PLACE.get().cloned()
 }
 
 /// Whether this copy keeps itself up to date, and if not, why not.
@@ -64,9 +62,26 @@ fn standing(switched_off: bool) -> (Standing, Option<PathBuf>) {
     if switched_off {
         return (Standing::SwitchedOff, None);
     }
-    match std::env::current_exe() {
+    match std::env::current_exe().map(started_from) {
         Ok(executable) if can_replace(&executable) => (Standing::Daily, Some(executable)),
         _ => (Standing::CantReplace, None),
+    }
+}
+
+/// Where the running copy lives. Once a new version took its place, this
+/// session's or another Lokal's, Linux names the running file
+/// `… (deleted)`: the path without that is the copy's (#59).
+fn started_from(executable: PathBuf) -> PathBuf {
+    if executable.exists() {
+        return executable;
+    }
+    match executable
+        .as_os_str()
+        .as_bytes()
+        .strip_suffix(b" (deleted)")
+    {
+        Some(path) => PathBuf::from(OsStr::from_bytes(path)),
+        None => executable,
     }
 }
 
@@ -75,20 +90,13 @@ pub fn standing_of(switched_off: bool) -> Standing {
 }
 
 /// Starts the day's check, when this copy may update itself and one is due.
-pub fn start(switched_off: bool) -> Option<Check> {
+pub fn start(switched_off: bool) {
     let (_, Some(executable)) = standing(switched_off) else {
-        return None;
+        return;
     };
-    if !is_due(read_last_check(), now()) {
-        return None;
+    if is_due(read_last_check(), now()) {
+        thread::spawn(move || checked(&executable));
     }
-    let (sender, result) = mpsc::channel();
-    thread::spawn(move || {
-        if let Ok(Some(version)) = checked(&executable) {
-            let _ = sender.send(version);
-        }
-    });
-    Some(Check { result })
 }
 
 pub enum Asked {
@@ -101,6 +109,10 @@ pub enum Asked {
 
 /// `/update`: the check, now, whenever the last one was.
 pub fn check_now(switched_off: bool) -> Asked {
+    // What's in place runs from the next start: nothing newer to look for.
+    if let Some(version) = installed() {
+        return Asked::Installed(version);
+    }
     let (standing, executable) = standing(switched_off);
     let Some(executable) = executable else {
         return Asked::Unavailable(standing);
@@ -144,6 +156,7 @@ fn check(executable: &Path) -> Result<Option<String>, ()> {
         return Err(());
     }
     put_in_place(executable, &bytes).map_err(|_| ())?;
+    let _ = PUT_IN_PLACE.set(release.version.clone());
     Ok(Some(release.version))
 }
 
@@ -329,6 +342,26 @@ mod tests {
         // Nothing staged is left beside it.
         assert_eq!(fs::read_dir(&folder).unwrap().count(), 1);
         assert!(can_replace(&executable));
+        fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn a_copy_a_new_version_took_the_place_of_is_found_where_it_was() {
+        let folder = std::env::temp_dir().join(format!("lokal-update-gone-{}", std::process::id()));
+        fs::create_dir_all(&folder).unwrap();
+        let executable = folder.join("lokal");
+        fs::copy("/bin/sleep", &executable).unwrap();
+        let mut running = Command::new(&executable).arg("5").spawn().unwrap();
+        let link = format!("/proc/{}/exe", running.id());
+        let read = || fs::read_link(&link).unwrap();
+        assert_eq!(started_from(read()), executable);
+
+        put_in_place(&executable, b"new").unwrap();
+
+        assert!(read().to_string_lossy().ends_with(" (deleted)"));
+        assert_eq!(started_from(read()), executable);
+        running.kill().unwrap();
+        let _ = running.wait();
         fs::remove_dir_all(&folder).unwrap();
     }
 
